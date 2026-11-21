@@ -49,6 +49,7 @@
 
 import argparse
 import csv
+from collections import Counter
 import io
 import json
 import os
@@ -288,7 +289,7 @@ def _latest_close(live, ins_code, on_or_before):
 # or column: refresh() forces a full rebuild when the stored version
 # differs, so a code upgrade never serves a stale sidecar through the
 # fingerprint shortcut (the DB file itself has not changed).
-SIDECAR_VERSION = 5
+SIDECAR_VERSION = 6
 
 # Persian/Arabic letter variants: the pipeline stores symbols and names in
 # the form TSETMC returned them, so the same word can appear with Arabic
@@ -486,6 +487,81 @@ def _stream_insert(cur, sidecar, select_sql, insert_sql, transform,
             print("[refresh] %s: %d rows (%.1fs)"
                   % (label, n, time.time() - t0), flush=True)
     return n, time.time() - t0
+
+
+def _mirrored_source_snapshot_dates(live):
+    """Find dates where the date-specific and current-holder endpoints are
+    two byte-different-ID views of the same business snapshot.
+
+    The source IDs are intentionally excluded from the comparison because
+    the endpoints use different identifier schemes. We compare the full
+    available business fields as a multiset, so duplicate row multiplicity
+    must also match. Only exact whole-snapshot matches qualify; partial
+    overlaps are never merged automatically.
+    """
+    exists = live.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='source_observations'").fetchone()
+    if not exists:
+        return set()
+
+    mirrored = set()
+    current_key = None
+    endpoint_rows = {}
+
+    def _flush():
+        if current_key is None:
+            return
+        dated = endpoint_rows.get("shareholders_on_date")
+        latest = endpoint_rows.get("shareholder_last")
+        if dated and latest and dated == latest:
+            mirrored.add(current_key)
+
+    def _number(value):
+        if value is None:
+            return None
+        try:
+            n = float(value)
+            if abs(n - round(n)) < 1e-9:
+                return int(round(n))
+            return round(n, 6)
+        except (TypeError, ValueError, OverflowError):
+            return str(value)
+
+    try:
+        cursor = live.execute(
+            "SELECT ins_code, row_date, endpoint, name, shares, percent, "
+            "change_code, change_amount "
+            "FROM source_observations "
+            "WHERE endpoint IN ('shareholders_on_date', 'shareholder_last') "
+            "ORDER BY ins_code, row_date, endpoint")
+        while True:
+            batch = cursor.fetchmany(20000)
+            if not batch:
+                break
+            for row in batch:
+                key = (row[0], row[1])
+                if key != current_key:
+                    _flush()
+                    current_key = key
+                    endpoint_rows = {}
+                signature = (
+                    normalize_fa(row[3] or ""),
+                    _number(row[4]),
+                    _number(row[5]),
+                    _number(row[6]),
+                    _number(row[7]),
+                )
+                endpoint_rows.setdefault(row[2], Counter())[signature] += 1
+        _flush()
+    except sqlite3.Error as exc:
+        print("[refresh] source-view comparison skipped: %r" % (exc,),
+              flush=True)
+        return set()
+
+    print("[refresh] exact mirrored endpoint snapshots: %d"
+          % len(mirrored), flush=True)
+    return mirrored
 
 
 def refresh_summaries(live, sidecar):
@@ -846,18 +922,16 @@ def refresh_summaries(live, sidecar):
               % (len(top), len(recent)), flush=True)
     except Exception as e:
         print("[refresh] panels skipped: %r" % (e,), flush=True)
-    # 8. Deduped daily ownership series. The pipeline stores the same
-    #    holder under several id schemes (ondate_share_id AND share_id),
-    #    so company_daily's disclosed sum counts that holder twice or
-    #    three times and can exceed 100% (مهر3: 265.24%). The xref
-    #    evidence (services/xref.py) says such duplicates are "same date,
-    #    same shares, same name", so one row per (ins_code, date, shares)
-    #    is the same holder: keep one. The residual error is two different
-    #    holders holding exactly the same share count on the same date
-    #    (rare for major holders; measured on the live DB before shipping).
-    #    This streams the holdings table once in (ins_code, date) index
-    #    order -- no sort, no per-row join -- and writes one row per
-    #    (symbol, date): ~1.44M rows.
+    # 8. Deduped daily ownership series. First remove only two kinds of
+    #    proven double representation: (a) IDs explicitly linked through
+    #    raw_source_ids, and (b) ondate_share_id rows when source_observations
+    #    proves that shareholders_on_date and shareholder_last are exact
+    #    whole-snapshot mirrors for the same symbol/date. In case (b), keep
+    #    the canonical share_id representation. Do NOT equate holders just
+    #    because names or share counts match. Repeated business signatures
+    #    inside one endpoint remain unresolved unless identity evidence
+    #    proves they are the same holder; totals outside [0,100] stay invalid
+    #    and are suppressed by the UI. The holdings scan remains streaming.
     try:
         t8 = time.time()
         with sidecar:
@@ -868,6 +942,7 @@ def refresh_summaries(live, sidecar):
                 " deduped_pct REAL, deduped_shares INTEGER,"
                 " deduped_count INTEGER, raw_pct REAL, raw_count INTEGER,"
                 " PRIMARY KEY (ins_code, date))")
+        mirrored_snapshot_dates = _mirrored_source_snapshot_dates(live)
         cur2 = live.cursor()
         cursor = cur2.execute(
             "SELECT h.ins_code, h.date, h.shares, h.ownership_percent_calc, "
@@ -922,6 +997,13 @@ def refresh_summaries(live, sidecar):
                 raw_n += 1
                 if r[3] is not None:
                     raw_pct += r[3]
+                # If the two TSETMC endpoints are exact whole-snapshot
+                # mirrors, the ondate records are an alternate view of the
+                # canonical share_id rows already present for this date.
+                # Keep them in raw_pct for audit transparency, but do not
+                # add them a second time to the analytical total.
+                if key in mirrored_snapshot_dates and r[4] == "ondate_share_id":
+                    continue
                 sh = r[2]
                 # Deduplicate only when the source explicitly links two
                 # identifiers to the same holder. Equal share counts alone
