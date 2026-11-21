@@ -884,11 +884,11 @@
               </div>
               <div title={snap.raw_ownership_percent_sum !== null && snap.raw_ownership_percent_sum !== undefined && snap.disclosed_ownership_percent_sum !== null && Math.abs(snap.raw_ownership_percent_sum - snap.disclosed_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(snap.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : undefined}>
                 <div className="text-[var(--text-secondary)]">جمع مالکیت عمده</div>
-                <div className="font-bold num">{fmtPct(snap.disclosed_ownership_percent_sum)}</div>
+                <div className="font-bold num">{(Number(snap.disclosed_ownership_percent_sum) > 100.000001 || Number(snap.disclosed_ownership_percent_sum) < 0) ? <span className="text-amber-400" title="جمع خام گزارش‌شده از محدودهٔ معتبر خارج است؛ تا زمان اصلاح داده، درصد نمایش داده نمی‌شود.">نیازمند بررسی</span> : fmtPct(snap.disclosed_ownership_percent_sum)}</div>
               </div>
               <div title="۱۰۰ منهای جمع مالکیت عمدهٔ افشاشده — سهامی که در بازار آزاد دست مردم است و قابل معامله است">
                 <div className="text-[var(--text-secondary)]">سهام شناور</div>
-                <div className="font-bold num text-emerald-400">{snap.disclosed_ownership_percent_sum !== null && snap.disclosed_ownership_percent_sum !== undefined ? fmtPct(100 - snap.disclosed_ownership_percent_sum) : '—'}</div>
+                <div className="font-bold num text-emerald-400">{snap.disclosed_ownership_percent_sum !== null && snap.disclosed_ownership_percent_sum !== undefined && Number(snap.disclosed_ownership_percent_sum) >= 0 && Number(snap.disclosed_ownership_percent_sum) <= 100.000001 ? fmtPct(100 - snap.disclosed_ownership_percent_sum) : '—'}</div>
               </div>
             </div>
           </div>
