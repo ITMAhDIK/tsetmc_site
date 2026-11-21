@@ -530,8 +530,7 @@ def _mirrored_source_snapshot_dates(live):
 
     try:
         cursor = live.execute(
-            "SELECT ins_code, row_date, endpoint, name, shares, percent, "
-            "change_code, change_amount "
+            "SELECT ins_code, row_date, endpoint, name, shares, percent "
             "FROM source_observations "
             "WHERE endpoint IN ('shareholders_on_date', 'shareholder_last') "
             "ORDER BY ins_code, row_date, endpoint")
