@@ -142,8 +142,8 @@
         <div className="space-y-3 text-xs">
           <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
             <div>
-              <h1 className="text-sm font-bold">بازسازی پرتفوی سرمایه‌گذاران</h1>
-              <p className="text-[11px] text-[var(--text-secondary)]">هویت هر سرمایه‌گذار از شناسه‌های (id_scheme, shareholder_id) منبع ساخته می‌شود؛ لینک‌های «محتمل» فقط وقتی در جمع می‌آیند که در همهٔ تاریخ‌ها تاریخ+سهام+نام دقیقاً یکسان بوده و هیچ تناقضی نداشته باشند.</p>
+              <h1 className="text-sm font-bold">بازسازی تاریخچهٔ پرتفوی سرمایه‌گذاران</h1>
+              <p className="text-[11px] text-[var(--text-secondary)]">هدف اصلی این صفحه بازسازی تمام نمادها و تغییرات سهام‌دار از اولین مشاهده تا آخرین داده است؛ اطلاعات خرید/فروش قطعی فقط با دادهٔ معاملات قابل اثبات است. هویت‌ها نیز فقط بر اساس شواهد منبع پیوند می‌خورند.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <input value={invQuery} onChange={e => setInvQuery(e.target.value)} placeholder="جستجوی سرمایه‌گذار..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48" />
@@ -202,19 +202,20 @@
             <div className="p-8 text-center text-[var(--text-secondary)]">در حال بازسازی پرتفوی...</div>
           ) : portfolio && (
             <>
+              <div className="text-[10px] font-bold text-[var(--text-secondary)]">ارزش آخرین مشاهدات (برای مقایسه؛ نه تاریخچهٔ کامل)</div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
                 <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-                  <div className="text-[var(--text-secondary)]">ارزش کل تأییدشده (ترکیبی)</div>
+                  <div className="text-[var(--text-secondary)]">ارزش آخرین مشاهدات مستقیم</div>
                   <div className="text-base font-bold num text-emerald-400 mt-1">{fmtMoney(sum.confirmed_combined_value_rial, currency)}</div>
-                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">فاقد قیمت معتبر: {toFa(sum.positions_missing_price_count)} پوزیشن</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">آخرین رکورد هر نماد؛ قیمت نامعتبر: {toFa(sum.positions_missing_price_count)}</div>
                 </div>
                 <div className="p-3 rounded border border-blue-500/30 bg-blue-500/5">
-                  <div className="text-blue-300">ارزش محتمل (تطبیق دقیق استنتاجی)</div>
+                  <div className="text-blue-300">ارزش آخرین مشاهدات هویت‌های محتمل</div>
                   <div className="text-base font-bold num text-blue-400 mt-1">{fmtMoney(sum.probable_combined_value_rial, currency)}</div>
-                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">شرکت‌های محتمل: {toFa(sum.probable_companies_count)}</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">آخرین رکوردهای متکی بر تطبیق استنتاجی: {toFa(sum.probable_companies_count)}</div>
                 </div>
                 <div className="p-3 rounded border border-amber-500/30 bg-amber-500/5">
-                  <div className="text-amber-300">کاندیداهای غیرقطعی (مستثنی)</div>
+                  <div className="text-amber-300">نامزدهای هویتی غیرقطعی (خارج از جمع)</div>
                   <div className="text-base font-bold num mt-1">{toFa(sum.uncertain_candidates_count)}</div>
                 </div>
                 <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
