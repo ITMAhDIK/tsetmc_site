@@ -23,6 +23,16 @@
       const [compHolders, setCompHolders] = useState([]);
       const [compLoading, setCompLoading] = useState(false);
 
+      // The historical view is separate from the latest-position snapshot.
+      // A symbol is added to this list if it appears at any time in the
+      // identity-resolved holder history, including securities no longer
+      // present in the latest disclosure.
+      const [historySymbol, setHistorySymbol] = useState('');
+      const [historyOffset, setHistoryOffset] = useState(0);
+      const [historyData, setHistoryData] = useState(null);
+      const [historyLoading, setHistoryLoading] = useState(false);
+      const HISTORY_PAGE_SIZE = 100;
+
       // Open a specific investor (e.g. clicked on a holder on the
       // dashboard): the dashboard passes "scheme:id".
       useEffect(() => { if (initialInvestor) setSelectedId(initialInvestor); }, [initialInvestor]);
@@ -71,24 +81,64 @@
       useEffect(() => {
         if (!selectedId) return;
         setLoading(true);
+        setHistorySymbol('');
+        setHistoryOffset(0);
+        setHistoryData(null);
         const qs = asOfDate ? `?as_of_date=${encodeURIComponent(asOfDate)}` : '';
         apiFetch(`/api/v1/portfolios/${encodeURIComponent(selectedId)}${qs}`)
           .then(setPortfolio)
           .finally(() => setLoading(false));
       }, [selectedId, asOfDate]);
 
+      // Large investors can have thousands of daily observations in one
+      // security. Fetch the selected security's ledger in bounded pages.
+      useEffect(() => {
+        if (!selectedId || !historySymbol) {
+          setHistoryData(null);
+          return;
+        }
+        let active = true;
+        setHistoryLoading(true);
+        const params = new URLSearchParams({
+          symbol: historySymbol,
+          limit: String(HISTORY_PAGE_SIZE),
+          offset: String(historyOffset),
+        });
+        if (asOfDate) params.set('as_of_date', asOfDate);
+        apiFetch(`/api/v1/portfolios/${encodeURIComponent(selectedId)}/history?${params.toString()}`)
+          .then(result => { if (active) setHistoryData(result); })
+          .catch(() => { if (active) setHistoryData({ rows: [], total: 0, error: true }); })
+          .finally(() => { if (active) setHistoryLoading(false); });
+        return () => { active = false; };
+      }, [selectedId, historySymbol, historyOffset, asOfDate]);
+
       const sum = portfolio?.summary || {};
       const chartSeries = useMemo(() => {
         // Values in همر (1e12 Rial) in IRR mode, همت (1e12 Toman = 1e13 Rial)
         // in IRT mode.
         const divisor = currency === 'IRT' ? 1e13 : 1e12;
-        return (portfolio?.history_series || []).map(p => ({
-          time: p.time,
-          value: (p.combined_value_rial || 0) / divisor,
-        }));
+        return (portfolio?.history_series || [])
+          .filter(p => p.combined_value_rial !== null && p.combined_value_rial !== undefined)
+          .map(p => ({ time: p.time, value: p.combined_value_rial / divisor }));
       }, [portfolio, currency]);
 
+      // Labels explicitly describe observed quantities. They must never
+      // imply that snapshots prove a specific buy/sell execution.
+      const historyChangeLabel = (row) => ({
+        capital_action: 'رویداد سرمایه‌ای',
+        first_observation: 'اولین مشاهده؛ سابقهٔ قبلی در دسترس نیست',
+        not_disclosed: 'در این تاریخ افشا نشده',
+        change_after_gap: 'تغییر پس از فاصلهٔ مشاهدات',
+        net_increase: 'افزایش خالص مشاهده‌شده؛ لزوماً خرید نیست',
+        net_decrease: 'کاهش خالص مشاهده‌شده؛ لزوماً فروش نیست',
+        increase_unquantified: 'افزایش ثبت شده؛ مقدار نامشخص',
+        decrease_unquantified: 'کاهش ثبت شده؛ مقدار نامشخص',
+        identity_conflict: 'تعارض شناسه‌های پیوندخورده',
+        observation: 'مشاهدهٔ موجودی',
+      })[row.change_classification] || row.change_type || 'نامشخص';
+
       return (
+        <div className="space-y-3 text-xs">      return (
         <div className="space-y-3 text-xs">
           <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
             <div>
@@ -189,13 +239,118 @@
                 </div>
               )}
 
+              {portfolio.historical_summary && (
+                <section className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                  <div className="p-3 border-b border-[var(--border-subtle)]">
+                    <h3 className="font-bold text-sm">پرتفوی تاریخی؛ تمام نمادهای مشاهده‌شده از ابتدا</h3>
+                    <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                      نمادهایی که در گذشته وجود داشته‌اند حتی اگر در آخرین فهرست سهام‌داران نباشند، در اینجا باقی می‌مانند. تاریخ مشاهده، تاریخ معامله نیست.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 p-3">
+                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">نمادهای تاریخی</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.symbols_count)}</div></div>
+                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">کل مشاهدات</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.observations_count)}</div></div>
+                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">رویدادهای تغییریافته</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.change_events_count)}</div></div>
+                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">با تعداد سهم معتبر</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.known_shares_observations_count)}</div></div>
+                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">بدون تعداد معتبر</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.unavailable_shares_observations_count)}</div></div>
+                  </div>
+                  <div className="px-3 pb-2 text-[10px] text-[var(--text-secondary)]">
+                    بازهٔ داده: {fmtDate(portfolio.historical_summary.first_observation_date_jalali)} تا {fmtDate(portfolio.historical_summary.last_observation_date_jalali)}.
+                    افزایش/کاهش، تغییر خالص موجودی افشاشده است؛ نه اثبات خرید یا فروش.
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-right">
+                      <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                        <tr><th className="p-2">نماد</th><th className="p-2">اولین مشاهده</th><th className="p-2">آخرین مشاهده</th><th className="p-2">اولین تعداد</th><th className="p-2">تعداد در آخرین مشاهده</th><th className="p-2">آخرین تعداد معلوم</th><th className="p-2">بیشترین تعداد</th><th className="p-2">افزایش / کاهش</th><th className="p-2">تعداد رکورد</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border-subtle)]">
+                        {(portfolio.historical_symbols || []).length === 0 ? (
+                          <tr><td colSpan="9" className="p-4 text-center text-[var(--text-secondary)]">تاریخچه‌ای برای شناسه‌های پیوندخورده پیدا نشد.</td></tr>
+                        ) : portfolio.historical_symbols.map(item => (
+                          <tr key={item.ins_code} className={historySymbol === item.symbol ? 'bg-blue-500/10' : 'hover:bg-[var(--bg-elevated)]'}>
+                            <td className="p-2 whitespace-nowrap">
+                              <button className="font-bold text-blue-400" onClick={() => { setHistorySymbol(item.symbol); setHistoryOffset(0); }}>{item.symbol}</button>
+                              <button className="mr-2 text-[10px] text-[var(--text-secondary)] underline" onClick={() => onOpenStock(item.symbol)}>جزئیات نماد</button>
+                            </td>
+                            <td className="p-2 num whitespace-nowrap">{fmtDate(item.first_observation_date_jalali)}</td>
+                            <td className="p-2 num whitespace-nowrap">{fmtDate(item.last_observation_date_jalali)}</td>
+                            <td className="p-2 num">{item.first_observed_shares === null ? '—' : fmtNum(item.first_observed_shares)}</td>
+                            <td className="p-2 num">{item.last_observation_shares === null ? 'افشا نشده' : fmtNum(item.last_observation_shares)}</td>
+                            <td className="p-2 num">{item.last_known_shares === null ? '—' : fmtNum(item.last_known_shares)}</td>
+                            <td className="p-2 num">{item.max_observed_shares === null ? '—' : fmtNum(item.max_observed_shares)}</td>
+                            <td className="p-2 num whitespace-nowrap">{toFa(item.increase_events_count)} / {toFa(item.decrease_events_count)}</td>
+                            <td className="p-2 num">{toFa(item.observations_count)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              {historySymbol && (
+                <section className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                  <div className="p-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-bold text-sm">دفتر تاریخی {historySymbol}</h3>
+                      <p className="text-[10px] text-[var(--text-secondary)] mt-1">قیمت مرجع/پایانی است و قیمت اجرای معامله محسوب نمی‌شود.</p>
+                    </div>
+                    <button className="px-2 py-1 rounded border border-[var(--border-subtle)]" onClick={() => { setHistorySymbol(''); setHistoryData(null); }}>بستن تاریخچه</button>
+                  </div>
+                  {historyLoading ? (
+                    <div className="p-5 text-center text-[var(--text-secondary)]">در حال دریافت دفتر تاریخچه...</div>
+                  ) : historyData?.error ? (
+                    <div className="p-5 text-center text-rose-400">دریافت تاریخچه ممکن نشد. ابتدا بازسازی sidecar نسخهٔ ۱۰ باید کامل شود.</div>
+                  ) : (
+                    <>
+                      <div className="p-2 text-[10px] text-[var(--text-secondary)]">{toFa(historyData?.total || 0)} مشاهده — صفحهٔ {toFa(Math.floor(historyOffset / HISTORY_PAGE_SIZE) + 1)}</div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-right">
+                          <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                            <tr><th className="p-2">تاریخ</th><th className="p-2">نوع تغییر</th><th className="p-2">موجودی قبلی</th><th className="p-2">موجودی مشاهده‌شده</th><th className="p-2">تغییر خالص</th><th className="p-2">قیمت مرجع</th><th className="p-2">تاریخ قیمت</th><th className="p-2">ارزش تخمینی موجودی</th><th className="p-2">رویداد سرمایه‌ای</th><th className="p-2">فاصله (روز معاملاتی)</th><th className="p-2">وضعیت داده/هویت</th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border-subtle)]">
+                            {(historyData?.rows || []).length === 0 ? (
+                              <tr><td colSpan="11" className="p-4 text-center text-[var(--text-secondary)]">رکوردی برای این نماد پیدا نشد.</td></tr>
+                            ) : historyData.rows.map((row,index) => (
+                              <tr key={`${row.date}-${index}`} className={row.identity_conflict ? 'bg-amber-500/10' : ''}>
+                                <td className="p-2 num whitespace-nowrap">{fmtDate(row.date_jalali)}</td>
+                                <td className="p-2 whitespace-nowrap">{historyChangeLabel(row)}</td>
+                                <td className="p-2 num">{row.previous_shares === null ? '—' : fmtNum(row.previous_shares)}</td>
+                                <td className="p-2 num">{row.shares === null ? 'افشا نشده/نامعتبر' : fmtNum(row.shares)}</td>
+                                <td className="p-2 num">{row.shares_change === null ? '—' : fmtNum(row.shares_change)}</td>
+                                <td className="p-2 num">{row.reference_price === null ? '—' : fmtNum(currency === 'IRT' ? row.reference_price / 10 : row.reference_price)}</td>
+                                <td className="p-2 num whitespace-nowrap">{fmtDate(row.reference_price_date_jalali)}</td>
+                                <td className="p-2 num">{row.estimated_holding_value_rial === null ? 'بدون قیمت معتبر' : fmtMoney(row.estimated_holding_value_rial,currency)}</td>
+                                <td className="p-2 whitespace-nowrap">{row.corporate_action ? `${row.corporate_action} ${row.corporate_action_ratio ? '(' + row.corporate_action_ratio + ')' : ''}` : '—'}</td>
+                                <td className="p-2 num">{row.gap_trading_days === null ? '—' : toFa(row.gap_trading_days)}</td>
+                                <td className="p-2 text-[10px] min-w-40">
+                                  {row.identity_conflict ? 'تعارض شناسه؛ از ارزش‌گذاری حذف شد' : row.change_calculation_status || row.valuation_status || '—'}
+                                  {row.note ? <div className="text-[var(--text-secondary)] mt-1 max-w-xs whitespace-normal">{row.note}</div> : null}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="p-3 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2">
+                        <button className="px-3 py-1.5 rounded border border-[var(--border-subtle)] disabled:opacity-40" disabled={historyOffset<=0 || historyLoading} onClick={() => setHistoryOffset(Math.max(0,historyOffset-HISTORY_PAGE_SIZE))}>صفحهٔ قبل</button>
+                        <span className="text-[10px] text-[var(--text-secondary)]">{toFa(Math.min(historyOffset+1,historyData?.total||0))} تا {toFa(Math.min(historyOffset+HISTORY_PAGE_SIZE,historyData?.total||0))}</span>
+                        <button className="px-3 py-1.5 rounded border border-[var(--border-subtle)] disabled:opacity-40" disabled={historyOffset+HISTORY_PAGE_SIZE >= (historyData?.total||0) || historyLoading} onClick={() => setHistoryOffset(historyOffset+HISTORY_PAGE_SIZE)}>صفحهٔ بعد</button>
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
               <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-                <h3 className="font-bold mb-2">روند تاریخی ارزش پرتفوی تأییدشده + محتمل ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
+                <h3 className="font-bold mb-1">ارزش تقریبی موقعیت‌های افشاشده در هر تاریخ ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
+                <p className="text-[10px] text-[var(--text-secondary)] mb-2">این نمودار فقط نمادهایی را جمع می‌کند که در همان تاریخ تعداد سهام و قیمت معتبر داشته‌اند؛ موجودی قبلی به روزهای بدون افشا منتقل نمی‌شود.</p>
                 <LWChart data={chartSeries} height={220} theme={theme} color="#2962ff" unitLabel={currency === 'IRT' ? 'همت' : 'همر'} dateMode={dateMode} />
               </div>
 
               <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
-                <div className="p-2.5 border-b border-[var(--border-subtle)] font-bold">پوزیشن‌های مستقیم (رکورد همین شناسه)</div>
+                <div className="p-2.5 border-b border-[var(--border-subtle)] font-bold">آخرین رکوردهای مستقیم این شناسه (نه لزوماً مالکیت امروز)</div>
                 <table className="w-full text-right">
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
                     <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تاریخ قیمت</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th></tr>
@@ -219,7 +374,7 @@
               </div>
 
               <div className="rounded border border-blue-500/30 bg-blue-500/5 overflow-x-auto">
-                <div className="p-2.5 border-b border-blue-500/30 font-bold text-blue-300">پوزیشن‌های محتمل (تطبیق دقیق استنتاجی — در جمع ارزش لحاظ شده‌اند)</div>
+                <div className="p-2.5 border-b border-blue-500/30 font-bold text-blue-300">آخرین رکوردهای شناسه‌های محتمل (با عدم‌قطعیت هویت)</div>
                 <table className="w-full text-right">
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
                     <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تاریخ قیمت</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th><th className="p-2">هویت</th></tr>
