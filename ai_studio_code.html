@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ره‌نگار بورس | پلتفرم تحلیل چندسهمی سهام‌داران و پرتفوی (TSETMC)</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" />
+  <link rel="stylesheet" href="./ai_studio_code.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -623,7 +624,7 @@
                         <td className="p-2 num">{fmtNum(r.total_company_shares)}</td>
                         <td className="p-2 num" title={r.latest_price ? `آخرین قیمت: ${fmtNum(r.latest_price)} ریال (${fmtGregorianDate(r.latest_price_date)})` : 'قیمت موجود نیست'}>{r.market_value !== null && r.market_value !== undefined ? fmtMoney(r.market_value, currency) : '—'}</td>
                         <td className="p-2 num" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(r.disclosed_shareholder_count)}` : undefined}>{toFa(r.deduped_shareholder_count ?? r.disclosed_shareholder_count)}</td>
-                        <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : undefined}>{fmtPct(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum)}</td>
+                        <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : undefined}>{(Number(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum) > 100.000001 || Number(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum) < 0) ? <span className="text-amber-400" title="مجموع مالکیت ناسازگار است؛ این عدد برای تحلیل معتبر نیست.">نیازمند بررسی</span> : fmtPct(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum)}</td>
                         <td className="p-2 num text-[var(--text-secondary)]">{fmtDate(r.latest_date_jalali)}</td>
                       </tr>
                     ))}
