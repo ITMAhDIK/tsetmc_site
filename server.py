@@ -2594,6 +2594,11 @@ class SiteApi:
         same symbol appears under several ids of the identity (the twin
         records the same position), the first id in `ids` wins, so the
         requested id's own record is preferred over a twin's."""
+        # The live DB is opened read-only, but SQLite permits attaching
+        # the sidecar for read-only joins. This makes historical position
+        # lookups obey the same source-proven exclusions as the latest index.
+        sidecar_path = sc.execute("PRAGMA database_list").fetchone()[2]
+        live.execute("ATTACH DATABASE ? AS sidecar_data", (sidecar_path,))
         # Step 1: which (symbol, id) pairs actually exist -- ONE batched
         # query over site_holder_latest, whose idx_holder_scheme
         # (id_scheme, shareholder_id) serves the IN list as point seeks
@@ -2659,7 +2664,12 @@ class SiteApi:
                     "   ORDER BY t.date DESC LIMIT 1) AS close_price_date "
                     "FROM shareholder_holdings h "
                     "WHERE h.ins_code=? AND h.id_scheme=? "
-                    "  AND h.shareholder_id=? %s "
+                    "  AND h.shareholder_id=? "
+                    "  AND NOT EXISTS ("
+                    "    SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+                    "    WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                    "      AND x.id_scheme=h.id_scheme "
+                    "      AND x.shareholder_id=h.shareholder_id) %s "
                     "ORDER BY h.date DESC LIMIT 1" % date_clause,
                     (ins_code, scheme, sh_id) + tuple(date_args)).fetchone()
                 if row is not None:
@@ -2806,6 +2816,11 @@ class SiteApi:
                     "FROM shareholder_holdings h "
                     "WHERE h.ins_code=? AND h.id_scheme=? "
                     "  AND h.shareholder_id=? "
+                    "  AND NOT EXISTS ("
+                    "    SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+                    "    WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                    "      AND x.id_scheme=h.id_scheme "
+                    "      AND x.shareholder_id=h.shareholder_id) "
                     "ORDER BY h.date ASC",
                     (ins_code, origin_scheme, origin_id)).fetchall():
                     p = r["close_price"]
