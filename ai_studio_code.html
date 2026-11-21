@@ -1569,15 +1569,16 @@
                 <div className="p-2.5 border-b border-[var(--border-subtle)] font-bold">پوزیشن‌های مستقیم (رکورد همین شناسه)</div>
                 <table className="w-full text-right">
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th></tr>
+                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تاریخ قیمت</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th></tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
                     {portfolio.confirmed_positions.length === 0 ? (
-                      <tr><td colSpan="6" className="p-4 text-center text-[var(--text-secondary)]">هیچ پوزیشن مستقیمی برای این شناسه ثبت نشده است.</td></tr>
+                      <tr><td colSpan="7" className="p-4 text-center text-[var(--text-secondary)]">هیچ پوزیشن مستقیمی برای این شناسه ثبت نشده است.</td></tr>
                     ) : portfolio.confirmed_positions.map(p => (
                       <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
                         <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
                         <td className="p-2 num">{fmtDate(p.observation_date_jalali)}</td>
+                        <td className="p-2 num">{p.price_date_jalali ? fmtDate(p.price_date_jalali) : '—'}</td>
                         <td className="p-2 num">{fmtNum(p.shares)}</td>
                         <td className="p-2 num">{fmtPct(p.ownership_percent_calculated)}</td>
                         <td className="p-2 num">{p.price ? fmtNum(currency === 'IRT' ? p.price / 10 : p.price) : '—'}</td>
@@ -1592,11 +1593,11 @@
                 <div className="p-2.5 border-b border-blue-500/30 font-bold text-blue-300">پوزیشن‌های محتمل (تطبیق دقیق استنتاجی — در جمع ارزش لحاظ شده‌اند)</div>
                 <table className="w-full text-right">
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th><th className="p-2">هویت</th></tr>
+                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تاریخ قیمت</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th><th className="p-2">هویت</th></tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
                     {(portfolio.probable_positions || []).length === 0 ? (
-                      <tr><td colSpan="7" className="p-4 text-center text-[var(--text-secondary)]">پوزیشن «محتمل»ی برای این سرمایه‌گذار ثبت نشده است.</td></tr>
+                      <tr><td colSpan="8" className="p-4 text-center text-[var(--text-secondary)]">پوزیشن «محتمل»ی برای این سرمایه‌گذار ثبت نشده است.</td></tr>
                     ) : portfolio.probable_positions.map(p => (
                       <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
                         <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
