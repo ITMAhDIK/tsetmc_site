@@ -870,11 +870,15 @@ def refresh_summaries(live, sidecar):
                 " PRIMARY KEY (ins_code, date))")
         cur2 = live.cursor()
         cursor = cur2.execute(
-            "SELECT ins_code, date, shares, ownership_percent_calc "
-            "FROM shareholder_holdings ORDER BY ins_code, date")
+            "SELECT h.ins_code, h.date, h.shares, h.ownership_percent_calc, "
+            "h.id_scheme, h.shareholder_id, s.raw_source_ids "
+            "FROM shareholder_holdings h "
+            "LEFT JOIN shareholders s ON s.id_scheme=h.id_scheme "
+            "AND s.shareholder_id=h.shareholder_id "
+            "ORDER BY h.ins_code, h.date")
         batch = []
         cur_key = None
-        seen_shares = set()
+        seen_identities = set()
         ded_pct = 0.0
         ded_shares = 0
         raw_pct = 0.0
@@ -887,7 +891,7 @@ def refresh_summaries(live, sidecar):
                 return
             batch.append((cur_key[0], cur_key[1],
                           round(ded_pct, 6) if ded_pct else 0.0,
-                          ded_shares, len(seen_shares),
+                          ded_shares, len(seen_identities),
                           round(raw_pct, 6) if raw_pct else 0.0, raw_n))
             n_rows += 1
             if len(batch) >= 20000:
@@ -910,7 +914,7 @@ def refresh_summaries(live, sidecar):
                 if key != cur_key:
                     _flush_dedup()
                     cur_key = key
-                    seen_shares = set()
+                    seen_identities = set()
                     ded_pct = 0.0
                     ded_shares = 0
                     raw_pct = 0.0
@@ -919,8 +923,24 @@ def refresh_summaries(live, sidecar):
                 if r[3] is not None:
                     raw_pct += r[3]
                 sh = r[2]
-                if sh is not None and sh not in seen_shares:
-                    seen_shares.add(sh)
+                # Deduplicate only when the source explicitly links two
+                # identifiers to the same holder. Equal share counts alone
+                # are NOT identity evidence: unrelated holders can own the
+                # same number of shares.
+                members = {(str(r[4] or ""), int(r[5]))}
+                raw_ids = r[6] or ""
+                for part in str(raw_ids).split(","):
+                    part = part.strip()
+                    if ":" not in part:
+                        continue
+                    scheme_part, id_part = part.split(":", 1)
+                    try:
+                        members.add((scheme_part.strip(), int(id_part.strip())))
+                    except ValueError:
+                        continue
+                identity_key = tuple(sorted(members))
+                if sh is not None and identity_key not in seen_identities:
+                    seen_identities.add(identity_key)
                     ded_shares += sh
                     if r[3] is not None:
                         ded_pct += r[3]
@@ -2357,7 +2377,11 @@ class SiteApi:
                     "  (SELECT t.p_closing FROM trading_days t "
                     "   WHERE t.ins_code = h.ins_code AND t.date <= h.date "
                     "     AND t.p_closing IS NOT NULL AND t.p_closing > 0 "
-                    "   ORDER BY t.date DESC LIMIT 1) AS close_price "
+                    "   ORDER BY t.date DESC LIMIT 1) AS close_price, "
+                    "  (SELECT t.date FROM trading_days t "
+                    "   WHERE t.ins_code = h.ins_code AND t.date <= h.date "
+                    "     AND t.p_closing IS NOT NULL AND t.p_closing > 0 "
+                    "   ORDER BY t.date DESC LIMIT 1) AS close_price_date "
                     "FROM shareholder_holdings h "
                     "WHERE h.ins_code=? AND h.id_scheme=? "
                     "  AND h.shareholder_id=? %s "
@@ -2446,25 +2470,27 @@ class SiteApi:
             tier_counts = {"confirmed": 0, "probable": 0, "uncertain": 0}
             valued = []  # (ins_code, origin_scheme, origin_id) for the history
             for symbol, h, origin_scheme, origin_id in positions:
-                value = h["market_value"]
-                price = h["price"]
-                if value is None and price is not None and h["shares"] is not None:
-                    value = h["shares"] * price
-                if value is None and h["shares"] is not None:
-                    # Holdings rows almost never carry a price on the
-                    # real DB: fall back to the latest closing price,
-                    # which _holder_positions already attached to the
-                    # row as close_price (one ASOF subquery per row,
-                    # no separate lookup).
-                    price = h.get("close_price")
-                    if price is not None:
-                        value = h["shares"] * price
+                # Prefer the latest valid exchange close on/before the
+                # observation date. The source holdings price/market_value
+                # may be absent or stale; never substitute a future close.
+                price = h.get("close_price")
+                if price is None and h.get("price") is not None and h["price"] > 0:
+                    price = h["price"]
+                value = (h["shares"] * price
+                         if h["shares"] is not None and price is not None
+                         else None)
                 pos = {
                     "symbol": symbol,
                     "observation_date_jalali": fmt_jalali_date(h["jalali_date"]),
                     "shares": h["shares"],
                     "ownership_percent_calculated": h["ownership_percent_calc"],
                     "price": price,
+                    "price_date": h.get("close_price_date") or h.get("date"),
+                    "price_date_jalali": (
+                        gregorian_yyyymmdd_to_jalali(
+                            h.get("close_price_date") or h.get("date"))
+                        if (h.get("close_price_date") or h.get("date")) else None),
+                    "valuation_status": "valued" if value is not None else "missing_price",
                     "holding_value_rial": value,
                     "id_scheme": origin_scheme,
                     "shareholder_id": origin_id,
@@ -2497,7 +2523,7 @@ class SiteApi:
             per_date = {}
             for ins_code, origin_scheme, origin_id in valued:
                 for r in live.execute(
-                    "SELECT h.date, h.market_value, h.shares, h.price, "
+                    "SELECT h.date, h.shares, h.price, "
                     "  (SELECT t.p_closing FROM trading_days t "
                     "   WHERE t.ins_code = h.ins_code AND t.date <= h.date "
                     "     AND t.p_closing IS NOT NULL AND t.p_closing > 0 "
@@ -2507,12 +2533,12 @@ class SiteApi:
                     "  AND h.shareholder_id=? "
                     "ORDER BY h.date ASC",
                     (ins_code, origin_scheme, origin_id)).fetchall():
-                    v = r["market_value"]
-                    if v is None and r["price"] is not None and r["shares"] is not None:
-                        v = r["shares"] * r["price"]
-                    if v is None and r["shares"] is not None \
-                            and r["close_price"] is not None:
-                        v = r["shares"] * r["close_price"]
+                    p = r["close_price"]
+                    if p is None and r["price"] is not None and r["price"] > 0:
+                        p = r["price"]
+                    v = (r["shares"] * p
+                         if r["shares"] is not None and p is not None
+                         else None)
                     if v is not None:
                         per_date[r["date"]] = per_date.get(r["date"], 0) + v
             history_series = [
