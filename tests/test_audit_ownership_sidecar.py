@@ -42,7 +42,15 @@ class OwnershipSidecarAuditTests(unittest.TestCase):
                 ins_code TEXT, id_scheme TEXT, shareholder_id INTEGER,
                 latest_date TEXT, shares INTEGER, ownership_percent_calc REAL
             );
-            INSERT INTO site_meta VALUES ('sidecar_version','9');
+            CREATE TABLE site_excluded_holder_rows (
+                ins_code TEXT, date TEXT, id_scheme TEXT,
+                shareholder_id INTEGER, reason TEXT
+            );
+            CREATE TABLE site_holder_history (
+                id_scheme TEXT, shareholder_id INTEGER, ins_code TEXT,
+                date TEXT, shares INTEGER
+            );
+            INSERT INTO site_meta VALUES ('sidecar_version','10');
             INSERT INTO site_meta VALUES ('last_refresh','2026-11-22T00:00:00');
             INSERT INTO site_meta VALUES ('db_fingerprint','fixture');
             INSERT INTO site_watch VALUES ('X','X','2026-11-20',10.0);
@@ -50,6 +58,8 @@ class OwnershipSidecarAuditTests(unittest.TestCase):
               VALUES ('X','2026-11-20',10.0,100);
             INSERT INTO site_holder_latest
               VALUES ('X','share_id',10,'2026-11-20',100,10.0);
+            INSERT INTO site_holder_history
+              VALUES ('share_id',10,'X','2026-11-20',100);
         """)
         self.side.commit()
         self.side.close()
@@ -69,6 +79,9 @@ class OwnershipSidecarAuditTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as con:
             con.execute(
                 "INSERT INTO shareholder_holdings VALUES ('X','2026-11-21','share_id',10,100)")
+            con.execute(
+                "INSERT INTO site_holder_history "
+                "VALUES ('share_id',10,'X','2026-11-21',100)")
         with sqlite3.connect(self.sidecar_path) as con:
             con.execute("UPDATE site_watch SET latest_date='2026-11-21', "
                         "deduped_ownership_percent_sum=NULL WHERE ins_code='X'")

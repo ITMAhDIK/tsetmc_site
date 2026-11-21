@@ -12,7 +12,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-SIDECAR_VERSION_REQUIRED = "9"
+SIDECAR_VERSION_REQUIRED = "10"
 DEFAULT_EXPECTED_SYMBOLS = 608
 
 
@@ -40,7 +40,8 @@ def audit_ownership(db_path: str | Path, sidecar_path: str | Path,
 
         required = {
             "main": ("site_meta", "site_watch", "site_company_daily_dedup",
-                     "site_holder_latest"),
+                     "site_holder_latest", "site_excluded_holder_rows",
+                     "site_holder_history"),
             "live": ("shareholder_holdings", "company_daily"),
         }
         for schema, names in required.items():
@@ -72,6 +73,17 @@ def audit_ownership(db_path: str | Path, sidecar_path: str | Path,
             con, "SELECT COUNT(DISTINCT ins_code) FROM site_company_daily_dedup") or 0)
         holder_latest_rows = int(_one(
             con, "SELECT COUNT(*) FROM site_holder_latest") or 0)
+        history_rows = int(_one(
+            con, "SELECT COUNT(*) FROM site_holder_history") or 0)
+        expected_history_rows = int(_one(con, """
+            SELECT COUNT(*) FROM live.shareholder_holdings h
+            WHERE NOT EXISTS (
+                SELECT 1 FROM site_excluded_holder_rows x
+                WHERE x.ins_code=h.ins_code AND x.date=h.date
+                  AND x.id_scheme=h.id_scheme
+                  AND x.shareholder_id=h.shareholder_id
+            )
+        """) or 0)
 
         denominator_missing = int(_one(con, """
             SELECT COUNT(*)
@@ -159,7 +171,9 @@ def audit_ownership(db_path: str | Path, sidecar_path: str | Path,
         """).fetchall()]
 
         code_integrity_checks = {
-            "sidecar_version_is_9": sidecar_version == SIDECAR_VERSION_REQUIRED,
+            "sidecar_version_is_10": sidecar_version == SIDECAR_VERSION_REQUIRED,
+            "historical_holder_rows_match_exclusion_set":
+                history_rows == expected_history_rows,
             "source_vs_sidecar_symbol_counts_match": source_symbols == watch_symbols,
             "expected_symbol_count_matches": watch_symbols == expected_symbols,
             "no_percentage_without_same_date_denominator": pct_present_without_denominator == 0,
@@ -177,6 +191,8 @@ def audit_ownership(db_path: str | Path, sidecar_path: str | Path,
             "daily_series_symbol_count": daily_symbols,
             "daily_symbol_date_rows": daily_rows,
             "latest_holder_rows": holder_latest_rows,
+            "historical_holder_rows": history_rows,
+            "expected_historical_holder_rows": expected_history_rows,
             "dates_missing_same_date_denominator": denominator_missing,
             "percent_present_without_same_date_denominator": pct_present_without_denominator,
             "daily_percentage_formula_mismatches": formula_mismatch,
