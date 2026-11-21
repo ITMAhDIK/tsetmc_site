@@ -37,7 +37,7 @@
 #   GET  /api/v1/shareholders/observation-history?symbol&id_scheme&shareholder_id
 #   GET  /api/v1/portfolios/investors?q&limit
 #   GET  /api/v1/portfolios/<id>?as_of_date
-  GET  /api/v1/portfolios/<id>/history?symbol&as_of_date&limit&offset
+#   GET  /api/v1/portfolios/<id>/history?symbol&as_of_date&limit&offset
 #   POST /api/v1/screener/query        POST /api/v1/screener/export (CSV)
 #   GET  /api/v1/screener/saved-filters   POST /api/v1/screener/saved-filters
 #   GET  /api/v1/watchlists/default
