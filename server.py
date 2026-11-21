@@ -289,7 +289,7 @@ def _latest_close(live, ins_code, on_or_before):
 # or column: refresh() forces a full rebuild when the stored version
 # differs, so a code upgrade never serves a stale sidecar through the
 # fingerprint shortcut (the DB file itself has not changed).
-SIDECAR_VERSION = 6
+SIDECAR_VERSION = 7
 
 # Persian/Arabic letter variants: the pipeline stores symbols and names in
 # the form TSETMC returned them, so the same word can appear with Arabic
@@ -393,6 +393,14 @@ CREATE TABLE IF NOT EXISTS site_company_daily_dedup (
     raw_pct REAL,
     raw_count INTEGER,
     PRIMARY KEY (ins_code, date)
+);
+CREATE TABLE IF NOT EXISTS site_excluded_holder_rows (
+    ins_code TEXT NOT NULL,
+    date TEXT NOT NULL,
+    id_scheme TEXT NOT NULL,
+    shareholder_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    PRIMARY KEY (ins_code, date, id_scheme, shareholder_id)
 );
 CREATE TABLE IF NOT EXISTS site_holder_latest (
     ins_code TEXT NOT NULL,
@@ -650,6 +658,70 @@ def _mirrored_source_snapshot_dates(live):
     return mirrored
 
 
+def _collect_excluded_holder_rows(live, sidecar):
+    """Materialize only source-proven duplicate ondate rows for all views.
+
+    The dashboard's aggregate series, latest-holder index, detail table and
+    per-holder histories must use the same exclusion set; otherwise the
+    percentage can be corrected while the drill-down still displays duplicate
+    rows. Only ondate_share_id rows identified by exact repeated response
+    evidence or a complete endpoint mirror are excluded.
+    """
+    mirrored = _mirrored_source_snapshot_dates(live)
+    repeated = _duplicate_ondate_source_ids(live)
+    excluded = set()
+    batch = []
+    cursor = live.execute(
+        "SELECT ins_code, date, shareholder_id "
+        "FROM shareholder_holdings "
+        "WHERE id_scheme='ondate_share_id' "
+        "ORDER BY ins_code, date")
+    while True:
+        rows = cursor.fetchmany(20000)
+        if not rows:
+            break
+        for ins_code, date, shareholder_id in rows:
+            if shareholder_id is None:
+                continue
+            sid = int(shareholder_id)
+            key = (ins_code, date, sid)
+            if (ins_code, date) in mirrored:
+                reason = "mirrored_endpoint_snapshot"
+            elif key in repeated:
+                reason = "repeated_endpoint_row"
+            else:
+                continue
+            excluded.add(key)
+            batch.append((ins_code, date, "ondate_share_id", sid, reason))
+        if len(batch) >= 20000:
+            with sidecar:
+                sidecar.executemany(
+                    "INSERT OR REPLACE INTO site_excluded_holder_rows "
+                    "(ins_code, date, id_scheme, shareholder_id, reason) "
+                    "VALUES (?,?,?,?,?)", batch)
+            batch = []
+    with sidecar:
+        sidecar.execute("DELETE FROM site_excluded_holder_rows")
+        if batch:
+            sidecar.executemany(
+                "INSERT OR REPLACE INTO site_excluded_holder_rows "
+                "(ins_code, date, id_scheme, shareholder_id, reason) "
+                "VALUES (?,?,?,?,?)", batch)
+        # If the batch was flushed while streaming, reinsert the collected
+        # records once from the compact set so DELETE/refresh stays atomic.
+        if not batch and excluded:
+            sidecar.executemany(
+                "INSERT OR REPLACE INTO site_excluded_holder_rows "
+                "(ins_code, date, id_scheme, shareholder_id, reason) "
+                "VALUES (?,?,?,?,?)",
+                [(i, d, "ondate_share_id", sid,
+                  "mirrored_endpoint_snapshot" if (i, d) in mirrored
+                  else "repeated_endpoint_row")
+                 for i, d, sid in excluded])
+    print("[refresh] excluded source rows: %d" % len(excluded), flush=True)
+    return mirrored, repeated, excluded
+
+
 def refresh_summaries(live, sidecar):
     """Rebuild the materialised summary tables from the live DB.
 
@@ -660,6 +732,12 @@ def refresh_summaries(live, sidecar):
     t0 = time.time()
     print("[refresh] rebuilding summaries from the live DB ...", flush=True)
     cur = live.cursor()
+    mirrored_snapshot_dates, repeated_source_ids, excluded_holder_rows = \
+        _collect_excluded_holder_rows(live, sidecar)
+    # The read-only live connection can safely attach the sidecar for
+    # read-only joins used by the materialized holder index.
+    sidecar_path = sidecar.execute("PRAGMA database_list").fetchone()[2]
+    live.execute("ATTACH DATABASE ? AS sidecar_data", (sidecar_path,))
     # A generous page cache: the refresh does large index scans and many
     # primary-key lookups; the default 2 MB cache would thrash on a big DB.
     try:
@@ -769,8 +847,13 @@ def refresh_summaries(live, sidecar):
             "  shares_change AS shares_change, change_type AS change_type, "
             "  entry_status AS entry_status, price AS price, "
             "  market_value AS market_value "
-            "FROM shareholder_holdings "
-            "GROUP BY ins_code, id_scheme, shareholder_id",
+            "FROM shareholder_holdings h "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+            "  WHERE x.ins_code=h.ins_code AND x.date=h.date "
+            "    AND x.id_scheme=h.id_scheme "
+            "    AND x.shareholder_id=h.shareholder_id) "
+            "GROUP BY h.ins_code, h.id_scheme, h.shareholder_id",
             "INSERT INTO site_holder_latest (ins_code, symbol, id_scheme, "
             " shareholder_id, identity_status, "
             " latest_date, latest_date_jalali, shares, ownership_percent_calc, "
@@ -1028,8 +1111,6 @@ def refresh_summaries(live, sidecar):
                 " deduped_pct REAL, deduped_shares INTEGER,"
                 " deduped_count INTEGER, raw_pct REAL, raw_count INTEGER,"
                 " PRIMARY KEY (ins_code, date))")
-        mirrored_snapshot_dates = _mirrored_source_snapshot_dates(live)
-        repeated_source_ids = _duplicate_ondate_source_ids(live)
         cur2 = live.cursor()
         cursor = cur2.execute(
             "SELECT h.ins_code, h.date, h.shares, h.ownership_percent_calc, "
@@ -1560,6 +1641,10 @@ class SiteApi:
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
+            excluded_ids = [r[0] for r in sc.execute(
+                "SELECT shareholder_id FROM site_excluded_holder_rows "
+                "WHERE ins_code=? AND date=? AND id_scheme='ondate_share_id'",
+                (w["ins_code"], w["latest_date"])).fetchall()]
         finally:
             sc.close()
         date_jalali = _q_str(params, "date_jalali").strip()
@@ -1576,9 +1661,18 @@ class SiteApi:
                  else "h.shares DESC")
         live = self.live()
         try:
+            exclusion_clause = ""
+            exclusion_args = []
+            if excluded_ids:
+                exclusion_clause = (
+                    " AND NOT (id_scheme='ondate_share_id' "
+                    "AND shareholder_id IN (%s))"
+                    % ",".join("?" for _ in excluded_ids))
+                exclusion_args = excluded_ids
             total = live.execute(
                 "SELECT COUNT(*) FROM shareholder_holdings "
-                "WHERE ins_code=? AND date=?", (w["ins_code"], date_g)).fetchone()[0]
+                "WHERE ins_code=? AND date=?" + exclusion_clause,
+                (w["ins_code"], date_g) + tuple(exclusion_args)).fetchone()[0]
             rows = live.execute(
                 "SELECT h.id_scheme AS id_scheme, h.shareholder_id AS shareholder_id, "
                 "  s.name AS shareholder_name, "
@@ -1593,9 +1687,9 @@ class SiteApi:
                 "LEFT JOIN shareholders s "
                 "  ON s.id_scheme = h.id_scheme "
                 " AND s.shareholder_id = h.shareholder_id "
-                "WHERE h.ins_code=? AND h.date=? "
-                "ORDER BY %s LIMIT ?" % order,
-                (w["ins_code"], date_g, limit)).fetchall()
+                "WHERE h.ins_code=? AND h.date=? " + exclusion_clause +
+                " ORDER BY %s LIMIT ?" % order,
+                (w["ins_code"], date_g) + tuple(exclusion_args) + (limit,)).fetchall()
         finally:
             live.close()
         out = []
