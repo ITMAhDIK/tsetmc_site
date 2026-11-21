@@ -714,10 +714,12 @@ def refresh_summaries(live, sidecar):
     cur = live.cursor()
     mirrored_snapshot_dates, repeated_source_ids, excluded_holder_rows = \
         _collect_excluded_holder_rows(live, sidecar)
-    # The read-only live connection can safely attach the sidecar for
-    # read-only joins used by the materialized holder index.
-    sidecar_path = sidecar.execute("PRAGMA database_list").fetchone()[2]
-    live.execute("ATTACH DATABASE ? AS sidecar_data", (sidecar_path,))
+    # Ensure this function also works when called with a raw connection
+    # outside SiteApi.live() (for example, in a focused test).
+    attached = {r[1] for r in live.execute("PRAGMA database_list")}
+    if "sidecar_data" not in attached:
+        sidecar_path = sidecar.execute("PRAGMA database_list").fetchone()[2]
+        live.execute("ATTACH DATABASE ? AS sidecar_data", (sidecar_path,))
     # A generous page cache: the refresh does large index scans and many
     # primary-key lookups; the default 2 MB cache would thrash on a big DB.
     try:
@@ -1307,7 +1309,16 @@ class SiteApi:
 
     # -- connections -----------------------------------------------------
     def live(self):
-        return open_live_db(self.db_path)
+        con = open_live_db(self.db_path)
+        # The sidecar stores source-proven duplicate rows. Attach it to every
+        # read-only live connection so detail, history and portfolio queries
+        # can all apply the same exclusions without copying raw DB rows.
+        if os.path.isfile(self.sidecar_path):
+            attached = {r[1] for r in con.execute("PRAGMA database_list")}
+            if "sidecar_data" not in attached:
+                con.execute("ATTACH DATABASE ? AS sidecar_data",
+                            (self.sidecar_path,))
+        return con
 
     def sidecar(self):
         con = open_sidecar_db(self.sidecar_path)
@@ -1633,10 +1644,6 @@ class SiteApi:
             date_jalali = w["latest_date_jalali"]
         sc = self.sidecar()
         try:
-            excluded_ids = [r[0] for r in sc.execute(
-                "SELECT shareholder_id FROM site_excluded_holder_rows "
-                "WHERE ins_code=? AND date=? AND id_scheme='ondate_share_id'",
-                (w["ins_code"], date_g)).fetchall()]
         finally:
             sc.close()
         sort_by = _q_str(params, "sort_by", "shares")
@@ -1645,18 +1652,16 @@ class SiteApi:
                  else "h.shares DESC")
         live = self.live()
         try:
-            exclusion_clause = ""
-            exclusion_args = []
-            if excluded_ids:
-                exclusion_clause = (
-                    " AND NOT (h.id_scheme='ondate_share_id' "
-                    "AND h.shareholder_id IN (%s))"
-                    % ",".join("?" for _ in excluded_ids))
-                exclusion_args = excluded_ids
+            exclusion_clause = (
+                " AND NOT EXISTS ("
+                "SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+                "WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                "AND x.id_scheme=h.id_scheme "
+                "AND x.shareholder_id=h.shareholder_id)")
             total = live.execute(
                 "SELECT COUNT(*) FROM shareholder_holdings h "
                 "WHERE h.ins_code=? AND h.date=?" + exclusion_clause,
-                (w["ins_code"], date_g) + tuple(exclusion_args)).fetchone()[0]
+                (w["ins_code"], date_g)).fetchone()[0]
             rows = live.execute(
                 "SELECT h.id_scheme AS id_scheme, h.shareholder_id AS shareholder_id, "
                 "  s.name AS shareholder_name, "
@@ -1673,7 +1678,7 @@ class SiteApi:
                 " AND s.shareholder_id = h.shareholder_id "
                 "WHERE h.ins_code=? AND h.date=? " + exclusion_clause +
                 " ORDER BY %s LIMIT ?" % order,
-                (w["ins_code"], date_g) + tuple(exclusion_args) + (limit,)).fetchall()
+                (w["ins_code"], date_g, limit)).fetchall()
         finally:
             live.close()
         out = []
@@ -1724,33 +1729,30 @@ class SiteApi:
             ev_where = "h.change_type IN ('new','increase','decrease')"
             ev_args = [w["ins_code"]]
             if scheme and sh_id:
-                holder_excluded_dates = [
-                    d for d, excluded_scheme, excluded_id in excluded_rows
-                    if excluded_scheme == scheme and excluded_id == int(sh_id)]
-                holder_exclusion_clause = (
-                    " AND date NOT IN (%s)" %
-                    ",".join("?" for _ in holder_excluded_dates)
-                    if holder_excluded_dates else "")
                 holder_series = [
                     {"time": fmt_gregorian_date(r["date"]),
                      "value": r["ownership_percent_calc"]}
                     for r in live.execute(
-                        "SELECT date, ownership_percent_calc "
-                        "FROM shareholder_holdings "
-                        "WHERE ins_code=? AND id_scheme=? AND shareholder_id=?"
-                        + holder_exclusion_clause + " ORDER BY date ASC",
-                        (w["ins_code"], scheme, int(sh_id))
-                        + tuple(holder_excluded_dates)).fetchall()
+                        "SELECT h.date, h.ownership_percent_calc "
+                        "FROM shareholder_holdings h "
+                        "WHERE h.ins_code=? AND h.id_scheme=? AND h.shareholder_id=? "
+                        "AND NOT EXISTS ("
+                        "  SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+                        "  WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                        "    AND x.id_scheme=h.id_scheme "
+                        "    AND x.shareholder_id=h.shareholder_id) "
+                        "ORDER BY h.date ASC",
+                        (w["ins_code"], scheme, int(sh_id))).fetchall()
                     if r["ownership_percent_calc"] is not None]
                 ev_where += " AND h.id_scheme=? AND h.shareholder_id=?"
                 ev_args += [scheme, int(sh_id)]
             events = []
-            event_exclusion_parts = [
-                "(h.date=? AND h.id_scheme=? AND h.shareholder_id=?)"
-                for _ in excluded_rows]
-            if event_exclusion_parts:
-                ev_where += " AND NOT (" + " OR ".join(event_exclusion_parts) + ")"
-                ev_args.extend(v for row in excluded_rows for v in row)
+            ev_where += (
+                " AND NOT EXISTS ("
+                "SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+                "WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                "AND x.id_scheme=h.id_scheme "
+                "AND x.shareholder_id=h.shareholder_id)")
             for r in live.execute(
                 "SELECT h.date AS date, h.jalali_date AS date_jalali, "
                 "  h.change_type AS change_type, h.shares_change AS shares_change, "
@@ -2222,23 +2224,20 @@ class SiteApi:
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
-            excluded_dates = [r[0] for r in sc.execute(
-                "SELECT date FROM site_excluded_holder_rows "
-                "WHERE ins_code=? AND id_scheme=? AND shareholder_id=?",
-                (w["ins_code"], scheme, int(sh_id))).fetchall()]
         finally:
             sc.close()
-        date_clause = (" AND date NOT IN (%s)" %
-                       ",".join("?" for _ in excluded_dates)
-                       if excluded_dates else "")
         live = self.live()
         try:
             rows = live.execute(
-                "SELECT date, ownership_percent_calc FROM shareholder_holdings "
-                "WHERE ins_code=? AND id_scheme=? AND shareholder_id=?"
-                + date_clause + " ORDER BY date ASC",
-                (w["ins_code"], scheme, int(sh_id))
-                + tuple(excluded_dates)).fetchall()
+                "SELECT h.date, h.ownership_percent_calc FROM shareholder_holdings h "
+                "WHERE h.ins_code=? AND h.id_scheme=? AND h.shareholder_id=? "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+                "  WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                "    AND x.id_scheme=h.id_scheme "
+                "    AND x.shareholder_id=h.shareholder_id) "
+                "ORDER BY h.date ASC",
+                (w["ins_code"], scheme, int(sh_id))).fetchall()
         finally:
             live.close()
         return {"history": [
@@ -2597,8 +2596,6 @@ class SiteApi:
         # The live DB is opened read-only, but SQLite permits attaching
         # the sidecar for read-only joins. This makes historical position
         # lookups obey the same source-proven exclusions as the latest index.
-        sidecar_path = sc.execute("PRAGMA database_list").fetchone()[2]
-        live.execute("ATTACH DATABASE ? AS sidecar_data", (sidecar_path,))
         # Step 1: which (symbol, id) pairs actually exist -- ONE batched
         # query over site_holder_latest, whose idx_holder_scheme
         # (id_scheme, shareholder_id) serves the IN list as point seeks
