@@ -1673,7 +1673,7 @@ class SiteApi:
                 # The old substring match (CAST(id AS TEXT) LIKE '%q%')
                 # forced the 69 s full scan; nobody pastes a partial id.
                 pairs = set()
-                for scheme in ("share_id", "ondate_share_id"):
+                for scheme in ("holder_id", "share_id", "ondate_share_id"):
                     r = live.execute(
                         "SELECT 1 FROM shareholders WHERE id_scheme=? "
                         "AND shareholder_id=? LIMIT 1",
