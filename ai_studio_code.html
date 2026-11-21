@@ -1411,7 +1411,7 @@
       useEffect(() => {
         if (!compQuery.trim()) { setCompResults([]); return; }
         const timer = setTimeout(() => {
-          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(compQuery.trim())}&limit=8}`)
+          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(compQuery.trim())}&limit=8`)
             .then(res => setCompResults(res.results || []))
             .catch(() => {});
         }, 200);
