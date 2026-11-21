@@ -49,7 +49,7 @@
 
 import argparse
 import csv
-from collections import Counter
+from collections import Counter, defaultdict
 import io
 import json
 import os
@@ -487,6 +487,95 @@ def _stream_insert(cur, sidecar, select_sql, insert_sql, transform,
             print("[refresh] %s: %d rows (%.1fs)"
                   % (label, n, time.time() - t0), flush=True)
     return n, time.time() - t0
+
+
+def _duplicate_ondate_source_ids(live):
+    """Return source IDs that are proven extra copies in a repeated endpoint
+    response. This is deliberately stricter than matching equal share counts:
+    at least 3 different business-row signatures must occur exactly twice,
+    those doubled signatures must represent at least 80% of all signatures,
+    and no signature may occur more than twice. Rows are grouped by the exact
+    instrument/date/endpoint/request reference. For each pair, retain the
+    smaller source ID and exclude only the larger one from summary totals.
+    """
+    exists = live.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='source_observations'").fetchone()
+    if not exists:
+        return set()
+
+    duplicate_ids = set()
+    qualifying_groups = 0
+    current_key = None
+    signature_counts = Counter()
+    signature_ids = defaultdict(list)
+
+    def _number(value):
+        if value is None:
+            return None
+        try:
+            n = float(value)
+            if abs(n - round(n)) < 1e-9:
+                return int(round(n))
+            return round(n, 6)
+        except (TypeError, ValueError, OverflowError):
+            return str(value)
+
+    def _flush():
+        nonlocal qualifying_groups
+        if current_key is None or len(signature_counts) < 3:
+            return
+        doubled = [sig for sig, count in signature_counts.items()
+                   if count == 2]
+        if (len(doubled) < 3
+                or len(doubled) / len(signature_counts) < 0.80
+                or any(count > 2 for count in signature_counts.values())):
+            return
+
+        # Validate every pair before excluding any row from this response.
+        extra_ids = []
+        for sig in doubled:
+            ids = sorted(set(signature_ids[sig]))
+            if len(ids) != 2 or ids[0] is None or ids[1] is None:
+                return
+            extra_ids.append(
+                (current_key[0], current_key[1], int(ids[1])))
+        duplicate_ids.update(extra_ids)
+        qualifying_groups += 1
+
+    cursor = live.execute(
+        "SELECT ins_code, row_date, endpoint, request_ref, name, shares, "
+        "percent, change_code, change_amount, source_id "
+        "FROM source_observations "
+        "WHERE endpoint='shareholders_on_date' "
+        "AND row_date IS NOT NULL AND request_ref IS NOT NULL "
+        "AND shares IS NOT NULL AND percent IS NOT NULL "
+        "ORDER BY ins_code, row_date, endpoint, request_ref, source_id")
+    while True:
+        batch = cursor.fetchmany(20000)
+        if not batch:
+            break
+        for row in batch:
+            key = (row[0], row[1], row[2], row[3])
+            if key != current_key:
+                _flush()
+                current_key = key
+                signature_counts = Counter()
+                signature_ids = defaultdict(list)
+            signature = (
+                normalize_fa(row[4] or ""),
+                _number(row[5]),
+                _number(row[6]),
+                _number(row[7]),
+                _number(row[8]),
+            )
+            signature_counts[signature] += 1
+            signature_ids[signature].append(row[9])
+    _flush()
+
+    print("[refresh] repeated endpoint groups: %d; duplicate rows excluded: %d"
+          % (qualifying_groups, len(duplicate_ids)), flush=True)
+    return duplicate_ids
 
 
 def _mirrored_source_snapshot_dates(live):
@@ -940,6 +1029,7 @@ def refresh_summaries(live, sidecar):
                 " deduped_count INTEGER, raw_pct REAL, raw_count INTEGER,"
                 " PRIMARY KEY (ins_code, date))")
         mirrored_snapshot_dates = _mirrored_source_snapshot_dates(live)
+        repeated_source_ids = _duplicate_ondate_source_ids(live)
         cur2 = live.cursor()
         cursor = cur2.execute(
             "SELECT h.ins_code, h.date, h.shares, h.ownership_percent_calc, "
@@ -999,8 +1089,10 @@ def refresh_summaries(live, sidecar):
                 # canonical share_id rows already present for this date.
                 # Keep them in raw_pct for audit transparency, but do not
                 # add them a second time to the analytical total.
-                if key in mirrored_snapshot_dates and r[4] == "ondate_share_id":
-                    continue
+                if r[4] == "ondate_share_id":
+                    source_key = (r[0], r[1], int(r[5])) if r[5] is not None else None
+                    if key in mirrored_snapshot_dates or source_key in repeated_source_ids:
+                        continue
                 sh = r[2]
                 # Deduplicate only when the source explicitly links two
                 # identifiers to the same holder. Equal share counts alone
