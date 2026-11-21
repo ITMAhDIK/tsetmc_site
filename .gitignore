@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.log
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.zip
+.dist/
+.env
+.venv/
+venv/
+node_modules/

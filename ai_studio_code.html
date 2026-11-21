@@ -1,0 +1,2217 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ره‌نگار بورس | پلتفرم تحلیل چندسهمی سهام‌داران و پرتفوی (TSETMC)</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.28.5/babel.min.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --bg-canvas: #0b0e14;
+      --bg-panel: #131722;
+      --bg-elevated: #1a202c;
+      --border-subtle: #242b3d;
+      --text-primary: #e6eaf2;
+      --text-secondary: #8b95a8;
+      --text-muted: #5f697d;
+      --up: #00c853;
+      --down: #ff3d00;
+      --accent: #2962ff;
+    }
+    .theme-light {
+      --bg-canvas: #f1f5f9;
+      --bg-panel: #ffffff;
+      --bg-elevated: #f8fafc;
+      --border-subtle: #cbd5e1;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+    }
+    body {
+      font-family: 'Vazirmatn', Tahoma, sans-serif;
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      margin: 0;
+    }
+    .num {
+      font-variant-numeric: tabular-nums;
+      direction: ltr;
+      display: inline-block;
+    }
+    /* A td/th with display inline-block stops behaving as a table cell,
+       so its content drifts away from its column header. Table cells keep
+       table-cell; inline spans keep inline-block. */
+    td.num, th.num {
+      display: table-cell;
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-canvas); }
+    ::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+    // --- 1. API Client ---
+    const API_BASE = window.location.protocol.startsWith('http') && window.location.port === '8000'
+      ? ''
+      : 'http://127.0.0.1:8000';
+
+    async function apiFetch(path, options = {}) {
+      const res = await fetch(`${API_BASE}${path}`, {
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `خطای سرور (${res.status})`);
+      }
+      return res.json();
+    }
+
+    // --- 2. Persian Formatters ---
+    const FA_DIGITS = ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'];
+    const toFa = (v) => (v === null || v === undefined ? 'نامشخص' : String(v).replace(/\d/g, d => FA_DIGITS[Number(d)]));
+    const fmtNum = (n) => (n === null || n === undefined ? '—' : toFa(new Intl.NumberFormat('en-US').format(Math.round(n))));
+    const fmtPct = (p, dec = 3) => (p === null || p === undefined ? '—' : `${toFa(Number(p).toFixed(dec))}٪`);
+    // همت = هزار میلیارد تومان (1e12 Toman)؛ همر = هزار میلیارد ریال (1e12 Rial).
+    const fmtMoney = (rial, unit = 'IRR') => {
+      if (rial === null || rial === undefined) return '—';
+      const val = unit === 'IRT' ? rial / 10 : rial;
+      const suffix = unit === 'IRT' ? 'تومان' : 'ریال';
+      if (Math.abs(val) >= 1e12) return `${toFa((val / 1e12).toFixed(2))} ${unit === 'IRT' ? 'همت' : 'همر'} (${suffix})`;
+      if (Math.abs(val) >= 1e9) return `${toFa((val / 1e9).toFixed(2))} میلیارد ${suffix}`;
+      return `${fmtNum(val)} ${suffix}`;
+    };
+
+    // --- 2b. Jalali <-> Gregorian (jalaali-js algorithm, 33-year cycle;
+    // verified in the VM against 10 known pairs + a 7-year round-trip sweep).
+    // div/mod truncate toward zero (NOT Math.floor) -- that matters for
+    // negative intermediates like (gm-8)/6.
+    const _div = (a, b) => ~~(a / b);
+    const _mod = (a, b) => a - _div(a, b) * b;
+    function _jalCal(jy) {
+      const breaks = [-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178];
+      const bl = breaks.length;
+      const gy = jy + 621;
+      let leapJ = -14, jp = breaks[0], jump = 0;
+      for (let i = 1; i < bl; i++) {
+        const jm = breaks[i]; jump = jm - jp;
+        if (jy < jm) break;
+        leapJ += _div(jump, 33) * 8 + _div(_mod(jump, 33), 4);
+        jp = jm;
+      }
+      let n = jy - jp;
+      leapJ += _div(n, 33) * 8 + _div(_mod(n, 33) + 3, 4);
+      if (_mod(jump, 33) === 4 && jump - n === 4) leapJ += 1;
+      const leapG = _div(gy, 4) - _div((_div(gy, 100) + 1) * 3, 4) - 150;
+      const march = 20 + leapJ - leapG;
+      if (jump - n < 6) n = n - jump + _div(jump + 4, 33) * 33;
+      let leap = _mod(_mod(n + 1, 33) - 1, 4);
+      if (leap === -1) leap = 4;
+      return { leap, gy, march };
+    }
+    function _gregorianToJdn(gy, gm, gd) {
+      let d = _div((gy + _div(gm - 8, 6) + 100100) * 1461, 4)
+        + _div(153 * _mod(gm + 9, 12) + 2, 5) + gd - 34840408;
+      d = d - _div(_div(gy + 100100 + _div(gm - 8, 6), 100) * 3, 4) + 752;
+      return d;
+    }
+    function _jdnToGregorian(jdn) {
+      let j = 4 * jdn + 139361631;
+      j = j + _div(_div(4 * jdn + 183187720, 146097) * 3, 4) * 4 - 3908;
+      const i = _div(_mod(j, 1461), 4) * 5 + 308;
+      const gd = _div(_mod(i, 153), 5) + 1;
+      const gm = _mod(_div(i, 153), 12) + 1;
+      const gy = _div(j, 1461) - 100100 + _div(8 - gm, 6);
+      return { gy, gm, gd };
+    }
+    function _jalaliToJdn(jy, jm, jd) {
+      const r = _jalCal(jy);
+      return _gregorianToJdn(r.gy, 3, r.march) + (jm - 1) * 31 - _div(jm - 1, 7) * (jm - 7) + jd - 1;
+    }
+    function _jdnToJalali(jdn) {
+      const gy = _jdnToGregorian(jdn).gy;
+      let jy = gy - 621;
+      const r = _jalCal(jy);
+      const jdn1f = _gregorianToJdn(gy, 3, r.march);
+      let jd, jm, k = jdn - jdn1f;
+      if (k >= 0) {
+        if (k <= 185) { jm = 1 + _div(k, 31); jd = _mod(k, 31) + 1; return { jy, jm, jd }; }
+        k -= 186;
+      } else {
+        jy -= 1; k += 179;
+        if (r.leap === 1) k += 1;
+      }
+      jm = 7 + _div(k, 30); jd = _mod(k, 30) + 1;
+      return { jy, jm, jd };
+    }
+    const _toJalaali = (gy, gm, gd) => _jdnToJalali(_gregorianToJdn(gy, gm, gd));
+    const _toGregorian = (jy, jm, jd) => _jdnToGregorian(_jalaliToJdn(jy, jm, jd));
+    const _pad2 = (n) => String(n).padStart(2, '0');
+
+    // Global date mode ('jalali' | 'gregorian'), set by App. fmtDate reads
+    // it at render time, so toggling re-renders every date in the UI.
+    let DATE_MODE = 'jalali';
+    const setDateModeGlobal = (m) => { DATE_MODE = m === 'gregorian' ? 'gregorian' : 'jalali'; };
+    // Jalali input ('1405-08-23' or '1405/08/23') -> display per DATE_MODE.
+    const fmtDate = (jalaliStr) => {
+      if (jalaliStr === null || jalaliStr === undefined || jalaliStr === '') return '—';
+      const s = String(jalaliStr).replace(/\//g, '-').slice(0, 10);
+      const parts = s.split('-').map(Number);
+      if (parts.length !== 3 || parts.some(isNaN)) return toFa(s);
+      if (DATE_MODE === 'gregorian') {
+        const g = _toGregorian(parts[0], parts[1], parts[2]);
+        return toFa(`${g.gy}-${_pad2(g.gm)}-${_pad2(g.gd)}`);
+      }
+      return toFa(`${parts[0]}/${_pad2(parts[1])}/${_pad2(parts[2])}`);
+    };
+    // Gregorian input ('2024-01-10') -> display per DATE_MODE.
+    const fmtGregorianDate = (gregStr) => {
+      if (gregStr === null || gregStr === undefined || gregStr === '') return '—';
+      const s = String(gregStr).replace(/\//g, '-').slice(0, 10);
+      const parts = s.split('-').map(Number);
+      if (parts.length !== 3 || parts.some(isNaN)) return toFa(s);
+      if (DATE_MODE === 'gregorian') return toFa(s);
+      const j = _toJalaali(parts[0], parts[1], parts[2]);
+      return toFa(`${j.jy}/${_pad2(j.jm)}/${_pad2(j.jd)}`);
+    };
+    // UTC ISO timestamp -> Tehran wall time, 'در تاریخ {date} ساعت {HH:MM}'.
+    const fmtDateTime = (iso) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '—';
+      const tehran = new Date(d.getTime() + 3.5 * 3600 * 1000);
+      const ds = `${tehran.getUTCFullYear()}-${_pad2(tehran.getUTCMonth() + 1)}-${_pad2(tehran.getUTCDate())}`;
+      const ts = `${_pad2(tehran.getUTCHours())}:${_pad2(tehran.getUTCMinutes())}`;
+      return `در تاریخ ${fmtGregorianDate(ds)} ساعت ${toFa(ts)}`;
+    };
+
+    // --- 2c. Identity tiers (the pipeline's real vocabulary) ---
+    const IDENTITY_TIERS = {
+      verified_same_source_row: 3,
+      inferred_exact_match: 2,
+      unlinked_record_id: 1,
+      ambiguous_not_linked: 1,
+      source_id: 1,
+    };
+    const identityTier = (status) => IDENTITY_TIERS[status] || 0;
+    // Normalize a Persian name for dedup (Arabic ي/ك -> Persian, ZWNJ ->
+    // a space so 'سرمایه‌گذاری' and 'سرمایه گذاری' match, digits, space).
+    const normalizeFaName = (s) => String(s || '')
+      .replace(/[\u0643\u06A9]/g, 'ک').replace(/[\u064A\u06CC\u0649]/g, 'ی')
+      .replace(/[\u200C\u200D]/g, ' ').replace(/\uFEFF/g, '').replace(/\s+/g, ' ').trim();
+    // Collapse rows that are the same holder under several id schemes:
+    // keep the row with the best identity tier (ties: most shares), and
+    // count how many raw records were merged into each displayed row.
+    // Major holders, name-deduped. Rows with NO share count are NOT
+    // counted as major holders (they carry no quantity); they are listed
+    // separately by unquantifiedHolders so the counts stay honest.
+    const dedupHolders = (rows) => {
+      const byName = new Map();
+      for (const h of (rows || [])) {
+        if (h.shares === null || h.shares === undefined) continue;
+        const key = normalizeFaName(h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
+        const cur = byName.get(key);
+        if (!cur) { byName.set(key, { ...h, _merged: 1 }); continue; }
+        cur._merged += 1;
+        const tNew = identityTier(h.identity_status), tCur = identityTier(cur.identity_status);
+        if (tNew > tCur || (tNew === tCur && (h.shares || 0) > (cur.shares || 0))) {
+          byName.set(key, { ...h, _merged: cur._merged });
+        }
+      }
+      return Array.from(byName.values());
+    };
+    // Holders mentioned on the latest date without any share count.
+    const unquantifiedHolders = (rows) => {
+      const names = new Map();
+      for (const h of (rows || [])) {
+        if (h.shares === null || h.shares === undefined) {
+          const key = normalizeFaName(h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
+          if (!names.has(key)) names.set(key, h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
+        }
+      }
+      return Array.from(names.values());
+    };
+
+    // --- 3. Reusable UI Components ---
+    // Chart with: area/line/candlestick/bar types, event markers, Jalali
+    // axis ticks (per DATE_MODE), right-edge anchoring (zooming out never
+    // leaves empty space on the right), fullscreen, and simple drawing
+    // tools (trend line / rectangle / horizontal line) as an SVG overlay.
+    // Markers + ohlc are memoized by the parent (JSON key) so the chart
+    // is not rebuilt on every render.
+    function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = false, allowFullscreen = true, onHover = null }) {
+      const ref = useRef(null);
+      const wrapRef = useRef(null);
+      const chartRef = useRef(null);
+      const seriesRef = useRef(null);
+      const onHoverRef = useRef(onHover);
+      onHoverRef.current = onHover;
+      const [full, setFull] = useState(false);
+      const [tool, setTool] = useState(null);
+      const [drawings, setDrawings] = useState([]);
+      const [draft, setDraft] = useState(null);
+      // Scale controls (TradingView-style, bottom-right): A = auto-scale,
+      // L = logarithmic price scale.
+      const [logScale, setLogScale] = useState(false);
+      const [autoScale, setAutoScale] = useState(true);
+      const [, setDrawVersion] = useState(0);
+      const markersKey = JSON.stringify(markers || []);
+
+      const cleanData = useMemo(() => {
+        if (type === 'candlestick' || type === 'bar') {
+          const rows = Array.isArray(ohlc) ? ohlc : (Array.isArray(data) ? data : []);
+          const byTime = new Map();
+          for (const item of rows) {
+            if (!item || !item.time) continue;
+            const o = Number(item.open), h = Number(item.high), l = Number(item.low), c = Number(item.close);
+            if ([o, h, l, c].some(v => v === null || v === undefined || isNaN(v))) continue;
+            byTime.set(String(item.time).slice(0, 10), { time: String(item.time).slice(0, 10), open: o, high: h, low: l, close: c });
+          }
+          return Array.from(byTime.values()).sort((a, b) => a.time.localeCompare(b.time));
+        }
+        if (!Array.isArray(data)) return [];
+        const byTime = new Map();
+        for (const item of data) {
+          if (item && item.time && item.value !== null && item.value !== undefined && !isNaN(Number(item.value))) {
+            byTime.set(String(item.time).slice(0, 10), { time: String(item.time).slice(0, 10), value: Number(item.value) });
+          }
+        }
+        return Array.from(byTime.values()).sort((a, b) => a.time.localeCompare(b.time));
+      }, [data, ohlc, type]);
+
+      useEffect(() => {
+        if (!ref.current || !window.LightweightCharts || cleanData.length === 0) return;
+        const isLight = theme === 'light';
+        const tickFmt = (time) => fmtGregorianDate(String(time).slice(0, 10));
+        const chart = window.LightweightCharts.createChart(ref.current, {
+          height,
+          layout: {
+            background: { type: 'solid', color: isLight ? '#ffffff' : '#131722' },
+            textColor: isLight ? '#475569' : '#8b95a8',
+            fontFamily: 'Vazirmatn, sans-serif',
+          },
+          grid: {
+            vertLines: { color: isLight ? '#e2e8f0' : '#1e2536' },
+            horzLines: { color: isLight ? '#e2e8f0' : '#1e2536' },
+          },
+          rightPriceScale: { borderColor: isLight ? '#cbd5e1' : '#242b3d', mode: logScale ? 1 : 0, autoScale },
+          timeScale: { borderColor: isLight ? '#cbd5e1' : '#242b3d', timeVisible: false, tickMarkFormatter: tickFmt },
+          localization: {
+            priceFormatter: (p) => `${p.toFixed(2)} ${unitLabel}`,
+            timeFormatter: (time) => fmtGregorianDate(String(time).slice(0, 10)),
+          },
+        });
+        let series;
+        if (type === 'candlestick') {
+          series = chart.addCandlestickSeries({ upColor: '#00c853', downColor: '#ff3d00', wickUpColor: '#00c853', wickDownColor: '#ff3d00', borderVisible: false });
+        } else if (type === 'bar') {
+          series = chart.addBarSeries({ upColor: '#00c853', downColor: '#ff3d00' });
+        } else if (type === 'line') {
+          series = chart.addLineSeries({ color, lineWidth: 2 });
+        } else {
+          series = chart.addAreaSeries({ lineColor: color, topColor: `${color}55`, bottomColor: `${color}05`, lineWidth: 2 });
+        }
+        series.setData(cleanData);
+        const parsedMarkers = JSON.parse(markersKey || '[]');
+        if (parsedMarkers.length > 0) {
+          try { series.setMarkers(parsedMarkers); } catch (e) { /* markers on missing times are ignored */ }
+        }
+        chart.timeScale().fitContent();
+        // Right-edge anchor: zooming out must never leave empty space on
+        // the right; clamp the visible range so the last bar stays at the
+        // right edge (2 bars of breathing room).
+        const lastIdx = cleanData.length - 1;
+        const clampRight = (range) => {
+          if (!range) return;
+          if (range.to > lastIdx + 2) {
+            const span = range.to - range.from;
+            chart.timeScale().setVisibleLogicalRange({ from: lastIdx + 2 - span, to: lastIdx + 2 });
+          }
+        };
+        chart.timeScale().subscribeVisibleLogicalRangeChange(clampRight);
+        const bumpDraw = () => setDrawVersion(v => v + 1);
+        chart.timeScale().subscribeVisibleTimeRangeChange(bumpDraw);
+        chart.subscribeCrosshairMove(bumpDraw);
+        if (onHoverRef.current) {
+          chart.subscribeCrosshairMove((param) => {
+            const cb = onHoverRef.current;
+            if (!cb) return;
+            if (!param || !param.time) { cb(null); return; }
+            cb({
+              time: String(param.time).slice(0, 10),
+              x: param.point ? param.point.x : null,
+              y: param.point ? param.point.y : null,
+            });
+          });
+        }
+        chartRef.current = chart;
+        seriesRef.current = series;
+
+        const ro = new ResizeObserver(() => {
+          if (ref.current) chart.applyOptions({ width: ref.current.clientWidth });
+        });
+        ro.observe(ref.current);
+        return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
+      }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, logScale, autoScale]);
+
+      // --- drawing overlay ---
+      const pointFromEvent = (e) => {
+        const chart = chartRef.current, series = seriesRef.current, wrap = wrapRef.current;
+        if (!chart || !series || !wrap) return null;
+        const rect = wrap.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        let time = null;
+        try { time = chart.timeScale().coordinateToTime(x); } catch (err) { time = null; }
+        let price = null;
+        try { price = series.coordinateToPrice(y); } catch (err) { price = null; }
+        if (time === null || time === undefined || price === null || price === undefined || isNaN(price)) return null;
+        return { time: String(time).slice(0, 10), price };
+      };
+      const onOverlayDown = (e) => {
+        if (!tool) return;
+        const p = pointFromEvent(e);
+        if (!p) return;
+        if (tool === 'hline') {
+          setDrawings(ds => [...ds, { id: Date.now() + Math.random(), kind: 'hline', price: p.price }]);
+          setTool(null);
+          return;
+        }
+        setDraft({ kind: tool, p1: p, p2: p });
+      };
+      const onOverlayMove = (e) => {
+        if (!draft) return;
+        const p = pointFromEvent(e);
+        if (!p) return;
+        setDraft(d => d ? { ...d, p2: p } : d);
+      };
+      const onOverlayUp = () => {
+        if (!draft) return;
+        setDrawings(ds => [...ds, { id: Date.now() + Math.random(), ...draft }]);
+        setDraft(null);
+      };
+      const drawingXY = (d) => {
+        const chart = chartRef.current, series = seriesRef.current;
+        if (!chart || !series) return null;
+        const toXY = (p) => {
+          const x = chart.timeScale().timeToCoordinate(p.time);
+          const y = series.priceToCoordinate(p.price);
+          return (x === null || x === undefined || y === null || y === undefined) ? null : { x, y };
+        };
+        if (d.kind === 'hline') {
+          const y = series.priceToCoordinate(d.price);
+          return (y === null || y === undefined) ? null : { hlineY: y };
+        }
+        const a = toXY(d.p1), b = toXY(d.p2);
+        return (a && b) ? { a, b } : null;
+      };
+      const renderDrawings = () => {
+        const wrap = wrapRef.current;
+        if (!wrap) return null;
+        const W = wrap.clientWidth, H = wrap.clientHeight;
+        const all = draft ? [...drawings, { ...draft, id: 'draft' }] : drawings;
+        return (
+          <svg className="absolute inset-0 pointer-events-none" width={W} height={H} style={{ zIndex: 5 }}>
+            {all.map(d => {
+              const xy = drawingXY(d);
+              if (!xy) return null;
+              if (d.kind === 'hline') {
+                return (
+                  <g key={d.id}>
+                    <line x1={0} y1={xy.hlineY} x2={W} y2={xy.hlineY} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="6 3" />
+                    <text x={W - 4} y={xy.hlineY - 4} fill="#f59e0b" fontSize={10} textAnchor="end">{toFa(Number(d.price).toFixed(2))}</text>
+                  </g>
+                );
+              }
+              if (d.kind === 'rect') {
+                const x = Math.min(xy.a.x, xy.b.x), y = Math.min(xy.a.y, xy.b.y);
+                return <rect key={d.id} x={x} y={y} width={Math.abs(xy.b.x - xy.a.x)} height={Math.abs(xy.b.y - xy.a.y)} fill="#2962ff22" stroke="#2962ff" strokeWidth={1.5} />;
+              }
+              return <line key={d.id} x1={xy.a.x} y1={xy.a.y} x2={xy.b.x} y2={xy.b.y} stroke="#00c853" strokeWidth={2} />;
+            })}
+          </svg>
+        );
+      };
+
+      if (!window.LightweightCharts) return <div className="p-4 text-xs text-amber-400">کتابخانه نمودار بارگذاری نشد.</div>;
+      if (cleanData.length === 0) return <div className="p-6 text-center text-xs text-[var(--text-secondary)]">سری زمانی معتبری برای رسم نمودار در این بازه موجود نیست.</div>;
+      return (
+        <div ref={wrapRef} className={full ? 'fixed inset-0 z-[100] bg-[var(--bg-canvas)] p-4 flex flex-col' : 'relative w-full'}>
+          {(enableDrawing || allowFullscreen) && (
+            <div className="flex flex-wrap gap-1.5 items-center mb-1.5 text-[11px]">
+              {allowFullscreen && (
+                <button onClick={() => setFull(f => !f)} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+                  {full ? '✕ خروج از تمام‌صفحه' : '⛶ تمام‌صفحه'}
+                </button>
+              )}
+              {enableDrawing && (
+                <>
+                  <span className="text-[var(--text-secondary)]">ابزار ترسیم:</span>
+                  <button onClick={() => setTool(t => t === 'line' ? null : 'line')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'line' ? 'bg-emerald-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>╲ خط روند</button>
+                  <button onClick={() => setTool(t => t === 'rect' ? null : 'rect')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'rect' ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>▭ مستطیل</button>
+                  <button onClick={() => setTool(t => t === 'hline' ? null : 'hline')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'hline' ? 'bg-amber-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>― خط افقی</button>
+                  <button onClick={() => setDrawings(ds => ds.slice(0, -1))} disabled={drawings.length === 0} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">↩ بازگشت</button>
+                  <button onClick={() => setDrawings([])} disabled={drawings.length === 0} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">✕ پاک کردن ترسیم‌ها</button>
+                  {tool && <span className="text-amber-300">روی نمودار بکشید (ابزار فعال: {tool === 'line' ? 'خط روند' : tool === 'rect' ? 'مستطیل' : 'خط افقی'})</span>}
+                </>
+              )}
+            </div>
+          )}
+          <div className="relative flex-1" style={full ? { minHeight: 0 } : undefined}>
+            <div ref={ref} className="w-full" dir="ltr" />
+            <div className="absolute bottom-1 right-1 z-10 flex gap-1" dir="ltr">
+              <button title="مقیاس خودکار (Auto scale)" onClick={() => setAutoScale(a => !a)} className={`w-6 h-6 rounded border text-[11px] font-bold ${autoScale ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>A</button>
+              <button title="مقیاس لگاریتمی (Log scale)" onClick={() => setLogScale(l => !l)} className={`w-6 h-6 rounded border text-[11px] font-bold ${logScale ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>L</button>
+            </div>
+            {enableDrawing && (
+              <div
+                className="absolute inset-0"
+                style={{ zIndex: 4, pointerEvents: tool || draft ? 'auto' : 'none', cursor: tool ? 'crosshair' : 'default' }}
+                onMouseDown={onOverlayDown}
+                onMouseMove={onOverlayMove}
+                onMouseUp={onOverlayUp}
+                onMouseLeave={() => setDraft(null)}
+              />
+            )}
+            {renderDrawings()}
+          </div>
+        </div>
+      );
+    }
+
+    const IdentityBadge = ({ status }) => {
+      const map = {
+        verified_same_source_row: { text: 'تأییدشده (هم‌ردیف منبع)', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+        inferred_exact_match: { text: 'تطبیق دقیق استنتاجی', cls: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+        unlinked_record_id: { text: 'شناسه منفرد (تأییدنشده)', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+        ambiguous_not_linked: { text: 'مبهم / پیوند نشده', cls: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
+        source_id: { text: 'بدون اطلاعات پیوند (منبع)', cls: 'bg-slate-500/15 text-slate-400 border-slate-500/30' },
+      };
+      const item = map[status];
+      if (!item) return <span className="px-1.5 py-0.5 text-[10px] rounded border bg-slate-500/15 text-slate-400 border-slate-500/30">{status || '—'}</span>;
+      return <span className={`px-1.5 py-0.5 text-[10px] rounded border ${item.cls}`}>{item.text}</span>;
+    };
+
+    const ErrorBox = ({ error }) => error ? (
+      <div className="p-3 rounded border border-red-500/40 bg-red-500/10 text-red-300 text-xs">{error}</div>
+    ) : null;
+
+    // --- 4. Page 1: Multi-Stock Market Dashboard ---
+    function MarketDashboardPage({ onOpenStock, onOpenInvestor, currency, dateMode }) {
+      const [overview, setOverview] = useState(null);
+      const [watch, setWatch] = useState({ total: 0, rows: [] });
+      const [q, setQ] = useState('');
+      const [market, setMarket] = useState('ALL');
+      const [sortBy, setSortBy] = useState('disclosed_pct');
+      const [sortDir, setSortDir] = useState('DESC');
+      const [offset, setOffset] = useState(0);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const limit = 50;
+
+      useEffect(() => {
+        apiFetch('/api/v1/market/overview').then(setOverview).catch(e => setError(e.message));
+      }, []);
+
+      useEffect(() => {
+        const timer = setTimeout(() => {
+          setLoading(true);
+          const qs = new URLSearchParams({ q, market, sort_by: sortBy, sort_dir: sortDir, limit: String(limit), offset: String(offset) });
+          apiFetch(`/api/v1/market/watch?${qs.toString()}`)
+            .then(res => { setWatch(res); setError(''); })
+            .catch(e => setError(e.message))
+            .finally(() => setLoading(false));
+        }, 200);
+        return () => clearTimeout(timer);
+      }, [q, market, sortBy, sortDir, offset]);
+
+      const toggleSort = (col) => {
+        setOffset(0);
+        if (sortBy === col) setSortDir(d => d === 'DESC' ? 'ASC' : 'DESC');
+        else { setSortBy(col); setSortDir('DESC'); }
+      };
+
+      const sum = overview?.summary || {};
+
+      return (
+        <div className="space-y-3">
+          <ErrorBox error={error} />
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+              <div className="text-[11px] text-[var(--text-secondary)]">شرکت‌های واردشده در پایگاه داده</div>
+              <div className="text-lg font-bold num mt-1 text-blue-400">{fmtNum(sum.total_companies ?? 0)} نماد</div>
+              <div className="text-[11px] text-[var(--text-secondary)] mt-1">
+                بورس: <span className="num">{fmtNum(sum.tse_companies ?? 0)}</span> | فرابورس: <span className="num">{fmtNum(sum.ifb_companies ?? 0)}</span> | نامشخص: <span className="num">{fmtNum(sum.unknown_market_companies ?? 0)}</span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+              <div className="text-[11px] text-[var(--text-secondary)]">پوشش زمانی و حجم رکوردها</div>
+              <div className="text-sm font-bold num mt-1">
+                از {sum.earliest_date_jalali ? fmtDate(sum.earliest_date_jalali) : '—'} تا {sum.latest_date_jalali ? fmtDate(sum.latest_date_jalali) : '—'}
+              </div>
+              <div className="text-[11px] text-[var(--text-secondary)] mt-1">کل رکوردهای سهام‌داری: <span className="num">{fmtNum(sum.total_holdings_rows ?? 0)}</span></div>
+            </div>
+
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+              <div className="flex justify-between items-center text-[11px] text-[var(--text-secondary)]">
+                <span>شاخص‌های بازار (TSE / IFB)</span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300">داده موجود نیست</span>
+              </div>
+              <div className="mt-2 text-xs text-[var(--text-muted)]">
+                شاخص کل و حجم معاملات در داده‌های جمع‌آوری‌شده موجود نیست (در انتظار اتصال فید بازار).
+              </div>
+            </div>
+
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+              <div className="text-[11px] text-[var(--text-secondary)]">آخرین به‌روزرسانی دیتابیس</div>
+              <div className="text-sm font-bold num mt-1">{sum.last_updated_at ? fmtDateTime(sum.last_updated_at) : '—'}</div>
+              <div className="text-[11px] text-emerald-400 mt-1">منبع: SQLite محلی</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+            <div className="lg:col-span-8 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+              <div className="p-2.5 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-2">
+                <h2 className="text-xs font-bold">فهرست کل نمادهای واردشده ({fmtNum(watch.total)} نماد)</h2>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <input value={q} onChange={e => { setQ(e.target.value); setOffset(0); }} placeholder="جستجوی نماد یا شرکت..." className="px-2.5 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48" />
+                  <select value={market} onChange={e => { setMarket(e.target.value); setOffset(0); }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
+                    <option value="ALL">همه بازارها</option>
+                    <option value="TSE">بورس (TSE)</option>
+                    <option value="IFB">فرابورس (IFB)</option>
+                    <option value="UNKNOWN">تعیین‌نشده (UNKNOWN)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-right">
+                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)] border-b border-[var(--border-subtle)]">
+                    <tr>
+                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('symbol')}>نماد ⇅</th>
+                      <th className="p-2">نام شرکت</th>
+                      <th className="p-2">بازار</th>
+                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('total_shares')}>کل سهام ⇅</th>
+                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('market_value')}>ارزش بازار ⇅</th>
+                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_count')}>سهام‌دار عمده ⇅</th>
+                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_pct')}>مالکیت عمده٪ ⇅</th>
+                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('latest_date')}>آخرین تاریخ ⇅</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {loading ? (
+                      <tr><td colSpan="8" className="p-6 text-center text-[var(--text-secondary)]">در حال بارگذاری...</td></tr>
+                    ) : watch.rows.length === 0 ? (
+                      <tr><td colSpan="8" className="p-6 text-center text-[var(--text-secondary)]">نمادی یافت نشد. ابتدا پایپلاین ایمپورت را اجرا کنید.</td></tr>
+                    ) : watch.rows.map(r => (
+                      <tr key={r.symbol} onClick={() => onOpenStock(r.symbol)} className="hover:bg-[var(--bg-elevated)] cursor-pointer">
+                        <td className="p-2 font-bold text-blue-400">{r.symbol}</td>
+                        <td className="p-2">{r.company_name || '—'}</td>
+                        <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px]">{r.market}</span></td>
+                        <td className="p-2 num">{fmtNum(r.total_company_shares)}</td>
+                        <td className="p-2 num" title={r.latest_price ? `آخرین قیمت: ${fmtNum(r.latest_price)} ریال (${fmtGregorianDate(r.latest_price_date)})` : 'قیمت موجود نیست'}>{r.market_value !== null && r.market_value !== undefined ? fmtMoney(r.market_value, currency) : '—'}</td>
+                        <td className="p-2 num" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(r.disclosed_shareholder_count)}` : undefined}>{toFa(r.deduped_shareholder_count ?? r.disclosed_shareholder_count)}</td>
+                        <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : undefined}>{fmtPct(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum)}</td>
+                        <td className="p-2 num text-[var(--text-secondary)]">{fmtDate(r.latest_date_jalali)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="p-2 border-t border-[var(--border-subtle)] flex justify-between items-center text-xs">
+                <span className="text-[var(--text-secondary)]">نمایش {fmtNum(watch.total === 0 ? 0 : offset + 1)} تا {fmtNum(Math.min(offset + limit, watch.total))} از {fmtNum(watch.total)}</span>
+                <div className="flex gap-2">
+                  <button disabled={offset === 0} onClick={() => setOffset(o => Math.max(0, o - limit))} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] disabled:opacity-40">صفحه قبل</button>
+                  <button disabled={offset + limit >= watch.total} onClick={() => setOffset(o => o + limit)} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] disabled:opacity-40">صفحه بعد</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="lg:col-span-4 space-y-2.5">
+              <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                <h3 className="text-xs font-bold mb-2">بزرگ‌ترین تغییرات دیروز {overview?.top_changes_date_jalali ? fmtDate(overview.top_changes_date_jalali) : ''}</h3>
+                <div className="space-y-1.5 text-xs">
+                  {(overview?.top_ownership_changes || []).length === 0 ? (
+                    <div className="text-[var(--text-secondary)]">تغییری ثبت نشده است.</div>
+                  ) : overview.top_ownership_changes.map((m, i) => (
+                    <div key={i} onClick={() => onOpenStock(m.symbol)} className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] cursor-pointer hover:border-blue-500">
+                      <div className="flex justify-between font-semibold">
+                        <span className="text-blue-400">{m.symbol}</span>
+                        <span className={`num ${m.shares_change > 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}`}>
+                          {m.shares_change > 0 ? '+' : ''}{fmtNum(m.shares_change)}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-[var(--text-secondary)] truncate">{m.shareholder_name}</div>
+                      {m.value_rial !== null && m.value_rial !== undefined && (
+                        <div className="text-[11px] num text-[var(--text-secondary)]">ارزش تغییر: {fmtMoney(m.value_rial, currency)}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                <h3 className="text-xs font-bold mb-2">سهام‌داران عمده تازه‌مشاهده‌شده</h3>
+                <div className="space-y-1.5 text-xs">
+                  {(overview?.recently_observed_shareholders || []).map((n, i) => (
+                    <div key={i} onClick={() => (n.id_scheme && n.shareholder_id && onOpenInvestor) ? onOpenInvestor(`${n.id_scheme}:${n.shareholder_id}`) : onOpenStock(n.symbol)} className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] cursor-pointer" title="کلیک: پرتفوی این سهام‌دار">
+                      <div className="flex justify-between">
+                        <span className="font-bold text-blue-400" onClick={(e) => { e.stopPropagation(); onOpenStock(n.symbol); }}>{n.symbol}</span>
+                        <span className="text-[10px] text-amber-400">اولین مشاهده در داده</span>
+                      </div>
+                      <div className="text-[11px] truncate">{n.shareholder_name} ({fmtPct(n.ownership_percent_calculated)})</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 5. Page 2: Dynamic Stock Detail Page ---
+    function StockDetailPage({ symbol, currency, theme, dateMode, onOpenInvestor }) {
+      const [detail, setDetail] = useState(null);
+      const [holdersRes, setHoldersRes] = useState({ total: 0, rows: [], date_jalali: null });
+      const [selectedDate, setSelectedDate] = useState('');
+      const [seriesRes, setSeriesRes] = useState({ company_series: [], company_shares_series: [], holder_series: [], events: [] });
+      const [selectedHolder, setSelectedHolder] = useState('');
+      const [actions, setActions] = useState([]);
+      const [quality, setQuality] = useState(null);
+      const [prices, setPrices] = useState([]);
+      const [chartType, setChartType] = useState('candlestick');
+      const [chartMetric, setChartMetric] = useState('pct');
+      const [tab, setTab] = useState('overview');
+      const [sortBy, setSortBy] = useState('shares');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        if (!symbol) return;
+        setLoading(true);
+        setSelectedDate('');
+        setSelectedHolder('');
+        Promise.all([
+          apiFetch(`/api/v1/stocks/${encodeURIComponent(symbol)}`),
+          apiFetch(`/api/v1/stocks/${encodeURIComponent(symbol)}/ownership-series`),
+          apiFetch(`/api/v1/stocks/${encodeURIComponent(symbol)}/corporate-actions`),
+          apiFetch(`/api/v1/stocks/${encodeURIComponent(symbol)}/data-quality`),
+          apiFetch(`/api/v1/stocks/${encodeURIComponent(symbol)}/prices`).catch(() => ({ prices: [] })),
+        ])
+          .then(([d, ser, ca, dq, pr]) => {
+            setDetail(d);
+            setSeriesRes(ser);
+            setActions(ca.corporate_actions || []);
+            setQuality(dq);
+            setPrices(pr.prices || []);
+            setError('');
+          })
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [symbol]);
+
+      useEffect(() => {
+        if (!symbol) return;
+        const qs = new URLSearchParams({ sort_by: sortBy, sort_dir: 'DESC', limit: '100' });
+        if (selectedDate) qs.set('date_jalali', selectedDate);
+        apiFetch(`/api/v1/stocks/${encodeURIComponent(symbol)}/shareholders?${qs.toString()}`)
+          .then(setHoldersRes)
+          .catch(() => {});
+      }, [symbol, selectedDate, sortBy]);
+
+      useEffect(() => {
+        if (!symbol) return;
+        const qs = new URLSearchParams();
+        if (selectedHolder) {
+          const [scheme, shId] = selectedHolder.split('|');
+          qs.set('id_scheme', scheme);
+          qs.set('shareholder_id', shId);
+        }
+        apiFetch(`/api/v1/stocks/${encodeURIComponent(symbol)}/ownership-series?${qs.toString()}`)
+          .then(setSeriesRes)
+          .catch(() => {});
+      }, [symbol, selectedHolder]);
+
+      // One marker per DATE (not per event): hovering a marker opens a
+      // small popup with every event of that day. Marker text is EMPTY:
+      // texts on dense daily markers overlapped into an unreadable pile.
+      // Only REAL share changes are events here (increase/decrease):
+      // a first observation ('new') or an unchanged row is not a buy/sell.
+      const eventsByDate = useMemo(() => {
+        const byDate = new Map();
+        for (const ev of (seriesRes.events || [])) {
+          if (!ev.date_gregorian) continue;
+          if (ev.change_type !== 'increase' && ev.change_type !== 'decrease') continue;
+          const d = String(ev.date_gregorian).slice(0, 10);
+          if (!byDate.has(d)) byDate.set(d, { events: [], capitalIncreases: [] });
+          byDate.get(d).events.push(ev);
+        }
+        for (const ca of actions) {
+          if (!ca.event_date_gregorian) continue;
+          if (ca.action_type !== 'capital_increase') continue;
+          const d = String(ca.event_date_gregorian).slice(0, 10);
+          if (!byDate.has(d)) byDate.set(d, { events: [], capitalIncreases: [] });
+          byDate.get(d).capitalIncreases.push(ca);
+        }
+        return byDate;
+      }, [seriesRes.events, actions]);
+      const [hoveredDay, setHoveredDay] = useState(null);
+      const [hoveredPriceDay, setHoveredPriceDay] = useState(null);
+      // Toggle to hide the event circles / capital-increase triangles.
+      const [showMarkers, setShowMarkers] = useState(true);
+      const eventMarkers = useMemo(() => {
+        const out = [];
+        for (const [d, day] of eventsByDate) {
+          if (day.events.length === 0) continue;
+          const net = day.events.reduce((s, ev) => s + (ev.shares_change || 0), 0);
+          out.push({
+            time: d,
+            position: net >= 0 ? 'aboveBar' : 'belowBar',
+            color: net >= 0 ? '#00c853' : '#ff3d00',
+            shape: 'circle',
+            text: '',
+          });
+        }
+        for (const ca of actions) {
+          if (!ca.event_date_gregorian) continue;
+          if (ca.action_type !== 'capital_increase') continue;
+          out.push({
+            time: ca.event_date_gregorian,
+            position: 'aboveBar',
+            color: '#f59e0b',
+            shape: 'arrowUp',
+            text: '',
+          });
+        }
+        return out.sort((a, b) => a.time.localeCompare(b.time));
+      }, [eventsByDate, actions, currency]);
+      const priceCapMarkers = useMemo(() => actions
+        .filter(ca => ca.event_date_gregorian && ca.action_type === 'capital_increase')
+        .map(ca => ({
+          time: ca.event_date_gregorian,
+          position: 'aboveBar',
+          color: '#f59e0b',
+          shape: 'arrowUp',
+          text: '',
+        })), [actions]);
+      const priceCloseSeries = useMemo(() => prices.map(p => ({ time: p.time, value: p.close })), [prices]);
+      // Holders, name-deduped: the same holder under several id schemes
+      // counts once (best identity tier wins); the merged count is shown.
+      const dedupedHolders = useMemo(() => dedupHolders(holdersRes.rows), [holdersRes.rows]);
+      const unquantifiedNames = useMemo(() => unquantifiedHolders(holdersRes.rows), [holdersRes.rows]);
+
+      if (!symbol) return <div className="p-8 text-center text-xs text-[var(--text-secondary)]">هنوز نمادی انتخاب یا ایمپورت نشده است. از داشبورد یا جستجوی بالا یک نماد انتخاب کنید.</div>;
+      if (loading) return <div className="p-8 text-center text-xs text-[var(--text-secondary)]">در حال واکشی اطلاعات نماد {symbol}...</div>;
+      if (error) return <ErrorBox error={error} />;
+      if (!detail) return null;
+
+      const inst = detail.instrument;
+      const snap = detail.latest_snapshot || {};
+      // The "چارت": rises when the major holders buy, falls when they sell.
+      // Percent by default; shares shows the deduped total share count.
+      // A selected holder shows only that holder's percent series.
+      const chartData = selectedHolder
+        ? seriesRes.holder_series
+        : (chartMetric === 'shares' ? seriesRes.company_shares_series : seriesRes.company_series);
+      const chartUnit = selectedHolder || chartMetric === 'pct' ? '٪' : 'سهم';
+      const CHANGE_TYPE_FA = {
+        new: 'جدید',
+        increase: 'افزایش',
+        decrease: 'کاهش',
+        unchanged: 'بدون تغییر',
+        unknown: 'نامشخص',
+      };
+      const ACTION_TYPE_FA = {
+        capital_increase: 'افزایش سرمایه',
+        price_adjustment: 'تعدیل قیمت',
+      };
+      const COMPLETENESS_FA = {
+        complete_by_reported_percent: 'کامل (بر اساس درصد گزارش‌شده)',
+        partial_major_holders_only: 'فقط سهام‌داران عمده',
+        inconsistent_sum_over_100_percent: 'جمع مالکیت بیش از ۱۰۰٪ (داده تکراری)',
+        no_holder_observations: 'بدون مشاهده سهام‌دار',
+        holders_only_total_shares_unavailable: 'بدون کل سهام شرکت',
+      };
+      const mergedHoldersCount = holdersRes.rows.length - dedupedHolders.length;
+
+      return (
+        <div className="space-y-3">
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-base font-bold text-blue-400">{inst.symbol}</h1>
+                <span className="text-sm font-bold">{inst.company_name || 'نام شرکت ثبت نشده'}</span>
+                <span className="px-2 py-0.5 text-[10px] rounded bg-blue-500/15 text-blue-400">{inst.market}</span>
+                {snap.data_completeness && <span className="px-2 py-0.5 text-[10px] rounded bg-amber-500/15 text-amber-300" title={snap.data_completeness}>{COMPLETENESS_FA[snap.data_completeness] || snap.data_completeness}</span>}
+              </div>
+              <div className="text-[11px] text-[var(--text-secondary)] mt-1">
+                ins_code: <span className="num">{inst.ins_code || '—'}</span> | ISIN: <span className="num">{inst.cisin || '—'}</span> | بازه داده: <span className="num">{fmtDate(inst.first_holding_date_jalali)} تا {fmtDate(inst.latest_holding_date_jalali)}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-5 text-xs">
+              <div>
+                <div className="text-[var(--text-secondary)]">کل سهام شرکت</div>
+                <div className="font-bold num">{fmtNum(snap.total_company_shares ?? inst.current_issued_shares)}</div>
+              </div>
+              <div title={snap.latest_price ? `آخرین قیمت: ${fmtNum(snap.latest_price)} ریال (${fmtGregorianDate(snap.latest_price_date)})` : 'قیمت موجود نیست'}>
+                <div className="text-[var(--text-secondary)]">ارزش بازار</div>
+                <div className="font-bold num">{snap.market_value !== null && snap.market_value !== undefined ? fmtMoney(snap.market_value, currency) : '—'}</div>
+              </div>
+              <div>
+                <div className="text-[var(--text-secondary)]">سهام‌داران عمده افشاشده</div>
+                <div className="font-bold num" title={snap.raw_disclosed_shareholder_count !== null && snap.raw_disclosed_shareholder_count !== undefined && snap.raw_disclosed_shareholder_count !== snap.disclosed_shareholder_count ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(snap.raw_disclosed_shareholder_count)}` : undefined}>{toFa(snap.disclosed_shareholder_count)}</div>
+              </div>
+              <div title={snap.total_shareholder_count_note || undefined}>
+                <div className="text-[var(--text-secondary)]">کل سهام‌داران شرکت</div>
+                <div className="font-bold text-amber-400">{snap.total_shareholder_count !== null && snap.total_shareholder_count !== undefined ? (snap.total_shareholder_count_note ? `≥ ${fmtNum(snap.total_shareholder_count)}` : fmtNum(snap.total_shareholder_count)) : '—'}</div>
+                {snap.total_shareholder_count_note && <div className="text-[10px] text-amber-300">حداقل (ثبت نشده)</div>}
+              </div>
+              <div title={snap.raw_ownership_percent_sum !== null && snap.raw_ownership_percent_sum !== undefined && snap.disclosed_ownership_percent_sum !== null && Math.abs(snap.raw_ownership_percent_sum - snap.disclosed_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(snap.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : undefined}>
+                <div className="text-[var(--text-secondary)]">جمع مالکیت عمده</div>
+                <div className="font-bold num">{fmtPct(snap.disclosed_ownership_percent_sum)}</div>
+              </div>
+              <div title="۱۰۰ منهای جمع مالکیت عمدهٔ افشاشده — سهامی که در بازار آزاد دست مردم است و قابل معامله است">
+                <div className="text-[var(--text-secondary)]">سهام شناور</div>
+                <div className="font-bold num text-emerald-400">{snap.disclosed_ownership_percent_sum !== null && snap.disclosed_ownership_percent_sum !== undefined ? fmtPct(100 - snap.disclosed_ownership_percent_sum) : '—'}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-1 border-b border-[var(--border-subtle)] text-xs overflow-x-auto">
+            {[
+              ['overview', 'نمودار و تاریخچه شرکت'],
+              ['holders', `سهام‌داران عمده (${toFa(dedupedHolders.length)})`],
+              ['events', `رویدادهای ورود/خروج و تغییر (${toFa(seriesRes.events?.length || 0)})`],
+              ['actions', `افزایش سرمایه (${toFa(actions.filter(a => a.action_type === 'capital_increase').length)})`],
+              ['quality', 'کیفیت داده و مغایرت‌ها'],
+            ].map(([id, label]) => (
+              <button key={id} onClick={() => setTab(id)} className={`px-3 py-2 border-b-2 whitespace-nowrap ${tab === id ? 'border-blue-500 text-blue-400 font-bold' : 'border-transparent text-[var(--text-secondary)]'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'overview' && (
+            <div className="space-y-3">
+              <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+                <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
+                  <h2 className="font-bold">نمودار قیمت نماد</h2>
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    <span className="text-[var(--text-secondary)]">نوع نمودار:</span>
+                    {[
+                      ['candlestick', 'کندلی'],
+                      ['area', 'ناحیه‌ای'],
+                      ['line', 'خطی'],
+                      ['bar', 'میله‌ای'],
+                    ].map(([id, label]) => (
+                      <button key={id} onClick={() => setChartType(id)} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${chartType === id ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>{label}</button>
+                    ))}
+                    <span className="text-[var(--text-secondary)]">({toFa(prices.length)} روز معاملاتی)</span>
+                    <label className="flex items-center gap-1 cursor-pointer" title="نمایش/پنهان کردن دایره‌ها و مثلث‌های رویداد روی نمودار">
+                      <input type="checkbox" checked={showMarkers} onChange={e => setShowMarkers(e.target.checked)} /> نمایش رویدادها
+                    </label>
+                  </div>
+                </div>
+                <div className="relative">
+                  <LWChart data={priceCloseSeries} ohlc={prices} type={chartType} height={320} theme={theme} color="#2962ff" unitLabel="ریال" markers={showMarkers ? priceCapMarkers : []} dateMode={dateMode} enableDrawing={true} onHover={setHoveredPriceDay} />
+                  {hoveredPriceDay && eventsByDate.get(hoveredPriceDay.time) && (
+                    <div className="absolute top-2 right-2 z-10 w-80 max-w-[90%] max-h-64 overflow-y-auto p-2.5 rounded border border-amber-500/50 bg-[var(--bg-panel)] shadow-lg text-[11px] space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold">رویدادهای {fmtGregorianDate(hoveredPriceDay.time)} ({toFa(eventsByDate.get(hoveredPriceDay.time).events.length)} رویداد)</span>
+                        <button onClick={() => setHoveredPriceDay(null)} className="px-1.5 rounded border border-[var(--border-subtle)]">✕</button>
+                      </div>
+                      {eventsByDate.get(hoveredPriceDay.time).capitalIncreases.map((ca, i) => (
+                        <div key={`ca-${i}`} className="text-amber-300">▲ افزایش سرمایه{ca.capital_increase_ratio ? ` ×${toFa(Number(ca.capital_increase_ratio).toFixed(2))}` : ''} — تعداد سهام زیاد می‌شود ولی درصد مالکیت ممکن است تغییر نکند (رقیق‌شدن)</div>
+                      ))}
+                      {eventsByDate.get(hoveredPriceDay.time).events.map((ev, i) => (
+                        <div key={i} className="border-t border-[var(--border-subtle)] pt-1">
+                          <div className="font-semibold">{ev.shareholder_name} {(ev.shares_change || 0) > 0 ? 'خرید' : 'فروش'}</div>
+                          <div className="num">{fmtNum(Math.abs(ev.shares_change || 0))} سهم ({fmtPct(ev.ownership_percent_calculated)})</div>
+                          <div className="num text-[var(--text-secondary)]">ارزش روز: {ev.value_rial !== null && ev.value_rial !== undefined ? fmtMoney(ev.value_rial, currency) : '—'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="text-[11px] text-[var(--text-secondary)]">▲ روی نمودار یعنی افزایش سرمایه — روی مثلث نگه دارید تا جزئیات آن روز را ببینید. با دکمه «تمام‌صفحه» نمودار بزرگ می‌شود و با ابزارهای ترسیم (خط روند، مستطیل، خط افقی) می‌توانید روی آن تحلیل کنید. دکمه‌های A (مقیاس خودکار) و L (لگاریتمی) پایین-راست نمودار هستند.</div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                <div className="lg:col-span-8 p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+                  <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
+                    <h2 className="font-bold">چارت</h2>
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <button onClick={() => setChartMetric('pct')} disabled={!!selectedHolder} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${chartMetric === 'pct' ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'} disabled:opacity-40`}>درصد مالکیت</button>
+                      <button onClick={() => setChartMetric('shares')} disabled={!!selectedHolder} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${chartMetric === 'shares' ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'} disabled:opacity-40`}>تعداد سهام</button>
+                      <label className="flex items-center gap-1 cursor-pointer" title="نمایش/پنهان کردن دایره‌ها و مثلث‌های رویداد روی نمودار">
+                        <input type="checkbox" checked={showMarkers} onChange={e => setShowMarkers(e.target.checked)} /> نمایش رویدادها
+                      </label>
+                      <select value={selectedHolder} onChange={e => setSelectedHolder(e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] max-w-xs">
+                        <option value="">جمع مالکیت عمده افشاشده شرکت</option>
+                        {dedupedHolders.map(h => (
+                          <option key={`${h.id_scheme}|${h.shareholder_id}`} value={`${h.id_scheme}|${h.shareholder_id}`}>
+                            {h.shareholder_name} ({fmtPct(h.ownership_percent_calculated)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <LWChart data={chartData} height={270} theme={theme} color={selectedHolder ? '#00c853' : '#2962ff'} unitLabel={chartUnit} markers={showMarkers ? eventMarkers : []} dateMode={dateMode} onHover={setHoveredDay} />
+                    {hoveredDay && eventsByDate.get(hoveredDay.time) && (
+                      <div className="absolute top-2 right-2 z-10 w-80 max-w-[90%] max-h-64 overflow-y-auto p-2.5 rounded border border-blue-500/50 bg-[var(--bg-panel)] shadow-lg text-[11px] space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold">رویدادهای {fmtGregorianDate(hoveredDay.time)} ({toFa(eventsByDate.get(hoveredDay.time).events.length)} رویداد)</span>
+                          <button onClick={() => setHoveredDay(null)} className="px-1.5 rounded border border-[var(--border-subtle)]">✕</button>
+                        </div>
+                        {eventsByDate.get(hoveredDay.time).capitalIncreases.map((ca, i) => (
+                          <div key={`ca-${i}`} className="text-amber-300">▲ افزایش سرمایه{ca.capital_increase_ratio ? ` ×${toFa(Number(ca.capital_increase_ratio).toFixed(2))}` : ''} — تعداد سهام زیاد می‌شود ولی درصد مالکیت ممکن است تغییر نکند (رقیق‌شدن)</div>
+                        ))}
+                        {eventsByDate.get(hoveredDay.time).events.map((ev, i) => (
+                          <div key={i} className="border-t border-[var(--border-subtle)] pt-1">
+                            <div className="font-semibold">{ev.shareholder_name} {(ev.shares_change || 0) > 0 ? 'خرید' : 'فروش'}</div>
+                            <div className="num">{fmtNum(Math.abs(ev.shares_change || 0))} سهم ({fmtPct(ev.ownership_percent_calculated)})</div>
+                            <div className="num text-[var(--text-secondary)]">ارزش روز: {ev.value_rial !== null && ev.value_rial !== undefined ? fmtMoney(ev.value_rial, currency) : '—'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">
+                    نمودار تغییرات سهام‌داران: وقتی سهام‌داران می‌خرند بالا می‌رود و وقتی می‌فروشند پایین می‌آید (محور افقی: زمان، محور عمودی: {chartMetric === 'shares' && !selectedHolder ? 'تعداد سهام' : 'درصد مالکیت'}).
+                    {selectedHolder ? ' برای سهام‌دار انتخاب‌شده فقط درصد نمایش داده می‌شود.' : ''}
+                    {' '}● سبز/قرمز روی نمودار فقط روزهای خرید/فروش واقعی را نشان می‌دهد (اولین مشاهده یا روز بدون تغییر، رویداد ندارد) — روی نقطه نگه دارید تا تعداد و جزئیات رویدادهای آن روز را در پنجرهٔ کوچک ببینید؛ ▲ یعنی افزایش سرمایه (فقط افزایش سرمایهٔ واقعی، نه تعدیل قیمت) — روی مثلث هم نگه دارید تا جزئیاتش را ببینید. دکمه‌های A (مقیاس خودکار) و L (لگاریتمی) پایین-راست نمودار هستند.
+                  </div>
+                </div>
+
+                <div className="lg:col-span-4 p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2 text-xs">
+                  <h3 className="font-bold">تاریخچه سرمایه و تمرکز</h3>
+                  <div className="max-h-60 overflow-y-auto">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                        <tr>
+                          <th className="p-1.5 text-right">تاریخ</th>
+                          <th className="p-1.5 text-right" title="تعداد سهام‌داران عمدهٔ افشاشده در آن روز، پس از یک‌تا‌سازی رکوردهای تکراری (همان سهام‌دار با چند شناسه یک بار شمرده شده است)">تعداد عمده ⓘ</th>
+                          <th className="p-1.5 text-right" title="جمع درصد مالکیت همان سهام‌داران عمده در آن روز، پس از یک‌تا‌سازی؛ اگر همان سهام‌دار با چند شناسه تکرار شده باشد فقط یک بار شمرده می‌شود">درصد٪ ⓘ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border-subtle)]">
+                        {detail.company_history.map(c => (
+                          <tr key={c.date_jalali}>
+                            <td className="p-1.5 num">{fmtDate(c.date_jalali)}</td>
+                            <td className="p-1.5 num" title={c.raw_shareholder_count !== null && c.raw_shareholder_count !== undefined && c.raw_shareholder_count !== c.disclosed_shareholder_count ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(c.raw_shareholder_count)}` : 'تعداد سهام‌داران عمدهٔ یک‌تا‌شده'}>{toFa(c.disclosed_shareholder_count)}{c.raw_shareholder_count !== null && c.raw_shareholder_count !== undefined && c.raw_shareholder_count !== c.disclosed_shareholder_count ? <span className="text-[var(--text-secondary)]"> (خام: {toFa(c.raw_shareholder_count)})</span> : ''}</td>
+                            <td className="p-1.5 num font-semibold" title={c.raw_ownership_percent_sum !== null && c.raw_ownership_percent_sum !== undefined && Math.abs(c.raw_ownership_percent_sum - c.disclosed_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(c.raw_ownership_percent_sum)}` : 'جمع درصد مالکیت سهام‌داران عمدهٔ یک‌تا‌شده'}>{fmtPct(c.disclosed_ownership_percent_sum)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="p-2 rounded bg-slate-800/50 border border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">
+                    «تعداد عمده» یعنی چند سهام‌دار عمده در آن روز افشا شده‌اند و «درصد» یعنی مجموع مالکیت همان‌ها؛ هر دو پس از یک‌تا‌سازی رکوردهای تکراری محاسبه می‌شوند. با نگه داشتن نشانگر روی ستون‌ها توضیح کامل را ببینید.
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+                <div className="p-2.5 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-2 text-xs">
+                  <span className="font-bold">سهام‌داران عمده ({toFa(dedupedHolders.length)} سهام‌دار یک‌تا‌شده از {toFa(holdersRes.rows.length)} رکورد)</span>
+                  <span className="text-[var(--text-secondary)]">به ترتیب درصد مالکیت — برای جدول کامل به تب «سهام‌داران عمده» بروید</span>
+                </div>
+                <table className="w-full text-xs text-right">
+                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                    <tr>
+                      <th className="p-2">نام سهام‌دار</th>
+                      <th className="p-2">نوع</th>
+                      <th className="p-2">تعداد سهام</th>
+                      <th className="p-2">درصد مالکیت</th>
+                      <th className="p-2">تغییر سهام</th>
+                      <th className="p-2">ارزش</th>
+                      <th className="p-2">هویت</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {dedupedHolders.slice(0, 15).map(h => (
+                      <tr key={`${h.id_scheme}-${h.shareholder_id}`} onClick={() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`)} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
+                        <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد)</span> : ''}</td>
+                        <td className="p-2">{h.shareholder_type === 'legal' ? 'حقوقی' : h.shareholder_type === 'individual' ? 'حقیقی' : '—'}</td>
+                        <td className="p-2 num">{fmtNum(h.shares)}</td>
+                        <td className="p-2 num">
+                          <div>{fmtPct(h.ownership_percent_reported)}</div>
+                          <div className="text-[var(--text-secondary)] text-[10px]">محاسبه: {fmtPct(h.ownership_percent_calculated)}</div>
+                        </td>
+                        <td className={`p-2 num ${h.shares_change > 0 ? 'text-[var(--up)]' : h.shares_change < 0 ? 'text-[var(--down)]' : ''}`}>
+                          {h.shares_change === null ? (h.entry_status === 'first_observed_unconfirmed' ? 'اولین مشاهده' : '—') : `${h.shares_change > 0 ? '+' : ''}${fmtNum(h.shares_change)}`}
+                        </td>
+                        <td className="p-2 num">{h.market_value !== null ? fmtMoney(h.market_value, currency) : (h.price !== null && h.shares !== null ? fmtMoney(h.shares * h.price, currency) : '—')}</td>
+                        <td className="p-2"><IdentityBadge status={h.identity_status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {tab === 'holders' && (
+            <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+              <div className="p-2.5 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold">ترکیب سهام‌داران عمده در تاریخ:</span>
+                  <select value={selectedDate || holdersRes.date_jalali || ''} onChange={e => setSelectedDate(e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] num">
+                    {detail.available_dates.map(d => <option key={d} value={d}>{fmtDate(d)}</option>)}
+                  </select>
+                  {mergedHoldersCount > 0 && <span className="text-[var(--text-secondary)]">({toFa(dedupedHolders.length)} سهام‌دار یک‌تا‌شده از {toFa(holdersRes.rows.length)} رکورد — رکوردهای تکراری همان سهام‌دار با چند شناسه یکی شده‌اند)</span>}
+                  {unquantifiedNames.length > 0 && <span className="text-amber-300">بدون دادهٔ تعداد سهم (در شمار سهام‌داران عمده نمی‌آیند): {unquantifiedNames.join('، ')}</span>}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setSortBy('shares')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${sortBy === 'shares' ? 'bg-blue-600 text-white' : ''}`}>مرتب‌سازی: سهام</button>
+                  <button onClick={() => setSortBy('change')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${sortBy === 'change' ? 'bg-blue-600 text-white' : ''}`}>مرتب‌سازی: تغییر</button>
+                </div>
+              </div>
+              <table className="w-full text-xs text-right">
+                <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                  <tr>
+                    <th className="p-2">نام سهام‌دار</th>
+                    <th className="p-2">نوع</th>
+                    <th className="p-2">شناسه و اسکیما</th>
+                    <th className="p-2">تعداد سهام</th>
+                    <th className="p-2">درصد مالکیت</th>
+                    <th className="p-2">تغییر سهام</th>
+                    <th className="p-2">قیمت و ارزش مبنا</th>
+                    <th className="p-2">وضعیت هویت و ورود</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {dedupedHolders.map(h => (
+                    <tr key={`${h.id_scheme}-${h.shareholder_id}`} onClick={() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`)} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
+                      <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد)</span> : ''}</td>
+                      <td className="p-2">{h.shareholder_type === 'legal' ? 'حقوقی' : h.shareholder_type === 'individual' ? 'حقیقی' : '—'}</td>
+                      <td className="p-2 text-[10px] num text-[var(--text-secondary)]">{h.id_scheme}: {h.shareholder_id}</td>
+                      <td className="p-2 num">{fmtNum(h.shares)}</td>
+                      <td className="p-2 num">
+                        <div title="درصد گزارش‌شده در منبع">{fmtPct(h.ownership_percent_reported)}</div>
+                        <div className="text-[var(--text-secondary)] text-[10px]" title="درصد محاسبه‌شده از تعداد سهام تقسیم بر کل سهام شرکت">محاسبه: {fmtPct(h.ownership_percent_calculated)}</div>
+                      </td>
+                      <td className={`p-2 num ${h.shares_change > 0 ? 'text-[var(--up)]' : h.shares_change < 0 ? 'text-[var(--down)]' : ''}`}>
+                        {h.shares_change === null ? (h.entry_status === 'first_observed_unconfirmed' ? 'اولین مشاهده' : '—') : `${h.shares_change > 0 ? '+' : ''}${fmtNum(h.shares_change)}`}
+                      </td>
+                      <td className="p-2 num">
+                        {h.market_value !== null ? fmtMoney(h.market_value, currency) : (h.price !== null && h.shares !== null ? fmtMoney(h.shares * h.price, currency) : '—')}
+                        {h.valuation_status === 'reference_price_no_trade_on_date' && <div className="text-[10px] text-amber-400">قیمت مرجع بدون معامله</div>}
+                      </td>
+                      <td className="p-2 space-y-1">
+                        <div><IdentityBadge status={h.identity_status} /></div>
+                        {h.entry_status === 'first_observed_unconfirmed' && <div className="text-[10px] text-amber-300">اولین مشاهده در داده</div>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === 'events' && (
+            <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto text-xs">
+              <table className="w-full text-right">
+                <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                  <tr><th className="p-2">تاریخ</th><th className="p-2">نام سهام‌دار</th><th className="p-2">نوع رویداد</th><th className="p-2">تغییر سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">ارزش روز رویداد</th></tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {(seriesRes.events || []).map((ev, i) => (
+                    <tr key={i}>
+                      <td className="p-2 num">{fmtDate(ev.date_jalali)}</td>
+                      <td className="p-2">{ev.shareholder_name}</td>
+                      <td className="p-2 font-semibold">{CHANGE_TYPE_FA[ev.change_type] || ev.change_type}</td>
+                      <td className={`p-2 num ${ev.shares_change > 0 ? 'text-[var(--up)]' : ev.shares_change < 0 ? 'text-[var(--down)]' : ''}`}>{fmtNum(ev.shares_change)}</td>
+                      <td className="p-2 num">{fmtPct(ev.ownership_percent_calculated)}</td>
+                      <td className="p-2 num">{ev.value_rial !== null && ev.value_rial !== undefined ? fmtMoney(ev.value_rial, currency) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === 'actions' && (
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-xs">
+              <div className="mb-2 text-[var(--text-secondary)]">
+                افزایش سرمایهٔ واقعی: <span className="font-bold text-[var(--text-primary)] num">{toFa(actions.filter(a => a.action_type === 'capital_increase').length)}</span>
+                {' '}— تعدیل قیمت (تغییر قیمت مرجع، نه افزایش سرمایه): <span className="font-bold text-[var(--text-primary)] num">{toFa(actions.filter(a => a.action_type === 'price_adjustment').length)}</span>
+              </div>
+              {actions.length === 0 ? (
+                <div className="p-4 text-center text-[var(--text-secondary)]">رویداد افزایش سرمایه‌ای در داده‌های این نماد ثبت نشده است.</div>
+              ) : (
+                <table className="w-full text-right">
+                  <thead className="bg-[var(--bg-elevated)]"><tr><th className="p-2">تاریخ</th><th className="p-2">نوع</th><th className="p-2">سهام قدیم</th><th className="p-2">سهام جدید</th><th className="p-2">نسبت</th><th className="p-2">تأییدیه</th></tr></thead>
+                  <tbody>
+                    {actions.map((ca, i) => (
+                      <tr key={i} className="border-t border-[var(--border-subtle)]">
+                        <td className="p-2 num">{fmtDate(ca.event_date_jalali || ca.effective_date_jalali)}</td>
+                        <td className="p-2">{ACTION_TYPE_FA[ca.action_type] || ca.action_type}</td>
+                        <td className="p-2 num">{fmtNum(ca.old_total_shares)}</td>
+                        <td className="p-2 num">{fmtNum(ca.new_total_shares)}</td>
+                        <td className="p-2 num">{ca.capital_increase_ratio ?? ca.share_ratio_new_over_old ?? '—'}</td>
+                        <td className="p-2">{ca.verification_status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {tab === 'quality' && quality && (
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2.5 text-xs">
+              {snap.total_shareholder_count_note && (
+                <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                  <strong>توضیح تعداد کل سهام‌داران:</strong> {snap.total_shareholder_count_note}
+                </div>
+              )}
+              <div className="font-bold">شکاف‌های داده (`data_gaps`: {toFa(quality.data_gaps.length)})</div>
+              {quality.data_gaps.map((g, i) => (
+                <div key={i} className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
+                  <strong>{g.field}</strong> ({fmtDate(g.date_from)} تا {fmtDate(g.date_to)}): {g.reason}
+                </div>
+              ))}
+              <div className="font-bold pt-2">گزارش‌های تطبیق (`reconciliation`: {toFa(quality.reconciliation.length)})</div>
+              {quality.reconciliation.slice(0, 30).map((r, i) => (
+                <div key={i} className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex justify-between">
+                  <span><strong>[{r.category}]</strong> {r.description}</span>
+                  <span className="num text-[var(--text-secondary)]">{fmtDate(r.date_jalali)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // --- 6. Page 3: Cross-Company Shareholder Intelligence ---
+    // --- 6. Page 3: Cross-Company Shareholder Intelligence ---
+    // One row per PERSON (grouped by the pipeline's own identity links),
+    // not per (holder, symbol). Clicking a holder shows their whole
+    // portfolio: first the combined value chart (sum of all symbols),
+    // then one chart per company; clicking a company swaps the main
+    // chart to that company's series.
+    function ShareholderIntelligencePage({ currency, theme, onOpenStock, onOpenInvestor, dateMode }) {
+      const [q, setQ] = useState('');
+      const [symbolFilter, setSymbolFilter] = useState('');
+      const [typeFilter, setTypeFilter] = useState('ALL');
+      const [minPct, setMinPct] = useState('');
+      const [multiOnly, setMultiOnly] = useState(false);
+      const [rows, setRows] = useState([]);
+      const [selected, setSelected] = useState(null);
+      const [portfolio, setPortfolio] = useState(null);
+      const [histories, setHistories] = useState({});
+      const [mainChart, setMainChart] = useState('combined');
+      const [loading, setLoading] = useState(false);
+      const [offset, setOffset] = useState(0);
+
+      useEffect(() => {
+        const timer = setTimeout(() => {
+          setLoading(true);
+          const qs = new URLSearchParams({
+            q, symbol: symbolFilter, shareholder_type: typeFilter,
+            multi_company_only: String(multiOnly), limit: '40', offset: String(offset),
+          });
+          if (minPct !== '') qs.set('min_ownership', minPct);
+          apiFetch(`/api/v1/shareholders/search?${qs.toString()}`)
+            .then(res => setRows(res.rows || []))
+            .finally(() => setLoading(false));
+        }, 250);
+        return () => clearTimeout(timer);
+      }, [q, symbolFilter, typeFilter, minPct, multiOnly, offset]);
+
+      const loadGroup = (group) => {
+        setSelected(group);
+        setPortfolio(null);
+        setHistories({});
+        setMainChart('combined');
+        apiFetch(`/api/v1/portfolios/${encodeURIComponent(group.group_id)}`)
+          .then(res => setPortfolio(res))
+          .catch(() => {});
+        // One % history per company, using that symbol's own (scheme, id).
+        (group.symbols || []).forEach(s => {
+          const qs = new URLSearchParams({
+            symbol: s.symbol, id_scheme: s.id_scheme,
+            shareholder_id: String(s.shareholder_id),
+          });
+          apiFetch(`/api/v1/shareholders/observation-history?${qs.toString()}`)
+            .then(res => setHistories(prev => ({ ...prev, [s.symbol]: res.history || [] })))
+            .catch(() => {});
+        });
+      };
+
+      const combinedSeries = useMemo(() => {
+        // Values in همر (1e12 Rial) in IRR mode, همت (1e12 Toman = 1e13 Rial)
+        // in IRT mode -- same divisor as the portfolio page.
+        const divisor = currency === 'IRT' ? 1e13 : 1e12;
+        return (portfolio?.history_series || []).map(p => ({
+          time: p.time,
+          value: (p.combined_value_rial || 0) / divisor,
+        }));
+      }, [portfolio, currency]);
+
+      const valuedPositions = portfolio
+        ? [...(portfolio.confirmed_positions || []), ...(portfolio.probable_positions || [])]
+        : [];
+      const totalValue = portfolio
+        ? ((portfolio.summary?.confirmed_combined_value_rial || 0)
+           + (portfolio.summary?.probable_combined_value_rial || 0))
+        : null;
+      const totalShares = valuedPositions.reduce((a, p) => a + (p.shares || 0), 0);
+
+      return (
+        <div className="space-y-3 text-xs">
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <h1 className="text-sm font-bold">پایگاه جامع سهام‌داران در تمام شرکت‌های واردشده</h1>
+              <p className="text-[11px] text-[var(--text-secondary)]">هر سطر یک سهام‌دار است — با همهٔ شرکت‌هایی که در آن‌ها سهام دارد. جستجو بر اساس نام، شناسه TSETMC، نماد، حداقل درصد مالکیت و حضور هم‌زمان در چند شرکت</p>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <input value={q} onChange={e => { setQ(e.target.value); setOffset(0); }} placeholder="نام سهام‌دار یا شناسه..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-52" />
+              <input value={symbolFilter} onChange={e => { setSymbolFilter(e.target.value); setOffset(0); }} placeholder="نماد..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-24" />
+              <input type="number" value={minPct} onChange={e => { setMinPct(e.target.value); setOffset(0); }} placeholder="حداقل ٪" className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-24 num" />
+              <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setOffset(0); }} className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
+                <option value="ALL">همه</option>
+                <option value="individual">حقیقی</option>
+                <option value="legal">حقوقی</option>
+              </select>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={multiOnly} onChange={e => { setMultiOnly(e.target.checked); setOffset(0); }} />
+                <span>فقط سهام‌داران چندشرکتی</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+            <div className="lg:col-span-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+              <table className="w-full text-right">
+                <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                  <tr><th className="p-2">نام سهام‌دار</th><th className="p-2">نمادها</th><th className="p-2">شناسه</th><th className="p-2">بیشترین مالکیت٪</th><th className="p-2">آخرین تغییر</th></tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {loading ? (
+                    <tr><td colSpan="5" className="p-6 text-center text-[var(--text-secondary)]">در حال جستجو...</td></tr>
+                  ) : rows.map((r, i) => (
+                    <tr key={r.group_id} onClick={() => loadGroup(r)} className="cursor-pointer hover:bg-[var(--bg-elevated)]">
+                      <td className="p-2 font-semibold">{r.shareholder_name}</td>
+                      <td className="p-2">
+                        <span className="font-bold text-blue-400">{toFa(r.n_companies)} شرکت</span>
+                        <span className="text-[10px] text-[var(--text-secondary)] block">{(r.symbols || []).slice(0, 3).map(s => s.symbol).join('، ')}{(r.symbols || []).length > 3 ? '…' : ''}</span>
+                      </td>
+                      <td className="p-2 num text-[10px]">{r.shareholder_id}</td>
+                      <td className="p-2 num font-semibold">{fmtPct(r.latest_ownership_pct)}</td>
+                      <td className={`p-2 num ${r.latest_shares_change > 0 ? 'text-[var(--up)]' : r.latest_shares_change < 0 ? 'text-[var(--down)]' : ''}`}>{fmtNum(r.latest_shares_change)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="p-2 border-t border-[var(--border-subtle)] flex justify-between">
+                <button disabled={offset === 0} onClick={() => setOffset(o => Math.max(0, o - 40))} className="px-2 py-1 rounded border border-[var(--border-subtle)] disabled:opacity-40">صفحه قبل</button>
+                <button disabled={rows.length < 40} onClick={() => setOffset(o => o + 40)} className="px-2 py-1 rounded border border-[var(--border-subtle)] disabled:opacity-40">صفحه بعد</button>
+              </div>
+            </div>
+
+            <div className="lg:col-span-5 p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2.5 lg:sticky lg:top-24 self-start">
+              {selected ? (
+                <>
+                  <div className="flex justify-between items-start gap-2">
+                    <div>
+                      <div className="font-bold text-sm">{selected.shareholder_name}</div>
+                      <div className="text-[11px] text-[var(--text-secondary)]">
+                        {selected.shareholder_type === 'legal' ? 'حقوقی' : selected.shareholder_type === 'individual' ? 'حقیقی' : ''} | بازه مشاهده: <span className="num">{fmtDate(selected.first_observed_date_jalali)} تا {fmtDate(selected.last_observed_date_jalali)}</span>
+                      </div>
+                      <div className="mt-1">
+                        ارزش سرمایه‌گذاری: <span className="font-bold num">{totalValue !== null ? fmtMoney(totalValue, currency) : '…'}</span>
+                        {' '} | تعداد سهام: <span className="font-bold num">{fmtNum(totalShares)}</span>
+                        {' '} | شرکت‌ها: <span className="font-bold num">{toFa(selected.n_companies)}</span>
+                      </div>
+                    </div>
+                    <button onClick={() => onOpenInvestor && onOpenInvestor(selected.group_id)} className="px-2 py-1 rounded border border-blue-500/40 text-blue-400 shrink-0">پرتفوی کامل در تب ۴</button>
+                  </div>
+                  <div>
+                    <div className="font-bold mb-1 flex justify-between items-center">
+                      <span>{mainChart === 'combined' ? `مجموع ارزش همهٔ نمادها (${currency === 'IRT' ? 'همت' : 'همر'})` : `روند مالکیت — ${mainChart}`}</span>
+                      {mainChart !== 'combined' && (
+                        <button onClick={() => setMainChart('combined')} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] text-[11px]">بازگشت به مجموع</button>
+                      )}
+                    </div>
+                    <LWChart data={mainChart === 'combined' ? combinedSeries : (histories[mainChart] || [])} height={220} theme={theme} color="#00c853" unitLabel={mainChart === 'combined' ? (currency === 'IRT' ? 'همت' : 'همر') : '٪'} dateMode={dateMode} />
+                  </div>
+                  {(selected.symbols || []).length > 0 && (
+                    <div className="space-y-2">
+                      <div className="font-bold">چارت هر شرکت</div>
+                      {selected.symbols.map(s => (
+                        <div key={s.symbol} onClick={() => setMainChart(s.symbol)} className={`p-2 rounded border cursor-pointer ${mainChart === s.symbol ? 'border-blue-500/60 bg-blue-500/5' : 'border-[var(--border-subtle)]'}`}>
+                          <div className="flex justify-between items-center mb-1">
+                            <button onClick={(e) => { e.stopPropagation(); onOpenStock(s.symbol); }} className="font-bold text-blue-400 underline">{s.symbol}</button>
+                            <span className="num text-[var(--text-secondary)]">{fmtPct(s.latest_ownership_pct)} | {fmtNum(s.shares)} سهم</span>
+                          </div>
+                          <LWChart data={histories[s.symbol] || []} height={120} theme={theme} color="#00c853" unitLabel="٪" dateMode={dateMode} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="p-8 text-center text-[var(--text-secondary)]">یک سطر را برای مشاهده پرتفوی کامل سهام‌دار انتخاب کنید.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 7. Page 4: Investor Portfolio Reconstruction ---
+    function PortfolioReconstructionPage({ currency, theme, onOpenStock, dateMode, initialInvestor = '' }) {
+      const [invQuery, setInvQuery] = useState('');
+      const [invSort, setInvSort] = useState('linked');
+      const [investors, setInvestors] = useState([]);
+      const [selectedId, setSelectedId] = useState('');
+      const [idInput, setIdInput] = useState('');
+      const [asOfDate, setAsOfDate] = useState('');
+      const [portfolio, setPortfolio] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [compQuery, setCompQuery] = useState('');
+      const [compResults, setCompResults] = useState([]);
+      const [compSymbol, setCompSymbol] = useState('');
+      const [compHolders, setCompHolders] = useState([]);
+      const [compLoading, setCompLoading] = useState(false);
+
+      // Open a specific investor (e.g. clicked on a holder on the
+      // dashboard): the dashboard passes "scheme:id".
+      useEffect(() => { if (initialInvestor) setSelectedId(initialInvestor); }, [initialInvestor]);
+
+      // Direct ID entry: "share_id:123456" / "ondate_share_id:123456",
+      // or a bare number (treated as share_id).
+      const applyIdInput = () => {
+        const v = idInput.trim();
+        if (!v) return;
+        setSelectedId(v.includes(':') ? v : `share_id:${v}`);
+      };
+
+      // Find an investor through a company: search the company, pick it,
+      // and its shareholders appear below -- click one to load them.
+      useEffect(() => {
+        if (!compQuery.trim()) { setCompResults([]); return; }
+        const timer = setTimeout(() => {
+          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(compQuery.trim())}&limit=8}`)
+            .then(res => setCompResults(res.results || []))
+            .catch(() => {});
+        }, 200);
+        return () => clearTimeout(timer);
+      }, [compQuery]);
+
+      useEffect(() => {
+        if (!compSymbol) { setCompHolders([]); return; }
+        setCompLoading(true);
+        apiFetch(`/api/v1/stocks/${encodeURIComponent(compSymbol)}/shareholders`)
+          .then(res => setCompHolders(res.rows || []))
+          .catch(() => setCompHolders([]))
+          .finally(() => setCompLoading(false));
+      }, [compSymbol]);
+
+      useEffect(() => {
+        const timer = setTimeout(() => {
+          apiFetch(`/api/v1/portfolios/investors?q=${encodeURIComponent(invQuery)}&limit=30&sort_by=${invSort}`)
+            .then(res => {
+              const list = res.investors || [];
+              setInvestors(list);
+              if (!selectedId && list.length > 0) setSelectedId(list[0].id);
+            });
+        }, 200);
+        return () => clearTimeout(timer);
+      }, [invQuery, invSort]);
+
+      useEffect(() => {
+        if (!selectedId) return;
+        setLoading(true);
+        const qs = asOfDate ? `?as_of_date=${encodeURIComponent(asOfDate)}` : '';
+        apiFetch(`/api/v1/portfolios/${encodeURIComponent(selectedId)}${qs}`)
+          .then(setPortfolio)
+          .finally(() => setLoading(false));
+      }, [selectedId, asOfDate]);
+
+      const sum = portfolio?.summary || {};
+      const chartSeries = useMemo(() => {
+        // Values in همر (1e12 Rial) in IRR mode, همت (1e12 Toman = 1e13 Rial)
+        // in IRT mode.
+        const divisor = currency === 'IRT' ? 1e13 : 1e12;
+        return (portfolio?.history_series || []).map(p => ({
+          time: p.time,
+          value: (p.combined_value_rial || 0) / divisor,
+        }));
+      }, [portfolio, currency]);
+
+      return (
+        <div className="space-y-3 text-xs">
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <h1 className="text-sm font-bold">بازسازی پرتفوی سرمایه‌گذاران</h1>
+              <p className="text-[11px] text-[var(--text-secondary)]">هویت هر سرمایه‌گذار از شناسه‌های (id_scheme, shareholder_id) منبع ساخته می‌شود؛ لینک‌های «محتمل» فقط وقتی در جمع می‌آیند که در همهٔ تاریخ‌ها تاریخ+سهام+نام دقیقاً یکسان بوده و هیچ تناقضی نداشته باشند.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input value={invQuery} onChange={e => setInvQuery(e.target.value)} placeholder="جستجوی سرمایه‌گذار..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48" />
+              <select value={invSort} onChange={e => setInvSort(e.target.value)} className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]" title="مرتب‌سازی فهرست سرمایه‌گذاران">
+                <option value="linked">بیشترین رکورد</option>
+                <option value="inferred">بیشترین لینک استنتاجی</option>
+              </select>
+              <select value={selectedId} onChange={e => setSelectedId(e.target.value)} className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] max-w-xs">
+                {investors.map(inv => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.canonical_name} ({toFa(inv.verified_links_count)} تأیید / {toFa(inv.inferred_links_count || 0)} استنتاجی / {toFa(inv.linked_records_count)} کل)
+                  </option>
+                ))}
+              </select>
+              <input value={idInput} onChange={e => setIdInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyIdInput(); }} placeholder="شناسه: share_id:123456" className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48 num" title="شناسهٔ سرمایه‌گذار به شکل scheme:id — عدد خالی یعنی share_id" />
+              <button onClick={applyIdInput} className="px-3 py-1.5 rounded bg-blue-600 text-white font-bold">اعمال</button>
+              <input type="date" value={asOfDate} onChange={e => setAsOfDate(e.target.value)} className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] num" title="تاریخ میلادی مبنا" />
+              {asOfDate && <span className="text-[11px] text-[var(--text-secondary)] num">{fmtGregorianDate(asOfDate)}</span>}
+            </div>
+          </div>
+
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+            <div className="font-bold">یافتن سرمایه‌گذار از روی شرکت</div>
+            <div className="flex flex-wrap gap-2">
+              <input value={compQuery} onChange={e => { setCompQuery(e.target.value); setCompSymbol(''); }} placeholder="نام یا نماد شرکت را جستجو کنید..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-64" />
+              {compResults.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {compResults.map(r => (
+                    <button key={r.symbol} onClick={() => { setCompSymbol(r.symbol); setCompQuery(r.symbol); setCompResults([]); }} className={`px-2.5 py-1.5 rounded border border-[var(--border-subtle)] ${compSymbol === r.symbol ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>{r.symbol} — {r.company_name}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {compSymbol && (
+              <div className="space-y-1">
+                <div className="text-[var(--text-secondary)]">سهام‌داران عمدهٔ {compSymbol} — روی یک سهام‌دار کلیک کنید تا پرتفوی او باز شود:</div>
+                {compLoading ? (
+                  <div className="text-[var(--text-secondary)]">در حال واکشی سهام‌داران...</div>
+                ) : compHolders.length === 0 ? (
+                  <div className="text-[var(--text-secondary)]">سهام‌داری برای این نماد ثبت نشده است.</div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto divide-y divide-[var(--border-subtle)]">
+                    {compHolders.map(h => (
+                      <div key={`${h.id_scheme}:${h.shareholder_id}`} onClick={() => setSelectedId(`${h.id_scheme}:${h.shareholder_id}`)} className="py-1.5 flex justify-between gap-2 cursor-pointer hover:text-blue-400">
+                        <span className="font-semibold">{h.shareholder_name} <span className="text-[10px] text-[var(--text-secondary)] num">{h.id_scheme}:{h.shareholder_id}</span></span>
+                        <span className="num">{fmtNum(h.shares)} سهم ({fmtPct(h.ownership_percent_calculated)})</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="p-8 text-center text-[var(--text-secondary)]">در حال بازسازی پرتفوی...</div>
+          ) : portfolio && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                  <div className="text-[var(--text-secondary)]">ارزش کل تأییدشده (ترکیبی)</div>
+                  <div className="text-base font-bold num text-emerald-400 mt-1">{fmtMoney(sum.confirmed_combined_value_rial, currency)}</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">فاقد قیمت معتبر: {toFa(sum.positions_missing_price_count)} پوزیشن</div>
+                </div>
+                <div className="p-3 rounded border border-blue-500/30 bg-blue-500/5">
+                  <div className="text-blue-300">ارزش محتمل (تطبیق دقیق استنتاجی)</div>
+                  <div className="text-base font-bold num text-blue-400 mt-1">{fmtMoney(sum.probable_combined_value_rial, currency)}</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">شرکت‌های محتمل: {toFa(sum.probable_companies_count)}</div>
+                </div>
+                <div className="p-3 rounded border border-amber-500/30 bg-amber-500/5">
+                  <div className="text-amber-300">کاندیداهای غیرقطعی (مستثنی)</div>
+                  <div className="text-base font-bold num mt-1">{toFa(sum.uncertain_candidates_count)}</div>
+                </div>
+                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                  <div className="text-[var(--text-secondary)]">وضعیت سرمایه‌گذار</div>
+                  <div className="mt-1"><IdentityBadge status={portfolio.investor.verification_status} /></div>
+                </div>
+              </div>
+
+              {portfolio.identity_evidence && (
+                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
+                  <div className="font-bold">چرا هویت این سرمایه‌گذار درست است؟ (شواهد)</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
+                    <div>وضعیت در رجیستری هویت: <IdentityBadge status={portfolio.identity_evidence.registry_identity_status} /></div>
+                    <div>نوع سهام‌دار: {portfolio.identity_evidence.shareholder_type === 'legal' ? 'حقوقی' : portfolio.identity_evidence.shareholder_type === 'individual' ? 'حقیقی' : '—'}</div>
+                    <div>اولین مشاهده: <span className="num">{fmtDate(portfolio.identity_evidence.first_seen_date_jalali)}</span> — آخرین مشاهده: <span className="num">{fmtDate(portfolio.identity_evidence.last_seen_date_jalali)}</span></div>
+                    <div>رکوردهای پیوندخورده: <span className="num">{toFa(portfolio.identity_evidence.linked_records_count)}</span> (تأییدشده: <span className="num">{toFa(portfolio.identity_evidence.verified_links_count)}</span>، استنتاجی: <span className="num">{toFa(portfolio.identity_evidence.inferred_links_count)}</span>)</div>
+                    <div>پوزیشن‌ها بر اساس سطح اطمینان — تأییدشده: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.confirmed || 0)}</span>، محتمل: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.probable || 0)}</span>، غیرقطعی: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.uncertain || 0)}</span></div>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">
+                    «تأییدشده» یعنی پوزیشن رکورد مستقیم همین شناسه است (یا منبع خودش هر دو شناسه را در یک ردیف گذاشته است). «محتمل» یعنی پوزیشن زیر یک شناسهٔ دوقلوی استنتاجی است: در همهٔ تاریخ‌ها تاریخ + تعداد سهام + نام دقیقاً یکسان بوده، فقط یک کاندید وجود داشته، هیچ تناقضی در هیچ تاریخی نبوده، و برای اشخاص حقیقیِ بدون نام (شخص حقیقی) حداقل دو تاریخ مستقل هم‌خوانی داشته‌اند؛ نام فقط برای بررسی سازگاری استفاده شده، نه به‌تنهایی. بقیهٔ رکوردها «غیرقطعی» هستند و در هیچ جمعی نمی‌آیند.
+                  </div>
+                </div>
+              )}
+
+              <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                <h3 className="font-bold mb-2">روند تاریخی ارزش پرتفوی تأییدشده + محتمل ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
+                <LWChart data={chartSeries} height={220} theme={theme} color="#2962ff" unitLabel={currency === 'IRT' ? 'همت' : 'همر'} dateMode={dateMode} />
+              </div>
+
+              <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+                <div className="p-2.5 border-b border-[var(--border-subtle)] font-bold">پوزیشن‌های مستقیم (رکورد همین شناسه)</div>
+                <table className="w-full text-right">
+                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {portfolio.confirmed_positions.length === 0 ? (
+                      <tr><td colSpan="6" className="p-4 text-center text-[var(--text-secondary)]">هیچ پوزیشن مستقیمی برای این شناسه ثبت نشده است.</td></tr>
+                    ) : portfolio.confirmed_positions.map(p => (
+                      <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
+                        <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
+                        <td className="p-2 num">{fmtDate(p.observation_date_jalali)}</td>
+                        <td className="p-2 num">{fmtNum(p.shares)}</td>
+                        <td className="p-2 num">{fmtPct(p.ownership_percent_calculated)}</td>
+                        <td className="p-2 num">{p.price ? fmtNum(currency === 'IRT' ? p.price / 10 : p.price) : '—'}</td>
+                        <td className="p-2 num font-semibold">{p.holding_value_rial !== null ? fmtMoney(p.holding_value_rial, currency) : 'بدون قیمت معتبر'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="rounded border border-blue-500/30 bg-blue-500/5 overflow-x-auto">
+                <div className="p-2.5 border-b border-blue-500/30 font-bold text-blue-300">پوزیشن‌های محتمل (تطبیق دقیق استنتاجی — در جمع ارزش لحاظ شده‌اند)</div>
+                <table className="w-full text-right">
+                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th><th className="p-2">هویت</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {(portfolio.probable_positions || []).length === 0 ? (
+                      <tr><td colSpan="7" className="p-4 text-center text-[var(--text-secondary)]">پوزیشن «محتمل»ی برای این سرمایه‌گذار ثبت نشده است.</td></tr>
+                    ) : portfolio.probable_positions.map(p => (
+                      <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
+                        <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
+                        <td className="p-2 num">{fmtDate(p.observation_date_jalali)}</td>
+                        <td className="p-2 num">{fmtNum(p.shares)}</td>
+                        <td className="p-2 num">{fmtPct(p.ownership_percent_calculated)}</td>
+                        <td className="p-2 num">{p.price ? fmtNum(currency === 'IRT' ? p.price / 10 : p.price) : '—'}</td>
+                        <td className="p-2 num font-semibold">{p.holding_value_rial !== null ? fmtMoney(p.holding_value_rial, currency) : 'بدون قیمت معتبر'}</td>
+                        <td className="p-2"><IdentityBadge status={p.identity_status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {portfolio.uncertain_candidates.length > 0 && (
+                <div className="rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
+                  <div className="font-bold text-amber-300">رکوردهای سهام‌داری غیرقطعی (محاسبه‌نشده در جمع کل)</div>
+                  {portfolio.uncertain_candidates.map((u, i) => (
+                    <div key={i} className="p-2 rounded bg-[var(--bg-panel)] border border-[var(--border-subtle)] flex justify-between">
+                      <span>نماد: <strong className="text-blue-400 cursor-pointer" onClick={() => onOpenStock(u.symbol)}>{u.symbol}</strong> ({u.id_scheme}: {u.shareholder_id})</span>
+                      <span className="num">سهام: {fmtNum(u.shares)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // --- 8. Page 5: Multi-Stock Screener (All Supported Columns) ---
+    // Enum fields get a SELECT (op fixed to '='); dates get a date input;
+    // numbers get a number input. The real vocabularies come from the
+    // pipeline (identity_status, data_completeness, entry_status).
+    const SCREENER_ENUMS = {
+      shareholder_type: [['legal', 'حقوقی'], ['individual', 'حقیقی']],
+      market: [['TSE', 'بورس (TSE)'], ['IFB', 'فرابورس (IFB)'], ['UNKNOWN', 'تعیین‌نشده']],
+      change_type: [['new', 'جدید'], ['increase', 'افزایش'], ['decrease', 'کاهش'], ['unchanged', 'بدون تغییر'], ['unknown', 'نامشخص']],
+      entry_status: [['first_observed_unconfirmed', 'اولین مشاهده (تأییدنشده)'], ['reappeared_after_not_disclosed', 'بازگشت پس از عدم افشا']],
+      identity_status: [
+        ['verified_same_source_row', 'تأییدشده (هم‌ردیف منبع)'],
+        ['inferred_exact_match', 'تطبیق دقیق استنتاجی'],
+        ['unlinked_record_id', 'شناسه منفرد (تأییدنشده)'],
+        ['ambiguous_not_linked', 'مبهم / پیوند نشده'],
+        ['source_id', 'بدون اطلاعات پیوند (منبع)'],
+      ],
+      data_completeness: [
+        ['complete_by_reported_percent', 'کامل (بر اساس درصد گزارش‌شده)'],
+        ['partial_major_holders_only', 'فقط سهام‌داران عمده'],
+        ['inconsistent_sum_over_100_percent', 'جمع مالکیت بیش از ۱۰۰٪'],
+        ['no_holder_observations', 'بدون مشاهده سهام‌دار'],
+        ['holders_only_total_shares_unavailable', 'بدون کل سهام شرکت'],
+      ],
+    };
+    const SCREENER_FIELDS = [
+      ['ownership_percent_calculated', 'درصد مالکیت', 'number'],
+      ['disclosed_shareholder_count', 'تعداد سهام‌دار عمده', 'number'],
+      ['disclosed_ownership_percent_sum', 'تمرکز مالکیت عمده٪', 'number'],
+      ['shares_change', 'تغییر سهام', 'number'],
+      ['change_type', 'نوع تغییر', 'enum'],
+      ['entry_status', 'وضعیت ورود', 'enum'],
+      ['shareholder_type', 'نوع سهام‌دار', 'enum'],
+      ['identity_status', 'وضعیت احراز هویت', 'enum'],
+      ['data_completeness', 'تکمیل بودن داده', 'enum'],
+      ['market', 'بازار', 'enum'],
+      ['has_corporate_action', 'تعداد افزایش سرمایه', 'number'],
+      ['date_gregorian', 'تاریخ میلادی (YYYY-MM-DD)', 'date'],
+    ];
+    function ScreenerPage({ onOpenStock }) {
+      const [logic, setLogic] = useState('AND');
+      const [conds, setConds] = useState([
+        { field: 'ownership_percent_calculated', op: '>=', value: 5 },
+      ]);
+      const [sortBy, setSortBy] = useState('ownership_percent_calculated');
+      const [results, setResults] = useState([]);
+      const [saved, setSaved] = useState([]);
+      const [saveName, setSaveName] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const runQuery = useCallback(() => {
+        setLoading(true);
+        apiFetch('/api/v1/screener/query', {
+          method: 'POST',
+          body: JSON.stringify({ logic, conditions: conds, sort_by: sortBy, sort_dir: 'DESC', limit: 100 }),
+        })
+          .then(res => setResults(res.rows || []))
+          .finally(() => setLoading(false));
+      }, [logic, conds, sortBy]);
+
+      useEffect(() => {
+        runQuery();
+        apiFetch('/api/v1/screener/saved-filters').then(res => setSaved(res.filters || [])).catch(() => {});
+      }, []);
+
+      const saveCurrent = () => {
+        if (!saveName.trim()) return;
+        apiFetch('/api/v1/screener/saved-filters', {
+          method: 'POST',
+          body: JSON.stringify({ name: saveName.trim(), filter_ast: { logic, conditions: conds, sort_by: sortBy, sort_dir: 'DESC' } }),
+        }).then(() => {
+          setSaveName('');
+          apiFetch('/api/v1/screener/saved-filters').then(res => setSaved(res.filters || []));
+        });
+      };
+
+      const exportCsv = () => {
+        fetch(`${API_BASE}/api/v1/screener/export`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ logic, conditions: conds, sort_by: sortBy, sort_dir: 'DESC' }),
+        })
+          .then(r => r.blob())
+          .then(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'tsetmc_screener.csv'; a.click();
+            URL.revokeObjectURL(url);
+          });
+      };
+
+      return (
+        <div className="space-y-3 text-xs">
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2.5">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <h1 className="text-sm font-bold">فیلتر پیشرفته روی کل نمادها</h1>
+              <div className="flex flex-wrap gap-2">
+                <select value={logic} onChange={e => setLogic(e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-bold">
+                  <option value="AND">AND (همه شرط‌ها)</option>
+                  <option value="OR">OR (حداقل یک شرط)</option>
+                </select>
+                <button onClick={() => setConds(p => [...p, { field: 'shareholder_type', op: '=', value: 'legal' }])} className="px-2.5 py-1 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">+ شرط</button>
+                <button onClick={runQuery} className="px-3 py-1 rounded bg-blue-600 text-white font-semibold">اجرای فیلتر</button>
+                <button onClick={exportCsv} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">خروجی CSV</button>
+              </div>
+            </div>
+
+            {conds.map((c, idx) => {
+              const fieldMeta = SCREENER_FIELDS.find(f => f[0] === c.field) || SCREENER_FIELDS[0];
+              const kind = fieldMeta[2];
+              const enumOptions = SCREENER_ENUMS[c.field];
+              const setCond = (patch) => setConds(p => p.map((x, i) => i === idx ? { ...x, ...patch } : x));
+              return (
+              <div key={idx} className="flex flex-wrap gap-2 items-center p-2 rounded bg-[var(--bg-elevated)]">
+                <select value={c.field} onChange={e => {
+                  const nf = e.target.value;
+                  const nk = (SCREENER_FIELDS.find(f => f[0] === nf) || [])[2];
+                  if (nk === 'enum') setCond({ field: nf, op: '=', value: (SCREENER_ENUMS[nf] || [['', '']])[0][0] });
+                  else setCond({ field: nf, op: '>=', value: '' });
+                }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
+                  {SCREENER_FIELDS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                </select>
+                {kind === 'enum' ? (
+                  <span className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">=</span>
+                ) : (
+                  <select value={c.op} onChange={e => setCond({ op: e.target.value })} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
+                    <option value=">=">&gt;=</option>
+                    <option value="<=">&lt;=</option>
+                    <option value="=">=</option>
+                    <option value=">">&gt;</option>
+                    <option value="<">&lt;</option>
+                  </select>
+                )}
+                {kind === 'enum' ? (
+                  <select value={c.value} onChange={e => setCond({ value: e.target.value })} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-64">
+                    {(enumOptions || []).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                  </select>
+                ) : kind === 'date' ? (
+                  <input type="date" value={c.value || ''} onChange={e => setCond({ value: e.target.value })} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-40 num" />
+                ) : (
+                  <input type="number" value={c.value} onChange={e => {
+                    const v = e.target.value;
+                    setCond({ value: v === '' ? '' : Number(v) });
+                  }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-40 num" placeholder="عدد..." />
+                )}
+                <button onClick={() => setConds(p => p.filter((_, i) => i !== idx))} className="text-red-400">حذف</button>
+              </div>
+              );
+            })}
+
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border-subtle)]">
+              <input value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="نام فیلتر..." className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]" />
+              <button onClick={saveCurrent} className="px-2.5 py-1 rounded bg-emerald-600 text-white">ذخیره در دیتابیس</button>
+              {saved.map(sf => (
+                <button key={sf.id} onClick={() => {
+                  const ast = JSON.parse(sf.filter_ast_json);
+                  setLogic(ast.logic); setConds(ast.conditions);
+                }} className="px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">{sf.name}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+            <table className="w-full text-right">
+              <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                <tr><th className="p-2">نماد</th><th className="p-2">بازار</th><th className="p-2">سهام‌دار</th><th className="p-2">درصد مالکیت</th><th className="p-2">تغییر سهام</th><th className="p-2">تمرکز شرکت٪</th></tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)]">
+                {loading ? <tr><td colSpan="6" className="p-6 text-center">در حال اجرای فیلتر...</td></tr> : results.map((r, i) => (
+                  <tr key={i} onClick={() => onOpenStock(r.symbol)} className="hover:bg-[var(--bg-elevated)] cursor-pointer">
+                    <td className="p-2 font-bold text-blue-400">{r.symbol}</td>
+                    <td className="p-2">{r.market}</td>
+                    <td className="p-2">{r.shareholder_name}</td>
+                    <td className="p-2 num font-semibold">{fmtPct(r.ownership_percent_calculated)}</td>
+                    <td className="p-2 num">{fmtNum(r.shares_change)}</td>
+                    <td className="p-2 num">{fmtPct(r.disclosed_ownership_percent_sum)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 9. Page 6: Persistent Watchlist with Autocomplete & Sorting ---
+    function WatchlistPage({ onOpenStock, currency }) {
+      const [items, setItems] = useState([]);
+      const [symInput, setSymInput] = useState('');
+      const [suggestions, setSuggestions] = useState([]);
+      const [sortCol, setSortCol] = useState('disclosed_ownership_percent_sum');
+      const [sortAsc, setSortAsc] = useState(false);
+      const [err, setErr] = useState('');
+      const [msg, setMsg] = useState('');
+
+      const load = () => apiFetch('/api/v1/watchlists/default').then(res => setItems(res.items || []));
+      useEffect(() => { load(); }, []);
+
+      useEffect(() => {
+        if (!symInput.trim()) { setSuggestions([]); return; }
+        const t = setTimeout(() => {
+          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(symInput.trim())}&limit=8`)
+            .then(r => setSuggestions(r.results || []))
+            .catch(() => setSuggestions([]));
+        }, 200);
+        return () => clearTimeout(t);
+      }, [symInput]);
+
+      const addSym = (targetSym) => {
+        const sym = (targetSym || symInput).trim();
+        if (!sym) { setErr('نمادی وارد نشده است.'); setMsg(''); return; }
+        apiFetch('/api/v1/watchlists/default/symbols', { method: 'POST', body: JSON.stringify({ symbol: sym }) })
+          .then(() => { setSymInput(''); setSuggestions([]); setErr(''); setMsg(`نماد ${sym} به دیده‌بان اضافه شد.`); load(); })
+          .catch(e => { setErr(e.message); setMsg(''); });
+      };
+
+      const removeSym = (sym) => {
+        apiFetch(`/api/v1/watchlists/default/symbols/${encodeURIComponent(sym)}`, { method: 'DELETE' }).then(load);
+      };
+
+      const sortedItems = useMemo(() => {
+        return [...items].sort((a, b) => {
+          const va = a[sortCol] ?? 0, vb = b[sortCol] ?? 0;
+          if (typeof va === 'string') return sortAsc ? va.localeCompare(vb, 'fa') : vb.localeCompare(va, 'fa');
+          return sortAsc ? va - vb : vb - va;
+        });
+      }, [items, sortCol, sortAsc]);
+
+      const toggleSort = (col) => {
+        if (sortCol === col) setSortAsc(!sortAsc);
+        else { setSortCol(col); setSortAsc(false); }
+      };
+
+      return (
+        <div className="space-y-3 text-xs">
+          <ErrorBox error={err} />
+          {msg && <div className="p-2.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-xs">{msg}</div>}
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
+            <h1 className="text-sm font-bold">دیده‌بان شخصی (ذخیره‌شده در SQLite)</h1>
+            <div className="flex gap-2 relative">
+              <input value={symInput} onChange={e => { setSymInput(e.target.value); setMsg(''); }} onKeyDown={e => { if (e.key === 'Enter') addSym(); }} placeholder="جستجو و افزودن نماد... (Enter)" className="px-2.5 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-56" />
+              <button onClick={() => addSym()} className="px-3 py-1 rounded bg-blue-600 text-white">+ افزودن</button>
+              {suggestions.length > 0 && (
+                <div className="absolute right-0 top-9 w-64 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] shadow-xl z-40">
+                  {suggestions.map(s => (
+                    <button key={s.symbol} onClick={() => addSym(s.symbol)} className="w-full text-right p-2 hover:bg-[var(--bg-elevated)] flex justify-between">
+                      <span className="font-bold text-blue-400">{s.symbol}</span>
+                      <span className="text-[var(--text-secondary)] truncate">{s.company_name || s.market}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+            <table className="w-full text-right">
+              <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                <tr>
+                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('symbol')}>نماد ⇅</th>
+                  <th className="p-2">نام شرکت</th>
+                  <th className="p-2">بازار</th>
+                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_shareholder_count')}>تعداد عمده ⇅</th>
+                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_ownership_percent_sum')}>مالکیت عمده٪ ⇅</th>
+                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('market_value')}>ارزش بازار ⇅</th>
+                  <th className="p-2">حذف</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)]">
+                {sortedItems.map(s => (
+                  <tr key={s.symbol}>
+                    <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(s.symbol)}>{s.symbol}</td>
+                    <td className="p-2">{s.company_name || '—'}</td>
+                    <td className="p-2">{s.market}</td>
+                    <td className="p-2 num">{toFa(s.deduped_shareholder_count ?? s.disclosed_shareholder_count)}</td>
+                    <td className="p-2 num">{fmtPct(s.deduped_ownership_percent_sum ?? s.disclosed_ownership_percent_sum)}</td>
+                    <td className="p-2 num">{s.market_value !== null && s.market_value !== undefined ? fmtMoney(s.market_value, currency) : '—'}</td>
+                    <td className="p-2"><button onClick={() => removeSym(s.symbol)} className="text-red-400">حذف</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 10. Page 7: Account & Plans (Local Placeholder) ---
+    function AccountAndPlansPage({ plan, setPlan }) {
+      return (
+        <div className="space-y-3 text-xs">
+          <div className="p-3 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
+            حالت اجرای محلی: سیستم احراز هویت ابری (Supabase) در نسخه ویندوز محلی غیرفعال است و تغییر سطح دسترسی زیر صرفاً نمایشی است.
+          </div>
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex justify-between items-center">
+            <div>
+              <div className="font-bold text-sm">حساب کاربری محلی و سطح دسترسی</div>
+              <div className="text-[var(--text-secondary)]">در اجرای محلی، تمام امکانات تحلیلی بدون محدودیت در دسترس شماست.</div>
+            </div>
+            <button onClick={() => setPlan(p => p === 'free' ? 'premium' : 'free')} className="px-3 py-1.5 rounded bg-blue-600 text-white">
+              سطح نمایشی: {plan}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="p-4 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
+              <h3 className="font-bold text-sm">طرح رایگان (Free)</h3>
+              <p className="text-[var(--text-secondary)]">نمای بازار، صفحات پایه نمادها، محدودیت تاریخچه سهام‌داری و ۱ دیده‌بان.</p>
+            </div>
+            <div className="p-4 rounded border border-emerald-500/40 bg-[var(--bg-panel)] space-y-1.5">
+              <h3 className="font-bold text-sm text-emerald-400">طرح حرفه‌ای (Premium)</h3>
+              <p className="text-[var(--text-secondary)]">تاریخچه کامل، بازسازی پرتفوی چندشرکتی، غربالگر پیشرفته و خروجی اکسل/CSV.</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 11. Page 8: Real Ingestion Administration Panel ---
+    function AdminDashboardPage() {
+      const [overview, setOverview] = useState(null);
+      const [manifests, setManifests] = useState([]);
+      const [errors, setErrors] = useState([]);
+      const [queue, setQueue] = useState([]);
+      const [statusFilter, setStatusFilter] = useState('ALL');
+      const [manifestQ, setManifestQ] = useState('');
+      const [msg, setMsg] = useState('');
+
+      const refreshAll = useCallback(() => {
+        apiFetch('/api/v1/admin/overview').then(setOverview);
+        apiFetch(`/api/v1/admin/manifests?status=${statusFilter}&q=${encodeURIComponent(manifestQ)}&limit=50`).then(r => setManifests(r.rows || []));
+        apiFetch('/api/v1/admin/errors?limit=30').then(r => setErrors(r.errors || []));
+        apiFetch('/api/v1/admin/identity/queue?limit=30').then(r => setQueue(r.queue || []));
+      }, [statusFilter, manifestQ]);
+
+      useEffect(() => { refreshAll(); }, [refreshAll]);
+
+      const trigger = (retryFailed) => {
+        apiFetch(`/api/v1/admin/ingestion/trigger?retry_failed=${retryFailed}`, { method: 'POST' })
+          .then(res => { setMsg(`پایپلاین ایمپورت با PID ${res.pid} شروع شد.`); refreshAll(); })
+          .catch(e => setMsg(e.message));
+      };
+
+      const resolveLink = (linkId, decision) => {
+        apiFetch('/api/v1/admin/identity/resolve', {
+          method: 'POST',
+          body: JSON.stringify({ link_id: linkId, decision, reason: 'Manual review from Admin panel' }),
+        }).then(() => refreshAll());
+      };
+
+      const mBySt = overview?.manifests_by_status || {};
+      const tot = overview?.totals || {};
+      const duck = overview?.sqlite_health || {};
+      const run = overview?.latest_run;
+      const doneInRun = run ? (run.processed_files + run.failed_files) : 0;
+      const pctRun = run && run.total_files > 0 ? Math.min(100, Math.round((doneInRun / run.total_files) * 100)) : 0;
+
+      return (
+        <div className="space-y-3 text-xs">
+          {msg && <div className="p-2 rounded bg-blue-500/15 text-blue-300">{msg}</div>}
+
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+            {[
+              ['فایل‌های کشف‌شده', fmtNum(tot.total_discovered_files ?? 0)],
+              ['تکمیل‌شده (Completed)', fmtNum(mBySt.completed ?? 0)],
+              ['ناموفق (Failed)', fmtNum(mBySt.failed ?? 0)],
+              ['نمادهای یکتا (SQLite)', fmtNum(duck.unique_symbols ?? 0)],
+              ['رکوردهای مالکیت', fmtNum(duck.holdings_records ?? 0)],
+              ['وضعیت SQLite', duck.healthy ? 'آنلاین' : 'خطا'],
+            ].map(([k, v]) => (
+              <div key={k} className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                <div className="text-[var(--text-secondary)]">{k}</div>
+                <div className="font-bold mt-1 num">{v}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <div>
+                آخرین ایمپورت موفق: <span className="num">{tot.last_successful_ingestion || '—'}</span> | وضعیت اجرا: <strong>{overview?.ingestion_subprocess_running ? 'در حال پردازش...' : 'آماده'}</strong>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={refreshAll} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">به‌روزرسانی</button>
+                <button onClick={() => trigger(false)} className="px-3 py-1 rounded bg-blue-600 text-white">شروع / ادامه ایمپورت</button>
+                <button onClick={() => trigger(true)} className="px-3 py-1 rounded bg-amber-600 text-white">پردازش مجدد خطاها</button>
+              </div>
+            </div>
+            {run && (
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px] text-[var(--text-secondary)]">
+                  <span>پیشرفت آخرین اجرا ({run.status}): <span className="num">{fmtNum(doneInRun)} / {fmtNum(run.total_files)}</span> (رد شده بدون تغییر: <span className="num">{fmtNum(run.skipped_files)}</span>)</span>
+                  <span className="num font-bold">{toFa(pctRun)}٪</span>
+                </div>
+                <div className="w-full h-2 rounded bg-[var(--bg-canvas)] overflow-hidden">
+                  <div style={{ width: `${pctRun}%` }} className="h-full bg-blue-500 transition-all" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <h2 className="font-bold">مانیفست فایل‌ها (`ingestion_manifests`)</h2>
+              <div className="flex flex-wrap gap-1.5">
+                <input value={manifestQ} onChange={e => setManifestQ(e.target.value)} placeholder="جستجوی فایل یا نماد..." className="px-2 py-0.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]" />
+                {['ALL', 'completed', 'pending', 'processing', 'failed'].map(st => (
+                  <button key={st} onClick={() => setStatusFilter(st)} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${statusFilter === st ? 'bg-blue-600 text-white' : ''}`}>{st}</button>
+                ))}
+              </div>
+            </div>
+            <div className="overflow-x-auto max-h-60 overflow-y-auto">
+              <table className="w-full text-right">
+                <thead className="bg-[var(--bg-elevated)]"><tr><th className="p-2">فایل</th><th className="p-2">نماد</th><th className="p-2">رکوردهای مالکیت</th><th className="p-2">مرحله</th><th className="p-2">وضعیت</th><th className="p-2">خطا</th></tr></thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {manifests.map(m => (
+                    <tr key={m.file_path}><td className="p-2 num">{m.file_name}</td><td className="p-2 font-bold">{m.symbol || '—'}</td><td className="p-2 num">{fmtNum(m.holdings_rows)}</td><td className="p-2">{m.last_stage}</td><td className="p-2">{m.status}</td><td className="p-2 text-red-400">{m.last_error || '—'}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+              <h2 className="font-bold">صف تأیید هویت سهام‌داران ({toFa(queue.length)})</h2>
+              <div className="max-h-60 overflow-y-auto space-y-1.5">
+                {queue.map(qItem => (
+                  <div key={qItem.id} className="p-2 rounded bg-[var(--bg-elevated)] flex justify-between items-center gap-2">
+                    <div>
+                      <div className="font-semibold">{qItem.observed_name}</div>
+                      <div className="text-[10px] text-[var(--text-secondary)] num">{qItem.symbol} | {qItem.id_scheme}:{qItem.raw_source_id} ({qItem.link_status})</div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => resolveLink(qItem.id, 'verified')} className="px-2 py-0.5 rounded bg-emerald-600 text-white">تأیید</button>
+                      <button onClick={() => resolveLink(qItem.id, 'conflicting')} className="px-2 py-0.5 rounded bg-red-600 text-white">تعارض</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+              <h2 className="font-bold">لاگ خطاهای ایمپورت ({toFa(errors.length)})</h2>
+              <div className="max-h-60 overflow-y-auto space-y-1.5">
+                {errors.map(er => (
+                  <div key={er.id} className="p-2 rounded bg-[var(--bg-elevated)] border border-red-500/20">
+                    <div className="font-semibold text-red-400">{er.file_name} {er.sheet_name ? `(${er.sheet_name})` : ''} {er.row_number ? `سطر ${toFa(er.row_number)}` : ''}</div>
+                    <div className="text-[11px]">{er.error_message}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 12. Root Shell ---
+    const NAV_PAGES = [
+      { id: 'market', label: '۱. داشبورد بازار' },
+      { id: 'stock', label: '۲. صفحه نماد' },
+      { id: 'shareholders', label: '۳. تحلیل سهام‌داران' },
+      { id: 'portfolio', label: '۴. پرتفوی سرمایه‌گذاران' },
+      { id: 'screener', label: '۵. فیلتر پیشرفته' },
+      { id: 'watchlist', label: '۶. دیده‌بان' },
+      { id: 'account', label: '۷. حساب و اشتراک' },
+      { id: 'admin', label: '۸. پنل مدیریت ایمپورت' },
+    ];
+
+    function App() {
+      const [page, setPage] = useState('market');
+      const [activeSymbol, setActiveSymbol] = useState('');
+      const [theme, setTheme] = useState('dark');
+      const [currency, setCurrency] = useState('IRR');
+      const [dateMode, setDateMode] = useState('jalali');
+      // Bump after the global flips so every fmtDate/fmtGregorianDate call
+      // re-renders with the new mode (the module-level DATE_MODE alone
+      // does not trigger a render, which left tab-4 text dates stale).
+      const [, setDateModeTick] = useState(0);
+      const [portfolioInvestor, setPortfolioInvestor] = useState('');
+      const openInvestor = (id) => { setPortfolioInvestor(id); setPage('portfolio'); };
+      const [plan, setPlan] = useState('premium');
+      const [quickSearch, setQuickSearch] = useState('');
+      const [searchResults, setSearchResults] = useState([]);
+
+      useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
+      const toggleDateMode = () => setDateMode(m => {
+        const next = m === 'jalali' ? 'gregorian' : 'jalali';
+        setDateModeGlobal(next);
+        return next;
+      });
+
+      // Auto-select first imported stock so Tab 2 works even if شكبير3 was not in a pilot batch
+      useEffect(() => {
+        apiFetch('/api/v1/market/watch?limit=1')
+          .then(res => {
+            if (res.rows && res.rows.length > 0) {
+              setActiveSymbol(prev => prev || res.rows[0].symbol);
+            }
+          })
+          .catch(() => {});
+      }, []);
+
+      useEffect(() => {
+        if (!quickSearch.trim()) { setSearchResults([]); return; }
+        const t = setTimeout(() => {
+          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(quickSearch.trim())}`)
+            .then(res => setSearchResults(res.results || []))
+            .catch(() => setSearchResults([]));
+        }, 200);
+        return () => clearTimeout(t);
+      }, [quickSearch]);
+
+      const openStock = (sym) => {
+        setActiveSymbol(sym);
+        setPage('stock');
+        setQuickSearch('');
+        setSearchResults([]);
+      };
+
+      return (
+        <div className={`min-h-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
+          <header className="sticky top-0 z-40 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+            <div className="max-w-[1600px] mx-auto px-3 h-12 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 relative">
+                <button onClick={() => setPage('market')} className="font-extrabold text-sm text-blue-400 whitespace-nowrap">
+                  ره‌نگار بورس
+                </button>
+                <div className="relative">
+                  <input
+                    value={quickSearch}
+                    onChange={e => setQuickSearch(e.target.value)}
+                    placeholder="جستجوی نماد یا نام شرکت در کل دیتاست..."
+                    className="w-60 md:w-80 px-3 py-1 text-xs rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] focus:outline-none focus:border-blue-500"
+                  />
+                  {searchResults.length > 0 && (
+                    <div className="absolute right-0 mt-1 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] shadow-xl z-50 text-xs max-h-72 overflow-y-auto">
+                      {searchResults.map(m => (
+                        <button key={m.symbol} onClick={() => openStock(m.symbol)} className="w-full text-right p-2 hover:bg-[var(--bg-elevated)] flex justify-between gap-2">
+                          <span className="font-bold text-blue-400">{m.symbol}</span>
+                          <span className="text-[var(--text-secondary)] truncate">{m.company_name || m.market}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <button onClick={toggleDateMode} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]" title="همهٔ تاریخ‌ها (نمودارها و جدول‌ها) بین شمسی و میلادی جابه‌جا می‌شوند">
+                  تاریخ: {dateMode === 'jalali' ? 'شمسی' : 'میلادی'}
+                </button>
+                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+                  واحد: {currency === 'IRR' ? 'ریال' : 'تومان'}
+                </button>
+                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+                  {theme === 'dark' ? 'تم روشن' : 'تم تیره'}
+                </button>
+              </div>
+            </div>
+
+            <nav className="max-w-[1600px] mx-auto px-3 flex items-center gap-1 overflow-x-auto border-t border-[var(--border-subtle)] text-xs">
+              {NAV_PAGES.map(n => (
+                <button key={n.id} onClick={() => setPage(n.id)} className={`px-3 py-2 whitespace-nowrap border-b-2 transition-colors ${page === n.id ? 'border-blue-500 text-blue-400 font-bold' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}>
+                  {n.label}
+                </button>
+              ))}
+            </nav>
+          </header>
+
+          <main className="flex-1 max-w-[1600px] w-full mx-auto p-3">
+            {page === 'market' && <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode} />}
+            {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
+            {page === 'shareholders' && <ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode} />}
+            {page === 'portfolio' && <PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor} />}
+            {page === 'screener' && <ScreenerPage onOpenStock={openStock} />}
+            {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
+            {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} />}
+            {page === 'admin' && <AdminDashboardPage />}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
