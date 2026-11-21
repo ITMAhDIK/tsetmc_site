@@ -388,6 +388,9 @@ def build_portfolio_history_summary(observations):
         state["last_observation_date"] = date
         state["last_observation_date_jalali"] = row.get("jalali_date")
         state["last_observation_shares"] = row.get("shares")
+        # Never leave a stale value on the most recent date when that date's
+        # shares or identity are unavailable.
+        state["last_estimated_holding_value_rial"] = None
         state["last_change_type"] = row.get("change_type")
         state["last_change_calculation_status"] = row.get("change_calculation_status")
         state["last_reference_price"] = row.get("reference_price")
@@ -454,7 +457,14 @@ def build_portfolio_history_summary(observations):
                 if previous is None:
                     continue
                 if previous["shares"] == entry["shares"]:
-                    continue
+                    # Prefer the only available valuation when quantities
+                    # agree; if both values exist but disagree, do not pick
+                    # an arbitrary instrument listing for the economic asset.
+                    if previous["value"] is None and entry["value"] is not None:
+                        date_map[key] = entry
+                        continue
+                    if entry["value"] is None or previous["value"] == entry["value"]:
+                        continue
                 date_map[key] = None
                 cisin_conflicts += 1
 
@@ -502,7 +512,7 @@ def build_portfolio_history_summary(observations):
     return historical_summary, historical_symbols, history_series
 
 
-# Sidecar layout version.# Sidecar layout version. Bumped whenever the refresh builds a new table
+# Sidecar layout version. Bumped whenever the refresh builds a new table
 # or column: refresh() forces a full rebuild when the stored version
 # differs, so a code upgrade never serves a stale sidecar through the
 # fingerprint shortcut (the DB file itself has not changed).
@@ -3192,7 +3202,7 @@ class SiteApi:
                 "total": total, "limit": limit, "offset": offset,
                 "rows": page_rows}
 
-    def portfolio_detail(self, investor_id, params):    def portfolio_detail(self, investor_id, params):
+    def portfolio_detail(self, investor_id, params):
         try:
             scheme, sh_id = investor_id.split(":", 1)
             sh_id = int(sh_id)
