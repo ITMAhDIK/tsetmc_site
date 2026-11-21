@@ -37,6 +37,7 @@
 #   GET  /api/v1/shareholders/observation-history?symbol&id_scheme&shareholder_id
 #   GET  /api/v1/portfolios/investors?q&limit
 #   GET  /api/v1/portfolios/<id>?as_of_date
+  GET  /api/v1/portfolios/<id>/history?symbol&as_of_date&limit&offset
 #   POST /api/v1/screener/query        POST /api/v1/screener/export (CSV)
 #   GET  /api/v1/screener/saved-filters   POST /api/v1/screener/saved-filters
 #   GET  /api/v1/watchlists/default
@@ -51,6 +52,8 @@ import argparse
 import csv
 from collections import Counter, defaultdict
 import io
+import heapq
+import itertools
 import json
 import os
 import re
@@ -304,11 +307,206 @@ def _latest_close(live, ins_code, on_or_before):
         (ins_code, on_or_before)).fetchone()
     return r["p_closing"] if r else None
 
-# Sidecar layout version. Bumped whenever the refresh builds a new table
+def classify_portfolio_change(row):
+    """Classify disclosed quantity changes without inventing purchases or sales.
+
+    A signed shares_change is only a net observed quantity change. Corporate
+    actions and first observations take precedence over directional labels.
+    """
+    if row.get("identity_conflict"):
+        return "identity_conflict"
+    if row.get("corporate_action"):
+        return "capital_action"
+    status = row.get("change_calculation_status")
+    if status == "first_observation_no_previous":
+        return "first_observation"
+    if status == "not_disclosed_on_date":
+        return "not_disclosed"
+    if status == "spans_gap":
+        return "change_after_gap"
+    delta = row.get("shares_change")
+    try:
+        delta = int(delta) if delta is not None else None
+    except (TypeError, ValueError, OverflowError):
+        delta = None
+    if delta is not None and delta > 0:
+        return "net_increase"
+    if delta is not None and delta < 0:
+        return "net_decrease"
+    if row.get("change_type") == "increase":
+        return "increase_unquantified"
+    if row.get("change_type") == "decrease":
+        return "decrease_unquantified"
+    return "observation"
+
+
+def build_portfolio_history_summary(observations):
+    """Aggregate all historical disclosures while preserving missing quantities.
+
+    The chart sums only positions disclosed with a valid quantity and price on
+    that exact date. It is an observed-value series, not a carried-forward NAV.
+    """
+    by_instrument, daily = {}, {}
+    observations_count = known_count = unavailable_count = 0
+    identity_conflicts = change_events = cisin_conflicts = 0
+    first_date = last_date = None
+    event_classes = {
+        "identity_conflict", "capital_action", "first_observation",
+        "change_after_gap", "net_increase", "net_decrease",
+        "increase_unquantified", "decrease_unquantified",
+    }
+    for row in observations:
+        observations_count += 1
+        date, ins_code = row.get("date"), row.get("ins_code")
+        symbol = row.get("symbol") or ins_code
+        if date and (first_date is None or date < first_date):
+            first_date = date
+        if date and (last_date is None or date > last_date):
+            last_date = date
+        state = by_instrument.setdefault(ins_code, {
+            "ins_code": ins_code, "symbol": symbol,
+            "first_observation_date": date,
+            "first_observation_date_jalali": row.get("jalali_date"),
+            "last_observation_date": date,
+            "last_observation_date_jalali": row.get("jalali_date"),
+            "first_observed_shares": None, "last_observation_shares": row.get("shares"),
+            "last_known_shares": None, "max_observed_shares": None,
+            "min_observed_shares": None, "observations_count": 0,
+            "known_shares_observations_count": 0,
+            "unavailable_shares_observations_count": 0,
+            "increase_events_count": 0, "decrease_events_count": 0,
+            "capital_action_events_count": 0, "identity_conflicts_count": 0,
+            "net_observed_shares_change": 0,
+            "positive_observed_shares_change": 0,
+            "negative_observed_shares_change": 0,
+            "last_change_type": row.get("change_type"),
+            "last_change_calculation_status": row.get("change_calculation_status"),
+            "last_reference_price": row.get("reference_price"),
+            "last_reference_price_date": row.get("reference_price_date"),
+            "last_estimated_holding_value_rial": None, "cisin": row.get("cisin"),
+        })
+        state["last_observation_date"] = date
+        state["last_observation_date_jalali"] = row.get("jalali_date")
+        state["last_observation_shares"] = row.get("shares")
+        state["last_change_type"] = row.get("change_type")
+        state["last_change_calculation_status"] = row.get("change_calculation_status")
+        state["last_reference_price"] = row.get("reference_price")
+        state["last_reference_price_date"] = row.get("reference_price_date")
+        state["cisin"] = row.get("cisin") or state.get("cisin")
+        state["observations_count"] += 1
+        shares, conflict = row.get("shares"), bool(row.get("identity_conflict"))
+        if conflict:
+            identity_conflicts += 1
+            state["identity_conflicts_count"] += 1
+        if shares is None or conflict:
+            unavailable_count += 1
+            state["unavailable_shares_observations_count"] += 1
+        else:
+            known_count += 1
+            state["known_shares_observations_count"] += 1
+            if state["first_observed_shares"] is None:
+                state["first_observed_shares"] = shares
+            state["last_known_shares"] = shares
+            state["max_observed_shares"] = (
+                shares if state["max_observed_shares"] is None
+                else max(state["max_observed_shares"], shares))
+            state["min_observed_shares"] = (
+                shares if state["min_observed_shares"] is None
+                else min(state["min_observed_shares"], shares))
+            price = row.get("reference_price")
+            state["last_estimated_holding_value_rial"] = (
+                shares * price if price is not None and price > 0 else None)
+        classification = classify_portfolio_change(row)
+        if classification in event_classes:
+            change_events += 1
+        if classification == "net_increase":
+            state["increase_events_count"] += 1
+        elif classification == "net_decrease":
+            state["decrease_events_count"] += 1
+        elif classification == "capital_action":
+            state["capital_action_events_count"] += 1
+        delta = row.get("shares_change")
+        if delta is not None and not conflict:
+            try:
+                delta = int(delta)
+            except (TypeError, ValueError, OverflowError):
+                delta = None
+            if delta is not None:
+                state["net_observed_shares_change"] += delta
+                if delta > 0:
+                    state["positive_observed_shares_change"] += delta
+                elif delta < 0:
+                    state["negative_observed_shares_change"] += abs(delta)
+        if date:
+            date_map = daily.setdefault(date, {})
+            key = row.get("cisin") or ins_code
+            value = None
+            if shares is not None and not conflict:
+                price = row.get("reference_price")
+                if price is not None and price > 0:
+                    value = shares * price
+            entry = {"ins_code": ins_code, "shares": None if conflict else shares,
+                     "value": value}
+            if key not in date_map:
+                date_map[key] = entry
+            else:
+                previous = date_map[key]
+                if previous is None:
+                    continue
+                if previous["shares"] == entry["shares"]:
+                    continue
+                date_map[key] = None
+                cisin_conflicts += 1
+
+    historical_symbols = sorted(
+        by_instrument.values(),
+        key=lambda item: (item["last_observation_date"] or "", item["symbol"] or ""),
+        reverse=True)
+    for item in historical_symbols:
+        item["first_observation_date_jalali"] = (
+            fmt_jalali_date(item["first_observation_date_jalali"])
+            if item["first_observation_date_jalali"] else None)
+        item["last_observation_date_jalali"] = (
+            fmt_jalali_date(item["last_observation_date_jalali"])
+            if item["last_observation_date_jalali"] else None)
+        item["last_reference_price_date_jalali"] = (
+            gregorian_yyyymmdd_to_jalali(item["last_reference_price_date"])
+            if item["last_reference_price_date"] else None)
+    history_series = []
+    for date, positions in sorted(daily.items()):
+        entries = [item for item in positions.values() if item is not None]
+        valued = [item["value"] for item in entries if item["value"] is not None]
+        history_series.append({
+            "time": fmt_gregorian_date(date),
+            "combined_value_rial": sum(valued) if valued else None,
+            "observed_instruments_count": len(entries),
+            "valued_instruments_count": len(valued),
+            "missing_price_or_shares_count": len(entries) - len(valued),
+        })
+    historical_summary = {
+        "symbols_count": len(historical_symbols),
+        "observations_count": observations_count,
+        "known_shares_observations_count": known_count,
+        "unavailable_shares_observations_count": unavailable_count,
+        "change_events_count": change_events,
+        "identity_conflicts_count": identity_conflicts,
+        "cisin_alias_conflicts_count": cisin_conflicts,
+        "first_observation_date": first_date,
+        "first_observation_date_jalali":
+            gregorian_yyyymmdd_to_jalali(first_date) if first_date else None,
+        "last_observation_date": last_date,
+        "last_observation_date_jalali":
+            gregorian_yyyymmdd_to_jalali(last_date) if last_date else None,
+        "valuation_method": "same-date disclosed holdings x reference price; no carry-forward",
+    }
+    return historical_summary, historical_symbols, history_series
+
+
+# Sidecar layout version.# Sidecar layout version. Bumped whenever the refresh builds a new table
 # or column: refresh() forces a full rebuild when the stored version
 # differs, so a code upgrade never serves a stale sidecar through the
 # fingerprint shortcut (the DB file itself has not changed).
-SIDECAR_VERSION = 9
+SIDECAR_VERSION = 10
 
 # Persian/Arabic letter variants: the pipeline stores symbols and names in
 # the form TSETMC returned them, so the same word can appear with Arabic
@@ -443,6 +641,22 @@ CREATE TABLE IF NOT EXISTS site_holder_latest (
 -- Kept separate from site_holder_latest on purpose: joining the registry
 -- per holdings row during the refresh never finishes on the real database
 -- (13.8M random lookups); endpoints join this small table instead.
+CREATE TABLE IF NOT EXISTS site_holder_history (
+    id_scheme TEXT NOT NULL, shareholder_id INTEGER NOT NULL,
+    ins_code TEXT NOT NULL, symbol TEXT NOT NULL, identity_status TEXT,
+    date TEXT NOT NULL, jalali_date TEXT, shares INTEGER,
+    ownership_percent_reported REAL, total_company_shares INTEGER,
+    total_shares_basis TEXT, price REAL, price_field TEXT, price_date TEXT,
+    valuation_status TEXT, market_value REAL, previous_date TEXT,
+    previous_shares INTEGER, shares_change INTEGER, shares_change_percent REAL,
+    gap_trading_days INTEGER, change_type TEXT, change_calculation_status TEXT,
+    corporate_action TEXT, corporate_action_date TEXT, corporate_action_ratio REAL,
+    source_change_code INTEGER, source_change_amount REAL, anomaly_flags TEXT,
+    data_available INTEGER, note TEXT, entry_status TEXT, source_endpoint TEXT,
+    prev_close_price REAL, prev_close_date TEXT,
+    PRIMARY KEY (id_scheme, shareholder_id, date, ins_code)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS site_shareholder_names (
     id_scheme TEXT NOT NULL,
     shareholder_id INTEGER NOT NULL,
@@ -894,6 +1108,80 @@ def refresh_summaries(live, sidecar):
             "CREATE INDEX IF NOT EXISTS idx_holder_latest_pct "
             "ON site_holder_latest(latest_date DESC, "
             "ownership_percent_calc DESC)")
+    # 2b. Materialize every historical holder observation, not just the latest row.
+    #     The table is clustered by identity/date for indexed investor lookups.
+    #     It uses the same proven-duplicate exclusion set as all other views.
+    #     This is a rebuildable sidecar copy; the source holdings DB stays read-only.
+    t_hist = time.time()
+    with sidecar:
+        sidecar.execute("DROP TABLE IF EXISTS site_holder_history")
+        sidecar.execute("""CREATE TABLE site_holder_history (
+            id_scheme TEXT NOT NULL, shareholder_id INTEGER NOT NULL,
+            ins_code TEXT NOT NULL, symbol TEXT NOT NULL, identity_status TEXT,
+            date TEXT NOT NULL, jalali_date TEXT, shares INTEGER,
+            ownership_percent_reported REAL, total_company_shares INTEGER,
+            total_shares_basis TEXT, price REAL, price_field TEXT, price_date TEXT,
+            valuation_status TEXT, market_value REAL, previous_date TEXT,
+            previous_shares INTEGER, shares_change INTEGER, shares_change_percent REAL,
+            gap_trading_days INTEGER, change_type TEXT, change_calculation_status TEXT,
+            corporate_action TEXT, corporate_action_date TEXT, corporate_action_ratio REAL,
+            source_change_code INTEGER, source_change_amount REAL, anomaly_flags TEXT,
+            data_available INTEGER, note TEXT, entry_status TEXT, source_endpoint TEXT,
+            prev_close_price REAL, prev_close_date TEXT,
+            PRIMARY KEY (id_scheme, shareholder_id, date, ins_code)
+        ) WITHOUT ROWID""")
+    history_columns = (
+        "id_scheme, shareholder_id, ins_code, symbol, identity_status, "
+        "date, jalali_date, shares, ownership_percent_reported, "
+        "total_company_shares, total_shares_basis, price, price_field, "
+        "price_date, valuation_status, market_value, previous_date, "
+        "previous_shares, shares_change, shares_change_percent, gap_trading_days, "
+        "change_type, change_calculation_status, corporate_action, "
+        "corporate_action_date, corporate_action_ratio, source_change_code, "
+        "source_change_amount, anomaly_flags, data_available, note, entry_status, "
+        "source_endpoint, prev_close_price, prev_close_date")
+    history_insert = (
+        "INSERT INTO site_holder_history (" + history_columns + ") "
+        "VALUES (" + ",".join("?" for _ in range(35)) + ")")
+    history_select = (
+        "SELECT h.id_scheme, h.shareholder_id, h.ins_code, h.symbol, "
+        "h.identity_status, h.date, h.jalali_date, h.shares, h.ownership_percent, "
+        "cd.total_company_shares, cd.total_shares_basis, h.price, h.price_field, "
+        "h.price_date, h.valuation_status, h.market_value, h.previous_date, "
+        "h.previous_shares, h.shares_change, h.shares_change_percent, "
+        "h.gap_trading_days, h.change_type, h.change_calculation_status, "
+        "h.corporate_action, h.corporate_action_date, h.corporate_action_ratio, "
+        "h.source_change_code, h.source_change_amount, h.anomaly_flags, "
+        "h.data_available, h.note, h.entry_status, h.source_endpoint, "
+        "h.prev_close_price, h.prev_close_date "
+        "FROM shareholder_holdings h "
+        "LEFT JOIN company_daily cd ON cd.ins_code=h.ins_code AND cd.date=h.date "
+        "WHERE NOT EXISTS ("
+        " SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+        " WHERE x.ins_code=h.ins_code AND x.date=h.date "
+        " AND x.id_scheme=h.id_scheme AND x.shareholder_id=h.shareholder_id)")
+    n_hist, dt_hist = _stream_insert(
+        cur, sidecar, history_select, history_insert,
+        lambda r: (
+            r["id_scheme"], r["shareholder_id"], r["ins_code"], r["symbol"],
+            r["identity_status"], _norm_date(r["date"]),
+            fmt_jalali_date(r["jalali_date"]), r["shares"], r["ownership_percent"],
+            r["total_company_shares"], r["total_shares_basis"], r["price"],
+            r["price_field"], _norm_date(r["price_date"]) if r["price_date"] else None,
+            r["valuation_status"], r["market_value"],
+            _norm_date(r["previous_date"]) if r["previous_date"] else None,
+            r["previous_shares"], r["shares_change"], r["shares_change_percent"],
+            r["gap_trading_days"], r["change_type"], r["change_calculation_status"],
+            r["corporate_action"],
+            _norm_date(r["corporate_action_date"]) if r["corporate_action_date"] else None,
+            r["corporate_action_ratio"], r["source_change_code"],
+            r["source_change_amount"], r["anomaly_flags"], r["data_available"],
+            r["note"], r["entry_status"], r["source_endpoint"], r["prev_close_price"],
+            _norm_date(r["prev_close_date"]) if r["prev_close_date"] else None),
+        "site_holder_history")
+    print("[refresh] site_holder_history: %d observations in %.1fs"
+          % (n_hist, dt_hist), flush=True)
+
     # 3. Holdings rows per symbol (admin manifests view).
     t2 = time.time()
     rows = cur.execute(
@@ -2747,7 +3035,164 @@ class SiteApi:
                     break
         return positions
 
-    def portfolio_detail(self, investor_id, params):
+    def _holder_history_stream(self, live, ids, as_of_dashed=None, symbol=None):
+        """Stream all history through the sidecar identity/date primary-key index."""
+        unique_ids = list(dict.fromkeys(ids or []))
+        if not unique_ids:
+            return iter(())
+        streams = []
+        for start in range(0, len(unique_ids), 350):
+            part = unique_ids[start:start + 350]
+            pairs_sql = ",".join("(?,?)" for _ in part)
+            args = [value for pair in part for value in pair]
+            where = "(h.id_scheme, h.shareholder_id) IN (%s)" % pairs_sql
+            if as_of_dashed:
+                where += " AND h.date<=?"
+                args.append(as_of_dashed)
+            if symbol:
+                where += " AND h.symbol=?"
+                args.append(symbol)
+            sql = (
+                "SELECT h.*, c.cisin AS cisin, "
+                "cd.total_company_shares AS total_company_shares, "
+                "CASE WHEN h.price IS NOT NULL AND h.price>0 "
+                "THEN h.price ELSE tp.p_closing END AS reference_price, "
+                "CASE WHEN h.price IS NOT NULL AND h.price>0 "
+                "THEN h.price_date ELSE tp.date END AS reference_price_date "
+                "FROM sidecar_data.site_holder_history h "
+                "LEFT JOIN companies c ON c.ins_code=h.ins_code "
+                "LEFT JOIN company_daily cd ON cd.ins_code=h.ins_code AND cd.date=h.date "
+                "LEFT JOIN trading_days tp "
+                "ON (h.price IS NULL OR h.price<=0) AND tp.ins_code=h.ins_code "
+                "AND tp.date=(SELECT MAX(t.date) FROM trading_days t "
+                "WHERE t.ins_code=h.ins_code AND t.date<=h.date "
+                "AND t.p_closing IS NOT NULL AND t.p_closing>0) "
+                "WHERE " + where +
+                " ORDER BY h.date, h.ins_code, h.id_scheme, h.shareholder_id")
+            cursor = live.execute(sql, args)
+            def _rows(c=cursor):
+                while True:
+                    batch = c.fetchmany(1000)
+                    if not batch:
+                        break
+                    for raw in batch:
+                        yield dict(raw)
+            streams.append(_rows())
+        return heapq.merge(*streams, key=lambda row: (
+            row["date"], row["ins_code"], row["id_scheme"], row["shareholder_id"]))
+
+    def _iter_portfolio_history_observations(
+            self, live, ids, requested_pair, as_of_dashed=None, symbol=None):
+        """Collapse linked identity rows only when same-date quantities agree."""
+        priority = {pair: idx for idx, pair in enumerate(ids or [])}
+        def rank(row):
+            pair = (row["id_scheme"], row["shareholder_id"])
+            status_rank = {"verified_same_source_row": 0,
+                           "inferred_exact_match": 1}.get(row.get("identity_status"), 2)
+            return (0 if pair == requested_pair else 1,
+                    priority.get(pair, 1 << 30), status_rank,
+                    row["id_scheme"], row["shareholder_id"])
+        stream = self._holder_history_stream(
+            live, ids, as_of_dashed=as_of_dashed, symbol=symbol)
+        for _key, group in itertools.groupby(
+                stream, key=lambda row: (row["date"], row["ins_code"])):
+            candidates = sorted(list(group), key=rank)
+            chosen = dict(candidates[0])
+            conflict = len({row.get("shares") for row in candidates}) > 1
+            chosen["identity_conflict"] = conflict
+            chosen["identity_candidate_count"] = len(candidates)
+            chosen["identity_deduplicated_count"] = max(0, len(candidates) - 1)
+            chosen["identity_candidate_ids"] = [
+                "%s:%s" % (row["id_scheme"], row["shareholder_id"])
+                for row in candidates]
+            if conflict:
+                chosen["shares"] = None
+                chosen["shares_change"] = None
+                chosen["reference_price"] = None
+            chosen["ownership_percent_calculated"] = ownership_percent_for_date(
+                chosen.get("shares"), chosen.get("total_company_shares"))
+            shares, price = chosen.get("shares"), chosen.get("reference_price")
+            chosen["estimated_holding_value_rial"] = (
+                shares * price if shares is not None and price is not None and price > 0
+                else None)
+            chosen["change_classification"] = classify_portfolio_change(chosen)
+            yield chosen
+
+    def portfolio_history(self, investor_id, params):
+        """Paginated chronological observations for one historical security."""
+        try:
+            scheme, raw_id = investor_id.split(":", 1)
+            sh_id = int(raw_id)
+        except (ValueError, AttributeError):
+            raise ApiError(400, "شناسه سرمایه‌گذار نامعتبر است.")
+        symbol = _q_str(params, "symbol").strip()
+        if not symbol:
+            raise ApiError(400, "پارامتر symbol برای تاریخچه لازم است.")
+        as_of = _q_str(params, "as_of_date").strip()
+        as_of_dashed = _norm_date(as_of) if as_of else None
+        if as_of_dashed:
+            try:
+                datetime.strptime(as_of_dashed, "%Y-%m-%d")
+            except ValueError:
+                raise ApiError(400, "تاریخ مبنا باید YYYY-MM-DD باشد.")
+        limit = _q_int(params, "limit", 200, 1, 500)
+        offset = _q_int(params, "offset", 0, 0, 100000000)
+        live, sc = self.live(), self.sidecar()
+        try:
+            ids = self._linked_identity_ids(live, sc, scheme, sh_id)
+            total, page_rows = 0, []
+            for row in self._iter_portfolio_history_observations(
+                    live, ids, (scheme, sh_id), as_of_dashed, symbol):
+                if offset <= total < offset + limit:
+                    delta, price = row.get("shares_change"), row.get("reference_price")
+                    page_rows.append({
+                        "symbol": row["symbol"], "date": row["date"],
+                        "date_jalali": fmt_jalali_date(row.get("jalali_date")),
+                        "change_type": row.get("change_type"),
+                        "change_classification": row["change_classification"],
+                        "shares": row.get("shares"),
+                        "previous_date": row.get("previous_date"),
+                        "previous_date_jalali": (
+                            gregorian_yyyymmdd_to_jalali(row["previous_date"])
+                            if row.get("previous_date") else None),
+                        "previous_shares": row.get("previous_shares"),
+                        "shares_change": delta,
+                        "shares_change_percent": row.get("shares_change_percent"),
+                        "ownership_percent_calculated": row.get("ownership_percent_calculated"),
+                        "total_company_shares": row.get("total_company_shares"),
+                        "reference_price": price,
+                        "reference_price_date": row.get("reference_price_date"),
+                        "reference_price_date_jalali": (
+                            gregorian_yyyymmdd_to_jalali(row["reference_price_date"])
+                            if row.get("reference_price_date") else None),
+                        "estimated_holding_value_rial": row.get("estimated_holding_value_rial"),
+                        "estimated_change_value_rial": (
+                            abs(delta) * price if delta is not None and price is not None
+                            and price > 0 else None),
+                        "corporate_action": row.get("corporate_action"),
+                        "corporate_action_date": row.get("corporate_action_date"),
+                        "corporate_action_ratio": row.get("corporate_action_ratio"),
+                        "source_change_code": row.get("source_change_code"),
+                        "source_change_amount": row.get("source_change_amount"),
+                        "gap_trading_days": row.get("gap_trading_days"),
+                        "change_calculation_status": row.get("change_calculation_status"),
+                        "entry_status": row.get("entry_status"),
+                        "valuation_status": row.get("valuation_status"),
+                        "data_available": bool(row.get("data_available")),
+                        "identity_conflict": row.get("identity_conflict", False),
+                        "identity_candidate_ids": row.get("identity_candidate_ids", []),
+                        "anomaly_flags": row.get("anomaly_flags"),
+                        "note": row.get("note"),
+                    })
+                total += 1
+        finally:
+            live.close()
+            sc.close()
+        return {"investor_id": investor_id, "symbol": symbol,
+                "total": total, "limit": limit, "offset": offset,
+                "rows": page_rows}
+
+    def portfolio_detail(self, investor_id, params):    def portfolio_detail(self, investor_id, params):
         try:
             scheme, sh_id = investor_id.split(":", 1)
             sh_id = int(sh_id)
@@ -2870,40 +3315,14 @@ class SiteApi:
                         probable_value += value
                 else:
                     uncertain.append(pos)
-            # Value history: per-date total across the holder's CONFIRMED
-            # and PROBABLE symbols, so the chart matches the two valued
-            # tiers in the summary (uncertain candidates are excluded).
-            # Each symbol's history is read under the id that supplied
-            # the position (the twin's id for twin positions).
-            per_date = {}
-            for ins_code, origin_scheme, origin_id in valued:
-                for r in live.execute(
-                    "SELECT h.date, h.shares, h.price, "
-                    "  (SELECT t.p_closing FROM trading_days t "
-                    "   WHERE t.ins_code = h.ins_code AND t.date <= h.date "
-                    "     AND t.p_closing IS NOT NULL AND t.p_closing > 0 "
-                    "   ORDER BY t.date DESC LIMIT 1) AS close_price "
-                    "FROM shareholder_holdings h "
-                    "WHERE h.ins_code=? AND h.id_scheme=? "
-                    "  AND h.shareholder_id=? "
-                    "  AND NOT EXISTS ("
-                    "    SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
-                    "    WHERE x.ins_code=h.ins_code AND x.date=h.date "
-                    "      AND x.id_scheme=h.id_scheme "
-                    "      AND x.shareholder_id=h.shareholder_id) "
-                    "ORDER BY h.date ASC",
-                    (ins_code, origin_scheme, origin_id)).fetchall():
-                    p = r["close_price"]
-                    if p is None and r["price"] is not None and r["price"] > 0:
-                        p = r["price"]
-                    v = (r["shares"] * p
-                         if r["shares"] is not None and p is not None
-                         else None)
-                    if v is not None:
-                        per_date[r["date"]] = per_date.get(r["date"], 0) + v
-            history_series = [
-                {"time": fmt_gregorian_date(d), "combined_value_rial": v}
-                for d, v in sorted(per_date.items())]
+            # Reconstruct from ALL observations for every resolved identity ID,
+            # including securities absent from the latest holder snapshot.
+            # Missing quantities stay unknown; no old balance is carried through
+            # dates without disclosure.
+            historical_summary, historical_symbols, history_series = \
+                build_portfolio_history_summary(
+                    self._iter_portfolio_history_observations(
+                        live, ids, (scheme, sh_id), as_of_dashed=as_of_dashed))
             reg_status = reg["identity_status"] if reg else None
             evidence = {
                 # The pipeline's own verdict for this id, plus the raw
@@ -2951,6 +3370,8 @@ class SiteApi:
                 "uncertain_candidates_count": len(uncertain),
             },
             "history_series": history_series,
+            "historical_summary": historical_summary,
+            "historical_symbols": historical_symbols,
             "confirmed_positions": confirmed,
             "probable_positions": probable,
             "uncertain_candidates": uncertain,
@@ -3440,6 +3861,8 @@ class Handler(BaseHTTPRequestHandler):
             return api.shareholder_observation_history(params), 200, "json"
         if method == "GET" and rest == ["portfolios", "investors"]:
             return api.portfolio_investors(params), 200, "json"
+        if method == "GET" and len(rest) == 3 and rest[0] == "portfolios" and rest[2] == "history":
+            return api.portfolio_history(rest[1], params), 200, "json"
         if method == "GET" and len(rest) == 2 and rest[0] == "portfolios":
             return api.portfolio_detail(rest[1], params), 200, "json"
         if method == "POST" and rest == ["screener", "query"]:
