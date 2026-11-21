@@ -50,7 +50,7 @@ button:disabled { cursor: not-allowed; }
 }
 td.num, th.num { display: table-cell; }
 
-.app-shell {
+#root .app-shell {
   position: relative;
   isolation: isolate;
   min-height: 100vh;
@@ -59,7 +59,7 @@ td.num, th.num { display: table-cell; }
     radial-gradient(ellipse at 94% 18%, rgba(45, 205, 160, .07), transparent 32rem),
     var(--bg-canvas);
 }
-.theme-light.app-shell {
+#root .theme-light.app-shell {
   background:
     radial-gradient(ellipse at 8% 0%, rgba(69, 130, 221, .10), transparent 35rem),
     radial-gradient(ellipse at 94% 18%, rgba(45, 170, 143, .06), transparent 32rem),
