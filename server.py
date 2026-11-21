@@ -1642,10 +1642,6 @@ class SiteApi:
         else:
             date_g = w["latest_date"]
             date_jalali = w["latest_date_jalali"]
-        sc = self.sidecar()
-        try:
-        finally:
-            sc.close()
         sort_by = _q_str(params, "sort_by", "shares")
         limit = _q_int(params, "limit", 100, 1, 500)
         order = ("ABS(h.shares_change) DESC" if sort_by == "change"
@@ -1698,10 +1694,6 @@ class SiteApi:
                 "SELECT date, deduped_pct, deduped_shares, deduped_count, "
                 "  raw_pct FROM site_company_daily_dedup WHERE ins_code=?",
                 (w["ins_code"],)).fetchall()}
-            excluded_rows = [tuple(r) for r in sc.execute(
-                "SELECT date, id_scheme, shareholder_id "
-                "FROM site_excluded_holder_rows WHERE ins_code=?",
-                (w["ins_code"],)).fetchall()]
         finally:
             sc.close()
         live = self.live()
@@ -2593,9 +2585,8 @@ class SiteApi:
         same symbol appears under several ids of the identity (the twin
         records the same position), the first id in `ids` wins, so the
         requested id's own record is preferred over a twin's."""
-        # The live DB is opened read-only, but SQLite permits attaching
-        # the sidecar for read-only joins. This makes historical position
-        # lookups obey the same source-proven exclusions as the latest index.
+        # self.live() attaches the sidecar read-only, so historical
+        # position lookups can use the same exclusions as the latest index.
         # Step 1: which (symbol, id) pairs actually exist -- ONE batched
         # query over site_holder_latest, whose idx_holder_scheme
         # (id_scheme, shareholder_id) serves the IN list as point seeks
