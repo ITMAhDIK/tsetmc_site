@@ -1,0 +1,260 @@
+/* ============================================================================
+ * MODULE 08 — 07-PORTFOLIO-RECONSTRUCTION
+ * Responsibility: Investor portfolio reconstruction across companies and dates.
+ * Load order: after 00-runtime.jsx and in the numeric order used by index HTML.
+ * Shared contracts: React hooks and declarations from earlier modules are
+ * available in this page. Keep API payloads and business rules unchanged here.
+ * Maintenance: add focused comments beside non-obvious calculations, state
+ * transitions, data provenance assumptions, and event handlers.
+ * ========================================================================== */
+// --- 7. Page 4: Investor Portfolio Reconstruction ---
+    function PortfolioReconstructionPage({ currency, theme, onOpenStock, dateMode, initialInvestor = '' }) {
+      const [invQuery, setInvQuery] = useState('');
+      const [invSort, setInvSort] = useState('linked');
+      const [investors, setInvestors] = useState([]);
+      const [selectedId, setSelectedId] = useState('');
+      const [idInput, setIdInput] = useState('');
+      const [asOfDate, setAsOfDate] = useState('');
+      const [portfolio, setPortfolio] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [compQuery, setCompQuery] = useState('');
+      const [compResults, setCompResults] = useState([]);
+      const [compSymbol, setCompSymbol] = useState('');
+      const [compHolders, setCompHolders] = useState([]);
+      const [compLoading, setCompLoading] = useState(false);
+
+      // Open a specific investor (e.g. clicked on a holder on the
+      // dashboard): the dashboard passes "scheme:id".
+      useEffect(() => { if (initialInvestor) setSelectedId(initialInvestor); }, [initialInvestor]);
+
+      // Direct ID entry: "share_id:123456" / "ondate_share_id:123456",
+      // or a bare number (treated as share_id).
+      const applyIdInput = () => {
+        const v = idInput.trim();
+        if (!v) return;
+        setSelectedId(v.includes(':') ? v : `share_id:${v}`);
+      };
+
+      // Find an investor through a company: search the company, pick it,
+      // and its shareholders appear below -- click one to load them.
+      useEffect(() => {
+        if (!compQuery.trim()) { setCompResults([]); return; }
+        const timer = setTimeout(() => {
+          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(compQuery.trim())}&limit=8`)
+            .then(res => setCompResults(res.results || []))
+            .catch(() => {});
+        }, 200);
+        return () => clearTimeout(timer);
+      }, [compQuery]);
+
+      useEffect(() => {
+        if (!compSymbol) { setCompHolders([]); return; }
+        setCompLoading(true);
+        apiFetch(`/api/v1/stocks/${encodeURIComponent(compSymbol)}/shareholders`)
+          .then(res => setCompHolders(res.rows || []))
+          .catch(() => setCompHolders([]))
+          .finally(() => setCompLoading(false));
+      }, [compSymbol]);
+
+      useEffect(() => {
+        const timer = setTimeout(() => {
+          apiFetch(`/api/v1/portfolios/investors?q=${encodeURIComponent(invQuery)}&limit=30&sort_by=${invSort}`)
+            .then(res => {
+              const list = res.investors || [];
+              setInvestors(list);
+              if (!selectedId && list.length > 0) setSelectedId(list[0].id);
+            });
+        }, 200);
+        return () => clearTimeout(timer);
+      }, [invQuery, invSort]);
+
+      useEffect(() => {
+        if (!selectedId) return;
+        setLoading(true);
+        const qs = asOfDate ? `?as_of_date=${encodeURIComponent(asOfDate)}` : '';
+        apiFetch(`/api/v1/portfolios/${encodeURIComponent(selectedId)}${qs}`)
+          .then(setPortfolio)
+          .finally(() => setLoading(false));
+      }, [selectedId, asOfDate]);
+
+      const sum = portfolio?.summary || {};
+      const chartSeries = useMemo(() => {
+        // Values in همر (1e12 Rial) in IRR mode, همت (1e12 Toman = 1e13 Rial)
+        // in IRT mode.
+        const divisor = currency === 'IRT' ? 1e13 : 1e12;
+        return (portfolio?.history_series || []).map(p => ({
+          time: p.time,
+          value: (p.combined_value_rial || 0) / divisor,
+        }));
+      }, [portfolio, currency]);
+
+      return (
+        <div className="space-y-3 text-xs">
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <h1 className="text-sm font-bold">بازسازی پرتفوی سرمایه‌گذاران</h1>
+              <p className="text-[11px] text-[var(--text-secondary)]">هویت هر سرمایه‌گذار از شناسه‌های (id_scheme, shareholder_id) منبع ساخته می‌شود؛ لینک‌های «محتمل» فقط وقتی در جمع می‌آیند که در همهٔ تاریخ‌ها تاریخ+سهام+نام دقیقاً یکسان بوده و هیچ تناقضی نداشته باشند.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input value={invQuery} onChange={e => setInvQuery(e.target.value)} placeholder="جستجوی سرمایه‌گذار..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48" />
+              <select value={invSort} onChange={e => setInvSort(e.target.value)} className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]" title="مرتب‌سازی فهرست سرمایه‌گذاران">
+                <option value="linked">بیشترین رکورد</option>
+                <option value="inferred">بیشترین لینک استنتاجی</option>
+              </select>
+              <select value={selectedId} onChange={e => setSelectedId(e.target.value)} className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] max-w-xs">
+                {investors.map(inv => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.canonical_name} ({toFa(inv.verified_links_count)} تأیید / {toFa(inv.inferred_links_count || 0)} استنتاجی / {toFa(inv.linked_records_count)} کل)
+                  </option>
+                ))}
+              </select>
+              <input value={idInput} onChange={e => setIdInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyIdInput(); }} placeholder="شناسه: share_id:123456" className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48 num" title="شناسهٔ سرمایه‌گذار به شکل scheme:id — عدد خالی یعنی share_id" />
+              <button onClick={applyIdInput} className="px-3 py-1.5 rounded bg-blue-600 text-white font-bold">اعمال</button>
+              <input type="date" value={asOfDate} onChange={e => setAsOfDate(e.target.value)} className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] num" title="تاریخ میلادی مبنا" />
+              {asOfDate && <span className="text-[11px] text-[var(--text-secondary)] num">{fmtGregorianDate(asOfDate)}</span>}
+            </div>
+          </div>
+
+          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+            <div className="font-bold">یافتن سرمایه‌گذار از روی شرکت</div>
+            <div className="flex flex-wrap gap-2">
+              <input value={compQuery} onChange={e => { setCompQuery(e.target.value); setCompSymbol(''); }} placeholder="نام یا نماد شرکت را جستجو کنید..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-64" />
+              {compResults.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {compResults.map(r => (
+                    <button key={r.symbol} onClick={() => { setCompSymbol(r.symbol); setCompQuery(r.symbol); setCompResults([]); }} className={`px-2.5 py-1.5 rounded border border-[var(--border-subtle)] ${compSymbol === r.symbol ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>{r.symbol} — {r.company_name}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {compSymbol && (
+              <div className="space-y-1">
+                <div className="text-[var(--text-secondary)]">سهام‌داران عمدهٔ {compSymbol} — روی یک سهام‌دار کلیک کنید تا پرتفوی او باز شود:</div>
+                {compLoading ? (
+                  <div className="text-[var(--text-secondary)]">در حال واکشی سهام‌داران...</div>
+                ) : compHolders.length === 0 ? (
+                  <div className="text-[var(--text-secondary)]">سهام‌داری برای این نماد ثبت نشده است.</div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto divide-y divide-[var(--border-subtle)]">
+                    {compHolders.map(h => (
+                      <div key={`${h.id_scheme}:${h.shareholder_id}`} onClick={() => setSelectedId(`${h.id_scheme}:${h.shareholder_id}`)} className="py-1.5 flex justify-between gap-2 cursor-pointer hover:text-blue-400">
+                        <span className="font-semibold">{h.shareholder_name} <span className="text-[10px] text-[var(--text-secondary)] num">{h.id_scheme}:{h.shareholder_id}</span></span>
+                        <span className="num">{fmtNum(h.shares)} سهم ({fmtPct(h.ownership_percent_calculated)})</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="p-8 text-center text-[var(--text-secondary)]">در حال بازسازی پرتفوی...</div>
+          ) : portfolio && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                  <div className="text-[var(--text-secondary)]">ارزش کل تأییدشده (ترکیبی)</div>
+                  <div className="text-base font-bold num text-emerald-400 mt-1">{fmtMoney(sum.confirmed_combined_value_rial, currency)}</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">فاقد قیمت معتبر: {toFa(sum.positions_missing_price_count)} پوزیشن</div>
+                </div>
+                <div className="p-3 rounded border border-blue-500/30 bg-blue-500/5">
+                  <div className="text-blue-300">ارزش محتمل (تطبیق دقیق استنتاجی)</div>
+                  <div className="text-base font-bold num text-blue-400 mt-1">{fmtMoney(sum.probable_combined_value_rial, currency)}</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">شرکت‌های محتمل: {toFa(sum.probable_companies_count)}</div>
+                </div>
+                <div className="p-3 rounded border border-amber-500/30 bg-amber-500/5">
+                  <div className="text-amber-300">کاندیداهای غیرقطعی (مستثنی)</div>
+                  <div className="text-base font-bold num mt-1">{toFa(sum.uncertain_candidates_count)}</div>
+                </div>
+                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                  <div className="text-[var(--text-secondary)]">وضعیت سرمایه‌گذار</div>
+                  <div className="mt-1"><IdentityBadge status={portfolio.investor.verification_status} /></div>
+                </div>
+              </div>
+
+              {portfolio.identity_evidence && (
+                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
+                  <div className="font-bold">چرا هویت این سرمایه‌گذار درست است؟ (شواهد)</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
+                    <div>وضعیت در رجیستری هویت: <IdentityBadge status={portfolio.identity_evidence.registry_identity_status} /></div>
+                    <div>نوع سهام‌دار: {portfolio.identity_evidence.shareholder_type === 'legal' ? 'حقوقی' : portfolio.identity_evidence.shareholder_type === 'individual' ? 'حقیقی' : '—'}</div>
+                    <div>اولین مشاهده: <span className="num">{fmtDate(portfolio.identity_evidence.first_seen_date_jalali)}</span> — آخرین مشاهده: <span className="num">{fmtDate(portfolio.identity_evidence.last_seen_date_jalali)}</span></div>
+                    <div>رکوردهای پیوندخورده: <span className="num">{toFa(portfolio.identity_evidence.linked_records_count)}</span> (تأییدشده: <span className="num">{toFa(portfolio.identity_evidence.verified_links_count)}</span>، استنتاجی: <span className="num">{toFa(portfolio.identity_evidence.inferred_links_count)}</span>)</div>
+                    <div>پوزیشن‌ها بر اساس سطح اطمینان — تأییدشده: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.confirmed || 0)}</span>، محتمل: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.probable || 0)}</span>، غیرقطعی: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.uncertain || 0)}</span></div>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">
+                    «تأییدشده» یعنی پوزیشن رکورد مستقیم همین شناسه است (یا منبع خودش هر دو شناسه را در یک ردیف گذاشته است). «محتمل» یعنی پوزیشن زیر یک شناسهٔ دوقلوی استنتاجی است: در همهٔ تاریخ‌ها تاریخ + تعداد سهام + نام دقیقاً یکسان بوده، فقط یک کاندید وجود داشته، هیچ تناقضی در هیچ تاریخی نبوده، و برای اشخاص حقیقیِ بدون نام (شخص حقیقی) حداقل دو تاریخ مستقل هم‌خوانی داشته‌اند؛ نام فقط برای بررسی سازگاری استفاده شده، نه به‌تنهایی. بقیهٔ رکوردها «غیرقطعی» هستند و در هیچ جمعی نمی‌آیند.
+                  </div>
+                </div>
+              )}
+
+              <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                <h3 className="font-bold mb-2">روند تاریخی ارزش پرتفوی تأییدشده + محتمل ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
+                <LWChart data={chartSeries} height={220} theme={theme} color="#2962ff" unitLabel={currency === 'IRT' ? 'همت' : 'همر'} dateMode={dateMode} />
+              </div>
+
+              <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+                <div className="p-2.5 border-b border-[var(--border-subtle)] font-bold">پوزیشن‌های مستقیم (رکورد همین شناسه)</div>
+                <table className="w-full text-right">
+                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تاریخ قیمت</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {portfolio.confirmed_positions.length === 0 ? (
+                      <tr><td colSpan="7" className="p-4 text-center text-[var(--text-secondary)]">هیچ پوزیشن مستقیمی برای این شناسه ثبت نشده است.</td></tr>
+                    ) : portfolio.confirmed_positions.map(p => (
+                      <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
+                        <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
+                        <td className="p-2 num">{fmtDate(p.observation_date_jalali)}</td>
+                        <td className="p-2 num">{p.price_date_jalali ? fmtDate(p.price_date_jalali) : '—'}</td>
+                        <td className="p-2 num">{fmtNum(p.shares)}</td>
+                        <td className="p-2 num">{fmtPct(p.ownership_percent_calculated)}</td>
+                        <td className="p-2 num">{p.price ? fmtNum(currency === 'IRT' ? p.price / 10 : p.price) : '—'}</td>
+                        <td className="p-2 num font-semibold">{p.holding_value_rial !== null ? fmtMoney(p.holding_value_rial, currency) : 'بدون قیمت معتبر'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="rounded border border-blue-500/30 bg-blue-500/5 overflow-x-auto">
+                <div className="p-2.5 border-b border-blue-500/30 font-bold text-blue-300">پوزیشن‌های محتمل (تطبیق دقیق استنتاجی — در جمع ارزش لحاظ شده‌اند)</div>
+                <table className="w-full text-right">
+                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تاریخ قیمت</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th><th className="p-2">هویت</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {(portfolio.probable_positions || []).length === 0 ? (
+                      <tr><td colSpan="8" className="p-4 text-center text-[var(--text-secondary)]">پوزیشن «محتمل»ی برای این سرمایه‌گذار ثبت نشده است.</td></tr>
+                    ) : portfolio.probable_positions.map(p => (
+                      <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
+                        <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
+                        <td className="p-2 num">{fmtDate(p.observation_date_jalali)}</td>
+                        <td className="p-2 num">{fmtNum(p.shares)}</td>
+                        <td className="p-2 num">{fmtPct(p.ownership_percent_calculated)}</td>
+                        <td className="p-2 num">{p.price ? fmtNum(currency === 'IRT' ? p.price / 10 : p.price) : '—'}</td>
+                        <td className="p-2 num font-semibold">{p.holding_value_rial !== null ? fmtMoney(p.holding_value_rial, currency) : 'بدون قیمت معتبر'}</td>
+                        <td className="p-2"><IdentityBadge status={p.identity_status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {portfolio.uncertain_candidates.length > 0 && (
+                <div className="rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
+                  <div className="font-bold text-amber-300">رکوردهای سهام‌داری غیرقطعی (محاسبه‌نشده در جمع کل)</div>
+                  {portfolio.uncertain_candidates.map((u, i) => (
+                    <div key={i} className="p-2 rounded bg-[var(--bg-panel)] border border-[var(--border-subtle)] flex justify-between">
+                      <span>نماد: <strong className="text-blue-400 cursor-pointer" onClick={() => onOpenStock(u.symbol)}>{u.symbol}</strong> ({u.id_scheme}: {u.shareholder_id})</span>
+                      <span className="num">سهام: {fmtNum(u.shares)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
