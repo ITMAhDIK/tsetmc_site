@@ -659,18 +659,15 @@ def _mirrored_source_snapshot_dates(live):
 
 
 def _collect_excluded_holder_rows(live, sidecar):
-    """Materialize only source-proven duplicate ondate rows for all views.
+    """Materialize source-proven duplicate ondate rows for all dashboard views.
 
-    The dashboard's aggregate series, latest-holder index, detail table and
-    per-holder histories must use the same exclusion set; otherwise the
-    percentage can be corrected while the drill-down still displays duplicate
-    rows. Only ondate_share_id rows identified by exact repeated response
-    evidence or a complete endpoint mirror are excluded.
+    The aggregate series, latest-holder index, detail table and per-holder
+    histories must share one exclusion set. Only ondate_share_id rows backed
+    by exact repeated-response evidence or a complete endpoint mirror qualify.
     """
     mirrored = _mirrored_source_snapshot_dates(live)
     repeated = _duplicate_ondate_source_ids(live)
     excluded = set()
-    batch = []
     cursor = live.execute(
         "SELECT ins_code, date, shareholder_id "
         "FROM shareholder_holdings "
@@ -686,30 +683,13 @@ def _collect_excluded_holder_rows(live, sidecar):
             sid = int(shareholder_id)
             key = (ins_code, date, sid)
             if (ins_code, date) in mirrored:
-                reason = "mirrored_endpoint_snapshot"
+                excluded.add(key)
             elif key in repeated:
-                reason = "repeated_endpoint_row"
-            else:
-                continue
-            excluded.add(key)
-            batch.append((ins_code, date, "ondate_share_id", sid, reason))
-        if len(batch) >= 20000:
-            with sidecar:
-                sidecar.executemany(
-                    "INSERT OR REPLACE INTO site_excluded_holder_rows "
-                    "(ins_code, date, id_scheme, shareholder_id, reason) "
-                    "VALUES (?,?,?,?,?)", batch)
-            batch = []
+                excluded.add(key)
+
     with sidecar:
         sidecar.execute("DELETE FROM site_excluded_holder_rows")
-        if batch:
-            sidecar.executemany(
-                "INSERT OR REPLACE INTO site_excluded_holder_rows "
-                "(ins_code, date, id_scheme, shareholder_id, reason) "
-                "VALUES (?,?,?,?,?)", batch)
-        # If the batch was flushed while streaming, reinsert the collected
-        # records once from the compact set so DELETE/refresh stays atomic.
-        if not batch and excluded:
+        if excluded:
             sidecar.executemany(
                 "INSERT OR REPLACE INTO site_excluded_holder_rows "
                 "(ins_code, date, id_scheme, shareholder_id, reason) "
@@ -1172,7 +1152,7 @@ def refresh_summaries(live, sidecar):
                 # add them a second time to the analytical total.
                 if r[4] == "ondate_share_id":
                     source_key = (r[0], r[1], int(r[5])) if r[5] is not None else None
-                    if key in mirrored_snapshot_dates or source_key in repeated_source_ids:
+                    if source_key in excluded_holder_rows:
                         continue
                 sh = r[2]
                 # Deduplicate only when the source explicitly links two
@@ -1641,10 +1621,6 @@ class SiteApi:
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
-            excluded_ids = [r[0] for r in sc.execute(
-                "SELECT shareholder_id FROM site_excluded_holder_rows "
-                "WHERE ins_code=? AND date=? AND id_scheme='ondate_share_id'",
-                (w["ins_code"], w["latest_date"])).fetchall()]
         finally:
             sc.close()
         date_jalali = _q_str(params, "date_jalali").strip()
@@ -1655,6 +1631,14 @@ class SiteApi:
         else:
             date_g = w["latest_date"]
             date_jalali = w["latest_date_jalali"]
+        sc = self.sidecar()
+        try:
+            excluded_ids = [r[0] for r in sc.execute(
+                "SELECT shareholder_id FROM site_excluded_holder_rows "
+                "WHERE ins_code=? AND date=? AND id_scheme='ondate_share_id'",
+                (w["ins_code"], date_g)).fetchall()]
+        finally:
+            sc.close()
         sort_by = _q_str(params, "sort_by", "shares")
         limit = _q_int(params, "limit", 100, 1, 500)
         order = ("ABS(h.shares_change) DESC" if sort_by == "change"
@@ -1665,13 +1649,13 @@ class SiteApi:
             exclusion_args = []
             if excluded_ids:
                 exclusion_clause = (
-                    " AND NOT (id_scheme='ondate_share_id' "
-                    "AND shareholder_id IN (%s))"
+                    " AND NOT (h.id_scheme='ondate_share_id' "
+                    "AND h.shareholder_id IN (%s))"
                     % ",".join("?" for _ in excluded_ids))
                 exclusion_args = excluded_ids
             total = live.execute(
-                "SELECT COUNT(*) FROM shareholder_holdings "
-                "WHERE ins_code=? AND date=?" + exclusion_clause,
+                "SELECT COUNT(*) FROM shareholder_holdings h "
+                "WHERE h.ins_code=? AND h.date=?" + exclusion_clause,
                 (w["ins_code"], date_g) + tuple(exclusion_args)).fetchone()[0]
             rows = live.execute(
                 "SELECT h.id_scheme AS id_scheme, h.shareholder_id AS shareholder_id, "
