@@ -268,6 +268,25 @@ def identity_tier(status):
         return "probable"
     return "uncertain"
 
+
+def ownership_percent_for_date(shares, total_shares):
+    """Rebuild ownership from shares and the company's total on the SAME date.
+
+    Stored ownership_percent_calc is treated as a legacy/cache field only:
+    older builds may have used a stale denominator. Never substitute a
+    current or neighbouring total. Missing/non-positive denominators stay NULL.
+    """
+    if shares is None or total_shares is None:
+        return None
+    try:
+        shares_n = int(shares)
+        total_n = int(total_shares)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if shares_n < 0 or total_n <= 0:
+        return None
+    return round((shares_n * 100.0) / total_n, 6)
+
 def _latest_close(live, ins_code, on_or_before):
     """Latest closing price for a symbol on/before a YYYY-MM-DD date.
 
@@ -289,7 +308,7 @@ def _latest_close(live, ins_code, on_or_before):
 # or column: refresh() forces a full rebuild when the stored version
 # differs, so a code upgrade never serves a stale sidecar through the
 # fingerprint shortcut (the DB file itself has not changed).
-SIDECAR_VERSION = 7
+SIDECAR_VERSION = 9
 
 # Persian/Arabic letter variants: the pipeline stores symbols and names in
 # the form TSETMC returned them, so the same word can appear with Arabic
@@ -820,16 +839,19 @@ def refresh_summaries(live, sidecar):
             " PRIMARY KEY (ins_code, id_scheme, shareholder_id))")
         n, dt = _stream_insert(
             cur, sidecar,
-            "SELECT ins_code AS ins_code, symbol AS symbol, "
-            "  id_scheme AS id_scheme, shareholder_id AS shareholder_id, "
-            "  identity_status AS identity_status, MAX(date) AS latest_date, "
-            "  jalali_date AS latest_date_jalali, shares AS shares, "
-            "  ownership_percent_calc AS ownership_percent_calc, "
-            "  ownership_percent AS ownership_percent_reported, "
-            "  shares_change AS shares_change, change_type AS change_type, "
-            "  entry_status AS entry_status, price AS price, "
-            "  market_value AS market_value "
+            "SELECT h.ins_code AS ins_code, h.symbol AS symbol, "
+            "  h.id_scheme AS id_scheme, h.shareholder_id AS shareholder_id, "
+            "  h.identity_status AS identity_status, MAX(h.date) AS latest_date, "
+            "  h.jalali_date AS latest_date_jalali, h.shares AS shares, "
+            "  CASE WHEN cd.total_company_shares > 0 AND h.shares IS NOT NULL "
+            "       THEN 100.0 * h.shares / cd.total_company_shares ELSE NULL END "
+            "       AS ownership_percent_calc, "
+            "  h.ownership_percent AS ownership_percent_reported, "
+            "  h.shares_change AS shares_change, h.change_type AS change_type, "
+            "  h.entry_status AS entry_status, h.price AS price, "
+            "  h.market_value AS market_value "
             "FROM shareholder_holdings h "
+            "LEFT JOIN company_daily cd ON cd.ins_code=h.ins_code AND cd.date=h.date "
             "WHERE NOT EXISTS ("
             "  SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
             "  WHERE x.ins_code=h.ins_code AND x.date=h.date "
@@ -1096,15 +1118,18 @@ def refresh_summaries(live, sidecar):
         cur2 = live.cursor()
         cursor = cur2.execute(
             "SELECT h.ins_code, h.date, h.shares, h.ownership_percent_calc, "
-            "h.id_scheme, h.shareholder_id, s.raw_source_ids "
+            "h.id_scheme, h.shareholder_id, s.raw_source_ids, "
+            "cd.total_company_shares "
             "FROM shareholder_holdings h "
             "LEFT JOIN shareholders s ON s.id_scheme=h.id_scheme "
             "AND s.shareholder_id=h.shareholder_id "
+            "LEFT JOIN company_daily cd ON cd.ins_code=h.ins_code AND cd.date=h.date "
             "ORDER BY h.ins_code, h.date")
         batch = []
         cur_key = None
         seen_identities = set()
-        ded_pct = 0.0
+        ded_pct = None
+        ded_total = None
         ded_shares = 0
         raw_pct = 0.0
         raw_n = 0
@@ -1114,9 +1139,12 @@ def refresh_summaries(live, sidecar):
             nonlocal batch, n_rows
             if cur_key is None:
                 return
+            # No quantified positive-share holder means no valid percentage;
+            # do not turn an empty disclosure into a misleading 0% total.
+            pct = (ownership_percent_for_date(ded_shares, ded_total)
+                   if seen_identities else None)
             batch.append((cur_key[0], cur_key[1],
-                          round(ded_pct, 6) if ded_pct else 0.0,
-                          ded_shares, len(seen_identities),
+                          pct, ded_shares, len(seen_identities),
                           round(raw_pct, 6) if raw_pct else 0.0, raw_n))
             n_rows += 1
             if len(batch) >= 20000:
@@ -1140,10 +1168,15 @@ def refresh_summaries(live, sidecar):
                     _flush_dedup()
                     cur_key = key
                     seen_identities = set()
-                    ded_pct = 0.0
+                    ded_pct = None
+                    ded_total = r[7]
                     ded_shares = 0
                     raw_pct = 0.0
                     raw_n = 0
+                if r[7] != ded_total:
+                    # company_daily is unique by (ins_code,date); if an unexpected
+                    # join inconsistency appears, suppress this date's percentage.
+                    ded_total = None
                 raw_n += 1
                 if r[3] is not None:
                     raw_pct += r[3]
@@ -1172,12 +1205,16 @@ def refresh_summaries(live, sidecar):
                         members.add((scheme_part.strip(), int(id_part.strip())))
                     except ValueError:
                         continue
-                identity_key = tuple(sorted(members))
-                if sh is not None and identity_key not in seen_identities:
+                # A cross-scheme link is only safe to collapse on this
+                # snapshot when the share quantities also agree. If linked
+                # rows contradict each other, keep both visible so the total
+                # can be flagged (>100%) rather than silently choosing one.
+                identity_key = (tuple(sorted(members)), int(sh) if sh is not None else None)
+                if sh is not None and sh > 0 and identity_key not in seen_identities:
                     seen_identities.add(identity_key)
                     ded_shares += sh
-                    if r[3] is not None:
-                        ded_pct += r[3]
+                    # The displayed aggregate percentage is rebuilt at flush
+                    # from deduplicated shares / same-date company total.
             if n_stream % 1000000 < 20000:
                 print("[refresh] dedup: %d rows streamed (%.1fs)"
                       % (n_stream, time.time() - t8), flush=True)
@@ -1218,7 +1255,8 @@ def refresh_summaries(live, sidecar):
         for w in sidecar.execute(
                 "SELECT ins_code, latest_date, total_company_shares, "
                 "  total_shareholder_count, disclosed_shareholder_count, "
-                "  disclosed_ownership_percent_sum FROM site_watch").fetchall():
+                "  disclosed_ownership_percent_sum, data_completeness "
+                "FROM site_watch").fetchall():
             d = sidecar.execute(
                 "SELECT deduped_count, deduped_pct FROM "
                 "  site_company_daily_dedup WHERE ins_code=? AND date=?",
@@ -1233,18 +1271,33 @@ def refresh_summaries(live, sidecar):
                 total_n = d["deduped_count"]
                 note = ("تعداد کل سهام‌داران در داده ثبت نشده؛ این عدد "
                         "تعداد سهام‌داران عمدهٔ یک‌تا‌شده است (حداقل).")
+            # Data completeness must describe the corrected aggregate, not
+            # the legacy raw sum that may have been inflated by duplicate IDs.
+            completeness = w["data_completeness"]
+            corrected_pct = d["deduped_pct"] if d else None
+            if d is None:
+                completeness = "no_holder_observations"
+            elif d["deduped_count"] == 0 or corrected_pct is None:
+                completeness = "holders_only_total_shares_unavailable"
+            elif corrected_pct > 100.000001 or corrected_pct < 0:
+                completeness = "inconsistent_sum_over_100_percent"
+            elif completeness == "inconsistent_sum_over_100_percent":
+                completeness = ("partial_major_holders_only"
+                                if corrected_pct < 99.9
+                                else "complete_by_reported_percent")
             updates.append((
-                d["deduped_count"] if d else w["disclosed_shareholder_count"],
-                d["deduped_pct"] if d else w["disclosed_ownership_percent_sum"],
+                d["deduped_count"] if d else 0,
+                corrected_pct,
                 w["disclosed_ownership_percent_sum"],
+                completeness,
                 price, _norm_date(pdate) if pdate else None, mv,
                 total_n, note, w["ins_code"]))
         with sidecar:
             sidecar.executemany(
                 "UPDATE site_watch SET deduped_shareholder_count=?, "
                 "  deduped_ownership_percent_sum=?, "
-                "  raw_ownership_percent_sum=?, latest_price=?, "
-                "  latest_price_date=?, market_value=?, "
+                "  raw_ownership_percent_sum=?, data_completeness=?, "
+                "  latest_price=?, latest_price_date=?, market_value=?, "
                 "  total_shareholder_count=?, "
                 "  total_shareholder_count_note=? WHERE ins_code=?",
                 updates)
@@ -1475,13 +1528,11 @@ class SiteApi:
                 "disclosed_count":
                     "COALESCE(deduped_shareholder_count, "
                     "disclosed_shareholder_count)",
-                "disclosed_pct":
-                    "COALESCE(deduped_ownership_percent_sum, "
-                    "disclosed_ownership_percent_sum)",
+                "disclosed_pct": "deduped_ownership_percent_sum",
                 "latest_date": "latest_date",
                 "market_value": "market_value",
             }
-            col = sort_map.get(sort_by, "disclosed_ownership_percent_sum")
+            col = sort_map.get(sort_by, "deduped_ownership_percent_sum")
             direction = "DESC" if sort_dir != "ASC" else "ASC"
             where = []
             args = []
@@ -1578,8 +1629,7 @@ class SiteApi:
                     d["deduped_count"] if d else
                     r["disclosed_shareholder_count"],
                 "disclosed_ownership_percent_sum":
-                    d["deduped_pct"] if d else
-                    r["disclosed_ownership_percent_sum"],
+                    d["deduped_pct"] if d else None,
                 "raw_ownership_percent_sum":
                     d["raw_pct"] if d else
                     r["disclosed_ownership_percent_sum"],
@@ -1612,9 +1662,7 @@ class SiteApi:
                 "total_shareholder_count": w["total_shareholder_count"],
                 "total_shareholder_count_note": w["total_shareholder_count_note"],
                 "disclosed_ownership_percent_sum":
-                    w["deduped_ownership_percent_sum"]
-                    if w["deduped_ownership_percent_sum"] is not None
-                    else w["disclosed_ownership_percent_sum"],
+                    w["deduped_ownership_percent_sum"],
                 "raw_ownership_percent_sum":
                     w["raw_ownership_percent_sum"]
                     if w["raw_ownership_percent_sum"] is not None
@@ -1660,10 +1708,13 @@ class SiteApi:
                 (w["ins_code"], date_g)).fetchone()[0]
             rows = live.execute(
                 "SELECT h.id_scheme AS id_scheme, h.shareholder_id AS shareholder_id, "
-                "  s.name AS shareholder_name, "
+                "  s.name AS shareholder_name, s.raw_source_ids AS raw_source_ids, "
                 "  s.shareholder_type AS shareholder_type, "
                 "  h.shares AS shares, h.ownership_percent AS ownership_percent_reported, "
-                "  h.ownership_percent_calc AS ownership_percent_calculated, "
+                "  CASE WHEN cd.total_company_shares > 0 AND h.shares IS NOT NULL "
+                "       THEN 100.0 * h.shares / cd.total_company_shares ELSE NULL END "
+                "       AS ownership_percent_calculated, "
+                "  cd.total_company_shares AS total_company_shares, "
                 "  h.shares_change AS shares_change, h.market_value AS market_value, "
                 "  h.price AS price, h.valuation_status AS valuation_status, "
                 "  h.identity_status AS identity_status, "
@@ -1672,9 +1723,17 @@ class SiteApi:
                 "LEFT JOIN shareholders s "
                 "  ON s.id_scheme = h.id_scheme "
                 " AND s.shareholder_id = h.shareholder_id "
+                "LEFT JOIN company_daily cd "
+                "  ON cd.ins_code=h.ins_code AND cd.date=h.date "
                 "WHERE h.ins_code=? AND h.date=? " + exclusion_clause +
                 " ORDER BY %s LIMIT ?" % order,
                 (w["ins_code"], date_g, limit)).fetchall()
+            total_row = live.execute(
+                "SELECT total_company_shares FROM company_daily "
+                "WHERE ins_code=? AND date=?",
+                (w["ins_code"], date_g)).fetchone()
+            total_company_shares = (total_row["total_company_shares"]
+                                    if total_row else None)
         finally:
             live.close()
         out = []
@@ -1682,7 +1741,8 @@ class SiteApi:
             d = dict(r)
             d["shareholder_name"] = d["shareholder_name"] or "نامشخص"
             out.append(d)
-        return {"total": total, "rows": out, "date_jalali": date_jalali}
+        return {"total": total, "rows": out, "date_jalali": date_jalali,
+                "total_company_shares": total_company_shares}
 
     def stock_ownership_series(self, symbol, params):
         scheme = _q_str(params, "id_scheme").strip()
@@ -1708,8 +1768,9 @@ class SiteApi:
             company_shares_series = []
             for r in daily:
                 d = dedup.get(_norm_date(r["date"]))
-                pct = (d["deduped_pct"] if d else
-                       r["disclosed_ownership_percent_sum"])
+                # Never fall back to the legacy raw sum: it can contain
+                # duplicated identities and historically mis-denominated rows.
+                pct = d["deduped_pct"] if d else None
                 if pct is not None:
                     company_series.append({
                         "time": fmt_gregorian_date(r["date"]), "value": pct})
@@ -1725,8 +1786,13 @@ class SiteApi:
                     {"time": fmt_gregorian_date(r["date"]),
                      "value": r["ownership_percent_calc"]}
                     for r in live.execute(
-                        "SELECT h.date, h.ownership_percent_calc "
+                        "SELECT h.date, "
+                        "CASE WHEN cd.total_company_shares > 0 AND h.shares IS NOT NULL "
+                        "     THEN 100.0 * h.shares / cd.total_company_shares ELSE NULL END "
+                        "     AS ownership_percent_calc "
                         "FROM shareholder_holdings h "
+                        "LEFT JOIN company_daily cd "
+                        "  ON cd.ins_code=h.ins_code AND cd.date=h.date "
                         "WHERE h.ins_code=? AND h.id_scheme=? AND h.shareholder_id=? "
                         "AND NOT EXISTS ("
                         "  SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
@@ -1748,7 +1814,9 @@ class SiteApi:
             for r in live.execute(
                 "SELECT h.date AS date, h.jalali_date AS date_jalali, "
                 "  h.change_type AS change_type, h.shares_change AS shares_change, "
-                "  h.ownership_percent_calc AS ownership_percent_calculated, "
+                "  CASE WHEN cd.total_company_shares > 0 AND h.shares IS NOT NULL "
+                "       THEN 100.0 * h.shares / cd.total_company_shares ELSE NULL END "
+                "       AS ownership_percent_calculated, "
                 "  h.market_value AS market_value, h.shares AS shares, "
                 "  h.price AS price, "
                 "  s.name AS shareholder_name "
@@ -1756,6 +1824,8 @@ class SiteApi:
                 "LEFT JOIN shareholders s "
                 "  ON s.id_scheme = h.id_scheme "
                 " AND s.shareholder_id = h.shareholder_id "
+                "LEFT JOIN company_daily cd "
+                "  ON cd.ins_code=h.ins_code AND cd.date=h.date "
                 "WHERE h.ins_code=? AND " + ev_where +
                 " ORDER BY h.date DESC LIMIT 200", ev_args).fetchall():
                 # The event's value on that day: the row's market value,
@@ -2221,7 +2291,13 @@ class SiteApi:
         live = self.live()
         try:
             rows = live.execute(
-                "SELECT h.date, h.ownership_percent_calc FROM shareholder_holdings h "
+                "SELECT h.date, "
+                "CASE WHEN cd.total_company_shares > 0 AND h.shares IS NOT NULL "
+                "     THEN 100.0 * h.shares / cd.total_company_shares ELSE NULL END "
+                "     AS ownership_percent_calc "
+                "FROM shareholder_holdings h "
+                "LEFT JOIN company_daily cd "
+                "  ON cd.ins_code=h.ins_code AND cd.date=h.date "
                 "WHERE h.ins_code=? AND h.id_scheme=? AND h.shareholder_id=? "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
@@ -2649,8 +2725,11 @@ class SiteApi:
                     "  (SELECT t.date FROM trading_days t "
                     "   WHERE t.ins_code = h.ins_code AND t.date <= h.date "
                     "     AND t.p_closing IS NOT NULL AND t.p_closing > 0 "
-                    "   ORDER BY t.date DESC LIMIT 1) AS close_price_date "
+                    "   ORDER BY t.date DESC LIMIT 1) AS close_price_date, "
+                    "  cd.total_company_shares AS _same_date_total_shares "
                     "FROM shareholder_holdings h "
+                    "LEFT JOIN company_daily cd "
+                    "  ON cd.ins_code=h.ins_code AND cd.date=h.date "
                     "WHERE h.ins_code=? AND h.id_scheme=? "
                     "  AND h.shareholder_id=? "
                     "  AND NOT EXISTS ("
@@ -2661,7 +2740,10 @@ class SiteApi:
                     "ORDER BY h.date DESC LIMIT 1" % date_clause,
                     (ins_code, scheme, sh_id) + tuple(date_args)).fetchone()
                 if row is not None:
-                    positions.append((symbol, dict(row), scheme, sh_id))
+                    row_dict = dict(row)
+                    row_dict["ownership_percent_calc"] = ownership_percent_for_date(
+                        row_dict.get("shares"), row_dict.get("_same_date_total_shares"))
+                    positions.append((symbol, row_dict, scheme, sh_id))
                     break
         return positions
 
@@ -2881,8 +2963,7 @@ class SiteApi:
             ("COALESCE(w.deduped_shareholder_count, "
              "w.disclosed_shareholder_count)", "num"),
         "disclosed_ownership_percent_sum":
-            ("COALESCE(w.deduped_ownership_percent_sum, "
-             "w.disclosed_ownership_percent_sum)", "num"),
+            ("w.deduped_ownership_percent_sum", "num"),
         "shares_change": ("h.shares_change", "num"),
         "change_type": ("h.change_type", "str"),
         "entry_status": ("h.entry_status", "str"),
@@ -2939,8 +3020,7 @@ class SiteApi:
             "  n.name AS shareholder_name, "
             "  h.ownership_percent_calc AS ownership_percent_calculated, "
             "  h.shares_change AS shares_change, "
-            "  COALESCE(w.deduped_ownership_percent_sum, "
-            "    w.disclosed_ownership_percent_sum) "
+            "  w.deduped_ownership_percent_sum "
             "    AS disclosed_ownership_percent_sum "
             "FROM site_holder_latest h "
             "JOIN site_watch w ON w.ins_code = h.ins_code "

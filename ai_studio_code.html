@@ -205,42 +205,64 @@
       source_id: 1,
     };
     const identityTier = (status) => IDENTITY_TIERS[status] || 0;
-    // Normalize a Persian name for dedup (Arabic ي/ك -> Persian, ZWNJ ->
-    // a space so 'سرمایه‌گذاری' and 'سرمایه گذاری' match, digits, space).
-    const normalizeFaName = (s) => String(s || '')
-      .replace(/[\u0643\u06A9]/g, 'ک').replace(/[\u064A\u06CC\u0649]/g, 'ی')
-      .replace(/[\u200C\u200D]/g, ' ').replace(/\uFEFF/g, '').replace(/\s+/g, ' ').trim();
-    // Collapse rows that are the same holder under several id schemes:
-    // keep the row with the best identity tier (ties: most shares), and
-    // count how many raw records were merged into each displayed row.
-    // Major holders, name-deduped. Rows with NO share count are NOT
-    // counted as major holders (they carry no quantity); they are listed
-    // separately by unquantifiedHolders so the counts stay honest.
-    const dedupHolders = (rows) => {
-      const byName = new Map();
-      for (const h of (rows || [])) {
-        if (h.shares === null || h.shares === undefined) continue;
-        const key = normalizeFaName(h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
-        const cur = byName.get(key);
-        if (!cur) { byName.set(key, { ...h, _merged: 1 }); continue; }
-        cur._merged += 1;
-        const tNew = identityTier(h.identity_status), tCur = identityTier(cur.identity_status);
-        if (tNew > tCur || (tNew === tCur && (h.shares || 0) > (cur.shares || 0))) {
-          byName.set(key, { ...h, _merged: cur._merged });
-        }
+    // Identity-aware deduplication. Names are descriptive only: two distinct
+    // holders may have the same (including generic "شخص حقیقی") name.
+    // Merge rows only when the backend supplies an explicit shared source ID,
+    // and only when their same-date share counts agree.
+    const holderIdentityTokens = (h) => {
+      const tokens = new Set();
+      if (h.id_scheme && h.shareholder_id !== null && h.shareholder_id !== undefined) {
+        tokens.add(`${h.id_scheme}:${h.shareholder_id}`);
       }
-      return Array.from(byName.values());
+      String(h.raw_source_ids || '').split(',').forEach(part => {
+        const token = part.trim();
+        if (/^(holder_id|share_id|ondate_share_id):\d+$/.test(token)) tokens.add(token);
+      });
+      return tokens;
     };
-    // Holders mentioned on the latest date without any share count.
-    const unquantifiedHolders = (rows) => {
-      const names = new Map();
-      for (const h of (rows || [])) {
-        if (h.shares === null || h.shares === undefined) {
-          const key = normalizeFaName(h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
-          if (!names.has(key)) names.set(key, h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
+    const dedupHolders = (rows) => {
+      const items = (rows || []).filter(h => h.shares !== null && h.shares !== undefined && Number(h.shares) > 0);
+      const parent = items.map((_, i) => i);
+      const find = (x) => parent[x] === x ? x : (parent[x] = find(parent[x]));
+      const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
+      const tokens = items.map(holderIdentityTokens);
+      const shareKey = h => String(h.shares);
+      for (let i = 0; i < items.length; i++) {
+        for (let j = i + 1; j < items.length; j++) {
+          if (shareKey(items[i]) !== shareKey(items[j])) continue;
+          let linked = false;
+          for (const token of tokens[i]) {
+            if (tokens[j].has(token)) { linked = true; break; }
+          }
+          if (linked) union(i, j);
         }
       }
-      return Array.from(names.values());
+      const groups = new Map();
+      items.forEach((h, i) => {
+        const root = find(i);
+        if (!groups.has(root)) groups.set(root, []);
+        groups.get(root).push(h);
+      });
+      return Array.from(groups.values()).map(group => {
+        // Prefer the strongest pipeline identity status; ties prefer share_id.
+        group.sort((a, b) =>
+          identityTier(b.identity_status) - identityTier(a.identity_status) ||
+          Number(b.id_scheme === 'share_id') - Number(a.id_scheme === 'share_id'));
+        return { ...group[0], _merged: group.length };
+      });
+    };
+    // Rows without a share count remain unquantified; keep distinct IDs distinct.
+    const unquantifiedHolders = (rows) => {
+      const seen = new Set();
+      const out = [];
+      for (const h of (rows || [])) {
+        if (h.shares !== null && h.shares !== undefined) continue;
+        const key = `${h.id_scheme}:${h.shareholder_id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(h.shareholder_name || key);
+      }
+      return out;
     };
 
     // --- 3. Reusable UI Components ---
@@ -624,7 +646,7 @@
                         <td className="p-2 num">{fmtNum(r.total_company_shares)}</td>
                         <td className="p-2 num" title={r.latest_price ? `آخرین قیمت: ${fmtNum(r.latest_price)} ریال (${fmtGregorianDate(r.latest_price_date)})` : 'قیمت موجود نیست'}>{r.market_value !== null && r.market_value !== undefined ? fmtMoney(r.market_value, currency) : '—'}</td>
                         <td className="p-2 num" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(r.disclosed_shareholder_count)}` : undefined}>{toFa(r.deduped_shareholder_count ?? r.disclosed_shareholder_count)}</td>
-                        <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (پیش از حذف نمای تکراری منبع و یکسان‌سازی شناسه‌های صریح)` : undefined}>{(Number(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum) > 100.000001 || Number(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum) < 0) ? <span className="text-amber-400" title="مجموع مالکیت ناسازگار است؛ این عدد برای تحلیل معتبر نیست.">نیازمند بررسی</span> : fmtPct(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum)}</td>
+                        <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (پیش از حذف نمای تکراری منبع و یکسان‌سازی شناسه‌های صریح)` : undefined}>{r.deduped_ownership_percent_sum === null || r.deduped_ownership_percent_sum === undefined ? 'نامشخص' : (Number(r.deduped_ownership_percent_sum) > 100.000001 || Number(r.deduped_ownership_percent_sum) < 0) ? <span className="text-amber-400" title="مجموع مالکیت پس از حذف موارد اثبات‌شدهٔ تکرار و محاسبه با مخرج همان تاریخ هنوز ناسازگار است؛ برای تحلیل معتبر نیست.">نیازمند بررسی</span> : fmtPct(r.deduped_ownership_percent_sum)}</td>
                         <td className="p-2 num text-[var(--text-secondary)]">{fmtDate(r.latest_date_jalali)}</td>
                       </tr>
                     ))}
@@ -1904,7 +1926,7 @@
                     <td className="p-2">{s.company_name || '—'}</td>
                     <td className="p-2">{s.market}</td>
                     <td className="p-2 num">{toFa(s.deduped_shareholder_count ?? s.disclosed_shareholder_count)}</td>
-                    <td className="p-2 num">{(Number(s.deduped_ownership_percent_sum ?? s.disclosed_ownership_percent_sum) > 100.000001 || Number(s.deduped_ownership_percent_sum ?? s.disclosed_ownership_percent_sum) < 0) ? <span className="text-amber-400" title="مجموع مالکیت ناسازگار است؛ این عدد برای تحلیل معتبر نیست.">نیازمند بررسی</span> : fmtPct(s.deduped_ownership_percent_sum ?? s.disclosed_ownership_percent_sum)}</td>
+                    <td className="p-2 num">{s.deduped_ownership_percent_sum === null || s.deduped_ownership_percent_sum === undefined ? 'نامشخص' : (Number(s.deduped_ownership_percent_sum) > 100.000001 || Number(s.deduped_ownership_percent_sum) < 0) ? <span className="text-amber-400" title="مجموع مالکیت پس از حذف موارد اثبات‌شدهٔ تکرار و محاسبه با مخرج همان تاریخ هنوز ناسازگار است؛ برای تحلیل معتبر نیست.">نیازمند بررسی</span> : fmtPct(s.deduped_ownership_percent_sum)}</td>
                     <td className="p-2 num">{s.market_value !== null && s.market_value !== undefined ? fmtMoney(s.market_value, currency) : '—'}</td>
                     <td className="p-2"><button onClick={() => removeSym(s.symbol)} className="text-red-400">حذف</button></td>
                   </tr>
