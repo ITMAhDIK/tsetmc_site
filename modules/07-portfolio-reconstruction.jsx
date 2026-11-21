@@ -1,5 +1,5 @@
 /* ============================================================================
- * MODULE 08 — 07-PORTFOLIO-RECONSTRUCTION
+ * MODULE 07 — PORTFOLIO-RECONSTRUCTION
  * Responsibility: Investor portfolio reconstruction across companies and dates.
  * Load order: after 00-runtime.jsx and in the numeric order used by index HTML.
  * Shared contracts: React hooks and declarations from earlier modules are
@@ -100,7 +100,7 @@
         let active = true;
         setHistoryLoading(true);
         const params = new URLSearchParams({
-          symbol: historySymbol,
+          ins_code: historySymbol,
           limit: String(HISTORY_PAGE_SIZE),
           offset: String(historyOffset),
         });
@@ -267,9 +267,9 @@
                         {(portfolio.historical_symbols || []).length === 0 ? (
                           <tr><td colSpan="9" className="p-4 text-center text-[var(--text-secondary)]">تاریخچه‌ای برای شناسه‌های پیوندخورده پیدا نشد.</td></tr>
                         ) : portfolio.historical_symbols.map(item => (
-                          <tr key={item.ins_code} className={historySymbol === item.symbol ? 'bg-blue-500/10' : 'hover:bg-[var(--bg-elevated)]'}>
+                          <tr key={item.ins_code} className={historySymbol === item.ins_code ? 'bg-blue-500/10' : 'hover:bg-[var(--bg-elevated)]'}>
                             <td className="p-2 whitespace-nowrap">
-                              <button className="font-bold text-blue-400" onClick={() => { setHistorySymbol(item.symbol); setHistoryOffset(0); }}>{item.symbol}</button>
+                              <button className="font-bold text-blue-400" onClick={() => { setHistorySymbol(item.ins_code); setHistoryOffset(0); }}>{item.symbol}</button>
                               <button className="mr-2 text-[10px] text-[var(--text-secondary)] underline" onClick={() => onOpenStock(item.symbol)}>جزئیات نماد</button>
                             </td>
                             <td className="p-2 num whitespace-nowrap">{fmtDate(item.first_observation_date_jalali)}</td>
@@ -292,7 +292,7 @@
                 <section className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
                   <div className="p-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <h3 className="font-bold text-sm">دفتر تاریخی {historySymbol}</h3>
+                      <h3 className="font-bold text-sm">دفتر تاریخی {(portfolio?.historical_symbols || []).find(item => item.ins_code === historySymbol)?.symbol || historySymbol}</h3>
                       <p className="text-[10px] text-[var(--text-secondary)] mt-1">قیمت مرجع/پایانی است و قیمت اجرای معامله محسوب نمی‌شود.</p>
                     </div>
                     <button className="px-2 py-1 rounded border border-[var(--border-subtle)]" onClick={() => { setHistorySymbol(''); setHistoryData(null); }}>بستن تاریخچه</button>
@@ -307,11 +307,11 @@
                       <div className="overflow-x-auto">
                         <table className="w-full text-right">
                           <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                            <tr><th className="p-2">تاریخ</th><th className="p-2">نوع تغییر</th><th className="p-2">موجودی قبلی</th><th className="p-2">موجودی مشاهده‌شده</th><th className="p-2">تغییر خالص</th><th className="p-2">قیمت مرجع</th><th className="p-2">تاریخ قیمت</th><th className="p-2">ارزش تخمینی موجودی</th><th className="p-2">رویداد سرمایه‌ای</th><th className="p-2">فاصله (روز معاملاتی)</th><th className="p-2">وضعیت داده/هویت</th></tr>
+                            <tr><th className="p-2">تاریخ</th><th className="p-2">نوع تغییر</th><th className="p-2">موجودی قبلی</th><th className="p-2">موجودی مشاهده‌شده</th><th className="p-2">تغییر خالص</th><th className="p-2">ارزش تخمینی تغییر</th><th className="p-2">قیمت مرجع</th><th className="p-2">تاریخ قیمت</th><th className="p-2">ارزش تخمینی موجودی</th><th className="p-2">رویداد سرمایه‌ای</th><th className="p-2">فاصله (روز معاملاتی)</th><th className="p-2">وضعیت داده/هویت</th></tr>
                           </thead>
                           <tbody className="divide-y divide-[var(--border-subtle)]">
                             {(historyData?.rows || []).length === 0 ? (
-                              <tr><td colSpan="11" className="p-4 text-center text-[var(--text-secondary)]">رکوردی برای این نماد پیدا نشد.</td></tr>
+                              <tr><td colSpan="12" className="p-4 text-center text-[var(--text-secondary)]">رکوردی برای این نماد پیدا نشد.</td></tr>
                             ) : historyData.rows.map((row,index) => (
                               <tr key={`${row.date}-${index}`} className={row.identity_conflict ? 'bg-amber-500/10' : ''}>
                                 <td className="p-2 num whitespace-nowrap">{fmtDate(row.date_jalali)}</td>
@@ -319,6 +319,7 @@
                                 <td className="p-2 num">{row.previous_shares === null ? '—' : fmtNum(row.previous_shares)}</td>
                                 <td className="p-2 num">{row.shares === null ? 'افشا نشده/نامعتبر' : fmtNum(row.shares)}</td>
                                 <td className="p-2 num">{row.shares_change === null ? '—' : fmtNum(row.shares_change)}</td>
+                                <td className="p-2 num">{row.estimated_change_value_rial === null ? '—' : fmtMoney(row.estimated_change_value_rial,currency)}</td>
                                 <td className="p-2 num">{row.reference_price === null ? '—' : fmtNum(currency === 'IRT' ? row.reference_price / 10 : row.reference_price)}</td>
                                 <td className="p-2 num whitespace-nowrap">{fmtDate(row.reference_price_date_jalali)}</td>
                                 <td className="p-2 num">{row.estimated_holding_value_rial === null ? 'بدون قیمت معتبر' : fmtMoney(row.estimated_holding_value_rial,currency)}</td>

@@ -79,10 +79,10 @@ class OwnershipSidecarAuditTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as con:
             con.execute(
                 "INSERT INTO shareholder_holdings VALUES ('X','2026-11-21','share_id',10,100)")
+        with sqlite3.connect(self.sidecar_path) as con:
             con.execute(
                 "INSERT INTO site_holder_history "
                 "VALUES ('share_id',10,'X','2026-11-21',100)")
-        with sqlite3.connect(self.sidecar_path) as con:
             con.execute("UPDATE site_watch SET latest_date='2026-11-21', "
                         "deduped_ownership_percent_sum=NULL WHERE ins_code='X'")
             con.execute("INSERT INTO site_company_daily_dedup "

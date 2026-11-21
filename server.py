@@ -37,7 +37,7 @@
 #   GET  /api/v1/shareholders/observation-history?symbol&id_scheme&shareholder_id
 #   GET  /api/v1/portfolios/investors?q&limit
 #   GET  /api/v1/portfolios/<id>?as_of_date
-#   GET  /api/v1/portfolios/<id>/history?symbol&as_of_date&limit&offset
+#   GET  /api/v1/portfolios/<id>/history?ins_code&as_of_date&limit&offset
 #   POST /api/v1/screener/query        POST /api/v1/screener/export (CSV)
 #   GET  /api/v1/screener/saved-filters   POST /api/v1/screener/saved-filters
 #   GET  /api/v1/watchlists/default
@@ -3045,7 +3045,7 @@ class SiteApi:
                     break
         return positions
 
-    def _holder_history_stream(self, live, ids, as_of_dashed=None, symbol=None):
+    def _holder_history_stream(self, live, ids, as_of_dashed=None, ins_code=None):
         """Stream all history through the sidecar identity/date primary-key index."""
         unique_ids = list(dict.fromkeys(ids or []))
         if not unique_ids:
@@ -3059,9 +3059,9 @@ class SiteApi:
             if as_of_dashed:
                 where += " AND h.date<=?"
                 args.append(as_of_dashed)
-            if symbol:
-                where += " AND h.symbol=?"
-                args.append(symbol)
+            if ins_code:
+                where += " AND h.ins_code=?"
+                args.append(ins_code)
             sql = (
                 "SELECT h.*, c.cisin AS cisin, "
                 "cd.total_company_shares AS total_company_shares, "
@@ -3092,7 +3092,7 @@ class SiteApi:
             row["date"], row["ins_code"], row["id_scheme"], row["shareholder_id"]))
 
     def _iter_portfolio_history_observations(
-            self, live, ids, requested_pair, as_of_dashed=None, symbol=None):
+            self, live, ids, requested_pair, as_of_dashed=None, ins_code=None):
         """Collapse linked identity rows only when same-date quantities agree."""
         priority = {pair: idx for idx, pair in enumerate(ids or [])}
         def rank(row):
@@ -3103,7 +3103,7 @@ class SiteApi:
                     priority.get(pair, 1 << 30), status_rank,
                     row["id_scheme"], row["shareholder_id"])
         stream = self._holder_history_stream(
-            live, ids, as_of_dashed=as_of_dashed, symbol=symbol)
+            live, ids, as_of_dashed=as_of_dashed, ins_code=ins_code)
         for _key, group in itertools.groupby(
                 stream, key=lambda row: (row["date"], row["ins_code"])):
             candidates = sorted(list(group), key=rank)
@@ -3135,9 +3135,9 @@ class SiteApi:
             sh_id = int(raw_id)
         except (ValueError, AttributeError):
             raise ApiError(400, "شناسه سرمایه‌گذار نامعتبر است.")
-        symbol = _q_str(params, "symbol").strip()
-        if not symbol:
-            raise ApiError(400, "پارامتر symbol برای تاریخچه لازم است.")
+        ins_code = _q_str(params, "ins_code").strip()
+        if not ins_code:
+            raise ApiError(400, "پارامتر ins_code برای تاریخچه لازم است.")
         as_of = _q_str(params, "as_of_date").strip()
         as_of_dashed = _norm_date(as_of) if as_of else None
         if as_of_dashed:
@@ -3152,7 +3152,7 @@ class SiteApi:
             ids = self._linked_identity_ids(live, sc, scheme, sh_id)
             total, page_rows = 0, []
             for row in self._iter_portfolio_history_observations(
-                    live, ids, (scheme, sh_id), as_of_dashed, symbol):
+                    live, ids, (scheme, sh_id), as_of_dashed, ins_code):
                 if offset <= total < offset + limit:
                     delta, price = row.get("shares_change"), row.get("reference_price")
                     page_rows.append({
@@ -3198,7 +3198,7 @@ class SiteApi:
         finally:
             live.close()
             sc.close()
-        return {"investor_id": investor_id, "symbol": symbol,
+        return {"investor_id": investor_id, "ins_code": ins_code,
                 "total": total, "limit": limit, "offset": offset,
                 "rows": page_rows}
 
