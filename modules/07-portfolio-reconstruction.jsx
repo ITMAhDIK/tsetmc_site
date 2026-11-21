@@ -325,11 +325,15 @@
                                   {row.price_field ? <div className="text-[9px] text-[var(--text-secondary)]">{row.price_field}</div> : null}
                                 </td>
                                 <td className="p-2 num whitespace-nowrap">{fmtDate(row.reference_price_date_jalali)}</td>
-                                <td className="p-2 num">{row.estimated_holding_value_rial === null ? 'بدون قیمت معتبر' : fmtMoney(row.estimated_holding_value_rial,currency)}</td>
+                                <td className="p-2 num">
+                                  {row.estimated_holding_value_rial === null ? 'بدون قیمت معتبر' : fmtMoney(row.estimated_holding_value_rial,currency)}
+                                  {row.source_market_value_rial !== null && row.source_market_value_rial !== undefined ? <div className="text-[9px] text-[var(--text-secondary)]">ارزش منبع: {fmtMoney(row.source_market_value_rial,currency)}</div> : null}
+                                </td>
                                 <td className="p-2 whitespace-nowrap">{row.corporate_action ? `${row.corporate_action} ${row.corporate_action_ratio ? '(' + row.corporate_action_ratio + ')' : ''}` : '—'}</td>
                                 <td className="p-2 num">{row.gap_trading_days === null ? '—' : toFa(row.gap_trading_days)}</td>
                                 <td className="p-2 text-[10px] min-w-40">
                                   {row.identity_conflict ? 'تعارض شناسه؛ از ارزش‌گذاری حذف شد' : row.change_calculation_status || row.valuation_status || '—'}
+                                  {row.source_endpoint ? <div className="text-[var(--text-secondary)] mt-1 max-w-xs whitespace-normal">منبع: {row.source_endpoint}</div> : null}
                                   {row.note ? <div className="text-[var(--text-secondary)] mt-1 max-w-xs whitespace-normal">{row.note}</div> : null}
                                 </td>
                               </tr>

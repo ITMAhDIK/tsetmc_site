@@ -3177,6 +3177,7 @@ class SiteApi:
                         "source_market_value_rial": row.get("market_value"),
                         "previous_close_price": row.get("prev_close_price"),
                         "previous_close_date": row.get("prev_close_date"),
+                        "source_endpoint": row.get("source_endpoint"),
                         "reference_price_date_jalali": (
                             gregorian_yyyymmdd_to_jalali(row["reference_price_date"])
                             if row.get("reference_price_date") else None),
