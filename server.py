@@ -1684,6 +1684,8 @@ class SiteApi:
         return {"total": total, "rows": out, "date_jalali": date_jalali}
 
     def stock_ownership_series(self, symbol, params):
+        scheme = _q_str(params, "id_scheme").strip()
+        sh_id = _q_str(params, "shareholder_id").strip()
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
@@ -1691,10 +1693,12 @@ class SiteApi:
                 "SELECT date, deduped_pct, deduped_shares, deduped_count, "
                 "  raw_pct FROM site_company_daily_dedup WHERE ins_code=?",
                 (w["ins_code"],)).fetchall()}
+            excluded_rows = [tuple(r) for r in sc.execute(
+                "SELECT date, id_scheme, shareholder_id "
+                "FROM site_excluded_holder_rows WHERE ins_code=?",
+                (w["ins_code"],)).fetchall()]
         finally:
             sc.close()
-        scheme = _q_str(params, "id_scheme").strip()
-        sh_id = _q_str(params, "shareholder_id").strip()
         live = self.live()
         try:
             daily = self._company_daily(live, w["ins_code"])
@@ -1720,19 +1724,33 @@ class SiteApi:
             ev_where = "h.change_type IN ('new','increase','decrease')"
             ev_args = [w["ins_code"]]
             if scheme and sh_id:
+                holder_excluded_dates = [
+                    d for d, excluded_scheme, excluded_id in excluded_rows
+                    if excluded_scheme == scheme and excluded_id == int(sh_id)]
+                holder_exclusion_clause = (
+                    " AND date NOT IN (%s)" %
+                    ",".join("?" for _ in holder_excluded_dates)
+                    if holder_excluded_dates else "")
                 holder_series = [
                     {"time": fmt_gregorian_date(r["date"]),
                      "value": r["ownership_percent_calc"]}
                     for r in live.execute(
                         "SELECT date, ownership_percent_calc "
                         "FROM shareholder_holdings "
-                        "WHERE ins_code=? AND id_scheme=? AND shareholder_id=? "
-                        "ORDER BY date ASC",
-                        (w["ins_code"], scheme, int(sh_id))).fetchall()
+                        "WHERE ins_code=? AND id_scheme=? AND shareholder_id=?"
+                        + holder_exclusion_clause + " ORDER BY date ASC",
+                        (w["ins_code"], scheme, int(sh_id))
+                        + tuple(holder_excluded_dates)).fetchall()
                     if r["ownership_percent_calc"] is not None]
                 ev_where += " AND h.id_scheme=? AND h.shareholder_id=?"
                 ev_args += [scheme, int(sh_id)]
             events = []
+            event_exclusion_parts = [
+                "(h.date=? AND h.id_scheme=? AND h.shareholder_id=?)"
+                for _ in excluded_rows]
+            if event_exclusion_parts:
+                ev_where += " AND NOT (" + " OR ".join(event_exclusion_parts) + ")"
+                ev_args.extend(v for row in excluded_rows for v in row)
             for r in live.execute(
                 "SELECT h.date AS date, h.jalali_date AS date_jalali, "
                 "  h.change_type AS change_type, h.shares_change AS shares_change, "
@@ -2204,15 +2222,23 @@ class SiteApi:
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
+            excluded_dates = [r[0] for r in sc.execute(
+                "SELECT date FROM site_excluded_holder_rows "
+                "WHERE ins_code=? AND id_scheme=? AND shareholder_id=?",
+                (w["ins_code"], scheme, int(sh_id))).fetchall()]
         finally:
             sc.close()
+        date_clause = (" AND date NOT IN (%s)" %
+                       ",".join("?" for _ in excluded_dates)
+                       if excluded_dates else "")
         live = self.live()
         try:
             rows = live.execute(
                 "SELECT date, ownership_percent_calc FROM shareholder_holdings "
-                "WHERE ins_code=? AND id_scheme=? AND shareholder_id=? "
-                "ORDER BY date ASC",
-                (w["ins_code"], scheme, int(sh_id))).fetchall()
+                "WHERE ins_code=? AND id_scheme=? AND shareholder_id=?"
+                + date_clause + " ORDER BY date ASC",
+                (w["ins_code"], scheme, int(sh_id))
+                + tuple(excluded_dates)).fetchall()
         finally:
             live.close()
         return {"history": [
