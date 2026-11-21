@@ -320,7 +320,10 @@
                                 <td className="p-2 num">{row.shares === null ? 'افشا نشده/نامعتبر' : fmtNum(row.shares)}</td>
                                 <td className="p-2 num">{row.shares_change === null ? '—' : fmtNum(row.shares_change)}</td>
                                 <td className="p-2 num">{row.estimated_change_value_rial === null ? '—' : fmtMoney(row.estimated_change_value_rial,currency)}</td>
-                                <td className="p-2 num">{row.reference_price === null ? '—' : fmtNum(currency === 'IRT' ? row.reference_price / 10 : row.reference_price)}</td>
+                                <td className="p-2 num">
+                                  {row.reference_price === null ? '—' : fmtNum(currency === 'IRT' ? row.reference_price / 10 : row.reference_price)}
+                                  {row.price_field ? <div className="text-[9px] text-[var(--text-secondary)]">{row.price_field}</div> : null}
+                                </td>
                                 <td className="p-2 num whitespace-nowrap">{fmtDate(row.reference_price_date_jalali)}</td>
                                 <td className="p-2 num">{row.estimated_holding_value_rial === null ? 'بدون قیمت معتبر' : fmtMoney(row.estimated_holding_value_rial,currency)}</td>
                                 <td className="p-2 whitespace-nowrap">{row.corporate_action ? `${row.corporate_action} ${row.corporate_action_ratio ? '(' + row.corporate_action_ratio + ')' : ''}` : '—'}</td>

@@ -3068,10 +3068,9 @@ class SiteApi:
                 "CASE WHEN h.price IS NOT NULL AND h.price>0 "
                 "THEN h.price ELSE tp.p_closing END AS reference_price, "
                 "CASE WHEN h.price IS NOT NULL AND h.price>0 "
-                "THEN h.price_date ELSE tp.date END AS reference_price_date "
+                "THEN COALESCE(h.price_date,h.date) ELSE tp.date END AS reference_price_date "
                 "FROM sidecar_data.site_holder_history h "
                 "LEFT JOIN companies c ON c.ins_code=h.ins_code "
-                "LEFT JOIN company_daily cd ON cd.ins_code=h.ins_code AND cd.date=h.date "
                 "LEFT JOIN trading_days tp "
                 "ON (h.price IS NULL OR h.price<=0) AND tp.ins_code=h.ins_code "
                 "AND tp.date=(SELECT MAX(t.date) FROM trading_days t "
@@ -3172,6 +3171,12 @@ class SiteApi:
                         "total_company_shares": row.get("total_company_shares"),
                         "reference_price": price,
                         "reference_price_date": row.get("reference_price_date"),
+                        "price_field": (
+                            row.get("price_field") or
+                            ("trading_days.p_closing" if price is not None else None)),
+                        "source_market_value_rial": row.get("market_value"),
+                        "previous_close_price": row.get("prev_close_price"),
+                        "previous_close_date": row.get("prev_close_date"),
                         "reference_price_date_jalali": (
                             gregorian_yyyymmdd_to_jalali(row["reference_price_date"])
                             if row.get("reference_price_date") else None),
