@@ -491,13 +491,13 @@ def _stream_insert(cur, sidecar, select_sql, insert_sql, transform,
 
 def _mirrored_source_snapshot_dates(live):
     """Find dates where the date-specific and current-holder endpoints are
-    two byte-different-ID views of the same business snapshot.
+    two different-ID views of the same ownership snapshot.
 
-    The source IDs are intentionally excluded from the comparison because
-    the endpoints use different identifier schemes. We compare the full
-    available business fields as a multiset, so duplicate row multiplicity
-    must also match. Only exact whole-snapshot matches qualify; partial
-    overlaps are never merged automatically.
+    Source IDs and change metadata are intentionally excluded: the endpoints
+    use different ID schemes and may report different change_amount values.
+    We compare name, shares and reported ownership percent as a multiset, so
+    duplicate row multiplicity must also match. Only exact whole-snapshot
+    matches qualify; partial overlaps are never merged automatically.
     """
     exists = live.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -549,8 +549,6 @@ def _mirrored_source_snapshot_dates(live):
                     normalize_fa(row[3] or ""),
                     _number(row[4]),
                     _number(row[5]),
-                    _number(row[6]),
-                    _number(row[7]),
                 )
                 endpoint_rows.setdefault(row[2], Counter())[signature] += 1
         _flush()
