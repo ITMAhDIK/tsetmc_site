@@ -288,7 +288,7 @@ def _latest_close(live, ins_code, on_or_before):
 # or column: refresh() forces a full rebuild when the stored version
 # differs, so a code upgrade never serves a stale sidecar through the
 # fingerprint shortcut (the DB file itself has not changed).
-SIDECAR_VERSION = 4
+SIDECAR_VERSION = 5
 
 # Persian/Arabic letter variants: the pipeline stores symbols and names in
 # the form TSETMC returned them, so the same word can appear with Arabic
