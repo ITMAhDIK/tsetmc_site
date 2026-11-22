@@ -138,24 +138,59 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             ORDER BY cd.ins_code, cd.date
         """, sample_limit)
 
+        dates_without_positive_denominator = _query_report(con, """
+            WITH dates AS (
+                SELECT DISTINCT ins_code, date FROM shareholder_holdings
+            ), cd AS (
+                SELECT ins_code, date, MAX(total_company_shares) AS total_shares
+                FROM company_daily
+                WHERE total_company_shares > 0
+                GROUP BY ins_code, date
+            ), hh AS (
+                SELECT ins_code, date, MAX(total_company_shares) AS total_shares
+                FROM shareholder_holdings
+                WHERE total_company_shares > 0
+                GROUP BY ins_code, date
+            )
+            SELECT dates.ins_code, dates.date
+            FROM dates
+            LEFT JOIN cd USING (ins_code, date)
+            LEFT JOIN hh USING (ins_code, date)
+            WHERE cd.total_shares IS NULL AND hh.total_shares IS NULL
+            ORDER BY dates.ins_code, dates.date
+        """, sample_limit)
+
         raw_share_totals_over_100 = _query_report(con, """
             WITH totals AS (
                 SELECT ins_code, date,
                        SUM(CASE WHEN shares > 0 THEN shares ELSE 0 END) AS raw_shares
                 FROM shareholder_holdings
                 GROUP BY ins_code, date
-            ), denoms AS (
+            ), cd AS (
                 SELECT ins_code, date,
                        MAX(total_company_shares) AS total_shares
                 FROM company_daily
                 WHERE total_company_shares > 0
                 GROUP BY ins_code, date
+            ), hh AS (
+                SELECT ins_code, date,
+                       MAX(total_company_shares) AS total_shares
+                FROM shareholder_holdings
+                WHERE total_company_shares > 0
+                GROUP BY ins_code, date
+            ), denoms AS (
+                SELECT dates.ins_code, dates.date,
+                       COALESCE(cd.total_shares, hh.total_shares) AS total_shares
+                FROM (SELECT DISTINCT ins_code, date FROM shareholder_holdings) dates
+                LEFT JOIN cd USING (ins_code, date)
+                LEFT JOIN hh USING (ins_code, date)
             )
             SELECT t.ins_code, t.date, t.raw_shares, d.total_shares,
                    ROUND(t.raw_shares * 100.0 / d.total_shares, 6)
                        AS raw_percent_before_identity_resolution
             FROM totals t JOIN denoms d USING (ins_code, date)
-            WHERE t.raw_shares * 100.0 / d.total_shares > 100.0
+            WHERE d.total_shares > 0
+              AND t.raw_shares * 100.0 / d.total_shares > 100.0
             ORDER BY raw_percent_before_identity_resolution DESC
         """, sample_limit)
 
@@ -168,23 +203,34 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
                     FROM company_daily
                     WHERE total_company_shares > 0
                     GROUP BY ins_code, date
+                ), hh AS (
+                    SELECT ins_code, date, MAX(total_company_shares) AS total_shares
+                    FROM shareholder_holdings
+                    WHERE total_company_shares > 0
+                    GROUP BY ins_code, date
+                ), denoms AS (
+                    SELECT dates.ins_code, dates.date,
+                           COALESCE(cd.total_shares, hh.total_shares) AS total_shares
+                    FROM (SELECT DISTINCT ins_code, date FROM shareholder_holdings) dates
+                    LEFT JOIN cd USING (ins_code, date)
+                    LEFT JOIN hh USING (ins_code, date)
                 )
                 SELECT h.ins_code, h.date, h.id_scheme, h.shareholder_id,
                        h.shares, h.ownership_percent AS reported_percent,
-                       cd.total_shares,
-                       ROUND(h.shares * 100.0 / cd.total_shares, 6)
+                       d.total_shares,
+                       ROUND(h.shares * 100.0 / d.total_shares, 6)
                            AS same_date_percent,
                        ROUND(h.ownership_percent -
-                             (h.shares * 100.0 / cd.total_shares), 6)
+                             (h.shares * 100.0 / d.total_shares), 6)
                            AS difference_percentage_points
                 FROM shareholder_holdings h
-                JOIN cd ON cd.ins_code=h.ins_code AND cd.date=h.date
-                WHERE h.shares IS NOT NULL
+                JOIN denoms d ON d.ins_code=h.ins_code AND d.date=h.date
+                WHERE h.shares IS NOT NULL AND d.total_shares > 0
                   AND h.ownership_percent IS NOT NULL
                   AND ABS(h.ownership_percent -
-                          (h.shares * 100.0 / cd.total_shares)) > 0.01
+                          (h.shares * 100.0 / d.total_shares)) > 0.01
                 ORDER BY ABS(h.ownership_percent -
-                             (h.shares * 100.0 / cd.total_shares)) DESC
+                             (h.shares * 100.0 / d.total_shares)) DESC
                 """, sample_limit)
         else:
             percent_audit["reported_percent_vs_same_date_shares"] = {
@@ -198,23 +244,34 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
                     FROM company_daily
                     WHERE total_company_shares > 0
                     GROUP BY ins_code, date
+                ), hh AS (
+                    SELECT ins_code, date, MAX(total_company_shares) AS total_shares
+                    FROM shareholder_holdings
+                    WHERE total_company_shares > 0
+                    GROUP BY ins_code, date
+                ), denoms AS (
+                    SELECT dates.ins_code, dates.date,
+                           COALESCE(cd.total_shares, hh.total_shares) AS total_shares
+                    FROM (SELECT DISTINCT ins_code, date FROM shareholder_holdings) dates
+                    LEFT JOIN cd USING (ins_code, date)
+                    LEFT JOIN hh USING (ins_code, date)
                 )
                 SELECT h.ins_code, h.date, h.id_scheme, h.shareholder_id,
                        h.shares, h.ownership_percent_calc AS pipeline_percent,
-                       cd.total_shares,
-                       ROUND(h.shares * 100.0 / cd.total_shares, 6)
+                       d.total_shares,
+                       ROUND(h.shares * 100.0 / d.total_shares, 6)
                            AS same_date_percent,
                        ROUND(h.ownership_percent_calc -
-                             (h.shares * 100.0 / cd.total_shares), 6)
+                             (h.shares * 100.0 / d.total_shares), 6)
                            AS difference_percentage_points
                 FROM shareholder_holdings h
-                JOIN cd ON cd.ins_code=h.ins_code AND cd.date=h.date
-                WHERE h.shares IS NOT NULL
+                JOIN denoms d ON d.ins_code=h.ins_code AND d.date=h.date
+                WHERE h.shares IS NOT NULL AND d.total_shares > 0
                   AND h.ownership_percent_calc IS NOT NULL
                   AND ABS(h.ownership_percent_calc -
-                          (h.shares * 100.0 / cd.total_shares)) > 0.01
+                          (h.shares * 100.0 / d.total_shares)) > 0.01
                 ORDER BY ABS(h.ownership_percent_calc -
-                             (h.shares * 100.0 / cd.total_shares)) DESC
+                             (h.shares * 100.0 / d.total_shares)) DESC
                 """, sample_limit)
         else:
             percent_audit["pipeline_calc_vs_same_date_shares"] = {
@@ -288,6 +345,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
                 "holdings_denominator_conflicts": holdings_denominator_conflicts,
                 "company_daily_vs_holdings_denominator_disagreements":
                     denominator_source_disagreements,
+                "dates_without_positive_denominator": dates_without_positive_denominator,
                 "raw_share_totals_over_100_before_identity_resolution":
                     raw_share_totals_over_100,
                 "percentage_recalculation": percent_audit,
@@ -296,7 +354,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             "interpretation": [
                 "Raw totals above 100% are diagnostic only; identity resolution and proven source-row exclusions have not yet been applied.",
                 "Duplicate source keys are candidates for inspection, not automatic deletion instructions.",
-                "Percentage comparisons use company_daily.total_company_shares for the exact same ins_code/date and a 0.01 percentage-point reporting tolerance.",
+                "Percentage comparisons use the exact-date resolver precedence: positive company_daily.total_company_shares, otherwise positive holdings.total_company_shares; differences over 0.01 percentage points are sampled.",
                 "Conflicting quantities inside a verified/inferred canonical group require review; this audit does not choose MAX or sum the conflicting values.",
             ],
         }
