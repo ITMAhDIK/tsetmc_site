@@ -1193,6 +1193,7 @@ def refresh_summaries(live, sidecar):
                 "  h.id_scheme AS id_scheme, "
                 "  h.shareholder_id AS shareholder_id, "
                 "  h.shares AS shares, "
+                "  h.identity_status AS ist, "
                 "  COALESCE(s.name_normalized, s.name, '') AS nm "
                 "FROM live.shareholder_holdings h "
                 "LEFT JOIN live.shareholder_id_xref x "
@@ -1256,7 +1257,14 @@ def refresh_summaries(live, sidecar):
                 "    ELSE q.canon_scheme END AS final_scheme, "
                 "  CASE WHEN t.share_id IS NOT NULL THEN t.share_id "
                 "    ELSE q.canon_id END AS final_id, "
-                "  q.shares AS shares, q.nm AS nm "
+                "  q.shares AS shares, q.nm AS nm, "
+                "  CASE q.ist "
+                "    WHEN 'verified_same_source_row' THEN 4 "
+                "    WHEN 'inferred_exact_match' THEN 3 "
+                "    WHEN 'source_id' THEN 2 "
+                "    WHEN 'unlinked_record_id' THEN 1 "
+                "    WHEN 'ambiguous_not_linked' THEN 1 "
+                "    ELSE 0 END AS ist_rank "
                 "FROM tmp_dedup_quant q "
                 "LEFT JOIN tmp_dedup_twins t "
                 "  ON t.ins_code = q.ins_code AND t.date = q.date "
@@ -1264,16 +1272,37 @@ def refresh_summaries(live, sidecar):
                 "      AND q.shareholder_id = t.ondate_id) "
                 "   OR (q.id_scheme = 'share_id' "
                 "      AND q.shareholder_id = t.share_id))")
+            # Best identity tier per resolved holder: the group's name
+            # comes from its best-tier member (same ranking as the
+            # Python resolver: verified 4, inferred 3, source_id 2,
+            # unlinked/ambiguous 1, unknown 0).
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_holder_rank AS "
+                "SELECT ins_code, date, final_scheme, final_id, "
+                "  MAX(ist_rank) AS max_rank "
+                "FROM tmp_dedup_final "
+                "GROUP BY ins_code, date, final_scheme, final_id")
             # One row per resolved holder (MAX shares: twin members carry
             # the same shares by construction; a canonical with two
             # disagreeing rows is a pipeline conflict and the larger
             # value is kept -- see the report).
+            # The name comes from the best-tier member (ist_rank =
+            # max_rank); a tie is broken by the largest name, exactly as
+            # the Python resolver does -- so both paths name the group
+            # identically (D1 fix).
             sidecar.execute(
                 "CREATE TEMP TABLE tmp_dedup_holders AS "
-                "SELECT ins_code, date, final_scheme, final_id, "
-                "  MAX(shares) AS shares, MAX(nm) AS nm "
-                "FROM tmp_dedup_final "
-                "GROUP BY ins_code, date, final_scheme, final_id")
+                "SELECT f.ins_code AS ins_code, f.date AS date, "
+                "  f.final_scheme AS final_scheme, "
+                "  f.final_id AS final_id, "
+                "  MAX(f.shares) AS shares, MAX(f.nm) AS nm "
+                "FROM tmp_dedup_final f "
+                "JOIN tmp_dedup_holder_rank r "
+                "  ON r.ins_code = f.ins_code AND r.date = f.date "
+                " AND r.final_scheme = f.final_scheme "
+                " AND r.final_id = f.final_id "
+                " AND f.ist_rank = r.max_rank "
+                "GROUP BY f.ins_code, f.date, f.final_scheme, f.final_id")
             sidecar.execute(
                 "CREATE INDEX tmp_dedup_holders_key "
                 "ON tmp_dedup_holders(ins_code, date, shares, nm)")
@@ -1358,7 +1387,8 @@ def refresh_summaries(live, sidecar):
             sidecar.execute("DETACH DATABASE live")
             for _tmp in ("tmp_dedup_totals", "tmp_dedup_raw",
                          "tmp_dedup_quant", "tmp_dedup_twins",
-                         "tmp_dedup_final", "tmp_dedup_holders",
+                         "tmp_dedup_final", "tmp_dedup_holder_rank",
+                         "tmp_dedup_holders",
                          "tmp_dedup_unres"):
                 sidecar.execute("DROP TABLE IF EXISTS " + _tmp)
     except Exception as e:
@@ -2000,15 +2030,26 @@ class SiteApi:
             if r["shares"] is not None and (
                     g["shares"] is None or r["shares"] > g["shares"]):
                 g["shares"] = r["shares"]
-            if (g["identity_status"] is None or
-                    rank.get(r["identity_status"], 0) >
-                    rank.get(g["identity_status"], 0)):
+            # Representative row: the best-tier member supplies the
+            # display fields (change, price, value, entry status).
+            # A rank tie is broken by the largest name_key -- the same
+            # rule the step-8 SQL uses (MAX(nm) among the top-ranked
+            # members) -- so both paths name a canonical group
+            # identically (D1 fix). The old code kept the first row on
+            # a tie, which depended on the row order of the query.
+            if g["identity_status"] is None:
+                take_rep = True
+            else:
+                r_rank = rank.get(r["identity_status"], 0)
+                g_rank = rank.get(g["identity_status"], 0)
+                take_rep = (r_rank > g_rank or
+                            (r_rank == g_rank and
+                             (r["name_key"] or "") > g["name_key"]))
+            if take_rep:
                 g["identity_status"] = r["identity_status"]
                 g["name"] = r["shareholder_name"]
                 g["name_key"] = r["name_key"] or ""
                 g["shareholder_type"] = r["shareholder_type"]
-                # Representative row: the best-tier member supplies the
-                # display fields (change, price, value, entry status).
                 g["rep"] = r
             if basis and g["basis"] == "single":
                 g["basis"] = basis
