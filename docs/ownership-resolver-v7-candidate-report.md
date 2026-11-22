@@ -43,7 +43,7 @@ Candidate-only correction:
 - For equal rank and equal `name_key`, use a stable tuple of the remaining display fields so selection is independent of SQL row order.
 - Compare numeric display fields numerically with `Decimal`, not lexicographically as strings. Numeric strings are parsed as numbers; `None`, malformed, and non-finite values have explicit deterministic ordering. Text fields distinguish `None` from an empty string.
 - This is only a deterministic fallback; it does not establish which conflicting source value is factually correct.
-- Expanded `tests/test_v7_representative_tie_break.py`, using an in-memory SQLite fixture only. It verifies forward/reverse input-order parity, multi-digit numeric values (9 vs 10), numeric strings, negative and decimal values, `None` versus empty text, and unchanged same-date ownership calculation.
+- Expanded `tests/test_v7_representative_tie_break.py`, using an in-memory SQLite fixture only. It verifies forward/reverse input-order parity, multi-digit numeric values (9 vs 10), numeric strings, negative and decimal values, missing/malformed/non-finite numeric values, `None` versus empty text, and unchanged same-date ownership calculation.
 
 The typed-key correction and expanded tests are committed to the candidate branch. Local execution is still required before considering the PR ready. No production database, sidecar, deployment, or live service is required for these tests.
 
