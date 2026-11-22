@@ -195,51 +195,59 @@
       return `در تاریخ ${fmtGregorianDate(ds)} ساعت ${toFa(ts)}`;
     };
 
-    // --- 2c. Identity tiers (the pipeline's real vocabulary) ---
-    const IDENTITY_TIERS = {
-      verified_same_source_row: 3,
-      inferred_exact_match: 2,
-      unlinked_record_id: 1,
-      ambiguous_not_linked: 1,
-      source_id: 1,
+    // --- 2c. Resolved holders: the backend (stock_shareholders)
+    // groups one date's rows into identity-resolved holders and
+    // returns them as `groups` with a stable group_key. The frontend
+    // NEVER merges by name: two rows with the same displayed name
+    // (every masked person shows as 'شخص حقیقی') are separate holders
+    // unless the backend resolved them to one group. Names are
+    // display-only; identity comes from the backend's group_key.
+    const BASIS_FA = {
+      verified: 'تأییدشده (یک ردیف منبع)',
+      inferred: 'استنتاج‌شده (تطابق دقیق)',
+      majority_twin: 'دوقلوی اکثریت',
+      single: 'تک‌رکورد',
     };
-    const identityTier = (status) => IDENTITY_TIERS[status] || 0;
-    // Normalize a Persian name for dedup (Arabic ي/ك -> Persian, ZWNJ ->
-    // a space so 'سرمایه‌گذاری' and 'سرمایه گذاری' match, digits, space).
-    const normalizeFaName = (s) => String(s || '')
-      .replace(/[\u0643\u06A9]/g, 'ک').replace(/[\u064A\u06CC\u0649]/g, 'ی')
-      .replace(/[\u200C\u200D]/g, ' ').replace(/\uFEFF/g, '').replace(/\s+/g, ' ').trim();
-    // Collapse rows that are the same holder under several id schemes:
-    // keep the row with the best identity tier (ties: most shares), and
-    // count how many raw records were merged into each displayed row.
-    // Major holders, name-deduped. Rows with NO share count are NOT
-    // counted as major holders (they carry no quantity); they are listed
-    // separately by unquantifiedHolders so the counts stay honest.
-    const dedupHolders = (rows) => {
-      const byName = new Map();
-      for (const h of (rows || [])) {
-        if (h.shares === null || h.shares === undefined) continue;
-        const key = normalizeFaName(h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
-        const cur = byName.get(key);
-        if (!cur) { byName.set(key, { ...h, _merged: 1 }); continue; }
-        cur._merged += 1;
-        const tNew = identityTier(h.identity_status), tCur = identityTier(cur.identity_status);
-        if (tNew > tCur || (tNew === tCur && (h.shares || 0) > (cur.shares || 0))) {
-          byName.set(key, { ...h, _merged: cur._merged });
-        }
+    // Map a backend group to the row shape the holders tables render.
+    // The group's pct is the same-date computed one; change, price and
+    // value come from the representative (best-tier) member row.
+    const groupToRow = (g) => {
+      const parts = String(g.group_key || '').split(':');
+      return {
+        ...g,
+        id_scheme: parts[0], shareholder_id: parts.slice(1).join(':'),
+        _merged: g.merged_count || 1,
+        ownership_percent_calculated: g.ownership_percent,
+      };
+    };
+    // Groups from the backend when present; otherwise each raw row is
+    // its own group (no merging at all -- never name-based).
+    const resolvedHolders = (res) => {
+      if (res && Array.isArray(res.groups) && res.groups.length) {
+        return res.groups.map(groupToRow);
       }
-      return Array.from(byName.values());
+      return (res && res.rows ? res.rows : []).map(h => ({
+        ...h, _merged: 1, group_key: `${h.id_scheme}:${h.shareholder_id}`,
+        basis: 'single', unresolved: false, merged_count: 1,
+        members: [{ id_scheme: h.id_scheme, shareholder_id: h.shareholder_id }],
+      }));
     };
-    // Holders mentioned on the latest date without any share count.
-    const unquantifiedHolders = (rows) => {
-      const names = new Map();
-      for (const h of (rows || [])) {
+    // Holders mentioned on the date without any share count, from the
+    // backend groups (or raw rows as a fallback). They are listed, not
+    // counted as major holders, so the counts stay honest.
+    const unquantifiedHolders = (res) => {
+      if (res && Array.isArray(res.groups)) {
+        return res.groups
+          .filter(g => g.shares === null || g.shares === undefined)
+          .map(g => g.shareholder_name || g.group_key);
+      }
+      const names = [];
+      for (const h of (res && res.rows ? res.rows : [])) {
         if (h.shares === null || h.shares === undefined) {
-          const key = normalizeFaName(h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
-          if (!names.has(key)) names.set(key, h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
+          names.push(h.shareholder_name || `${h.id_scheme}:${h.shareholder_id}`);
         }
       }
-      return Array.from(names.values());
+      return names;
     };
 
     // --- 3. Reusable UI Components ---
@@ -622,8 +630,8 @@
                         <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px]">{r.market}</span></td>
                         <td className="p-2 num">{fmtNum(r.total_company_shares)}</td>
                         <td className="p-2 num" title={r.latest_price ? `آخرین قیمت: ${fmtNum(r.latest_price)} ریال (${fmtGregorianDate(r.latest_price_date)})` : 'قیمت موجود نیست'}>{r.market_value !== null && r.market_value !== undefined ? fmtMoney(r.market_value, currency) : '—'}</td>
-                        <td className="p-2 num" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(r.disclosed_shareholder_count)}` : undefined}>{toFa(r.deduped_shareholder_count ?? r.disclosed_shareholder_count)}</td>
-                        <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.deduped_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.deduped_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : undefined}>{fmtPct(r.deduped_ownership_percent_sum ?? r.disclosed_ownership_percent_sum)}</td>
+                        <td className="p-2 num" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.resolved_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.resolved_ownership_percent_sum) > 0.001 ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(r.disclosed_shareholder_count)}` : undefined}>{toFa(r.resolved_shareholder_count)}{r.resolved_status === 'review' ? <span className="text-amber-400" title={r.resolved_status_note || 'رکوردهای تکراری حل‌نشده دارد'}> ⚠</span> : ''}</td>
+                        <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.resolved_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.resolved_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : (r.resolved_status === 'review' ? r.resolved_status_note : undefined)}>{fmtPct(r.resolved_ownership_percent_sum)}</td>
                         <td className="p-2 num text-[var(--text-secondary)]">{fmtDate(r.latest_date_jalali)}</td>
                       </tr>
                     ))}
@@ -809,10 +817,11 @@
           text: '',
         })), [actions]);
       const priceCloseSeries = useMemo(() => prices.map(p => ({ time: p.time, value: p.close })), [prices]);
-      // Holders, name-deduped: the same holder under several id schemes
-      // counts once (best identity tier wins); the merged count is shown.
-      const dedupedHolders = useMemo(() => dedupHolders(holdersRes.rows), [holdersRes.rows]);
-      const unquantifiedNames = useMemo(() => unquantifiedHolders(holdersRes.rows), [holdersRes.rows]);
+      // Holders, backend-resolved: the same holder under several id
+      // schemes counts once (the backend's group_key decides); the
+      // merged count and the resolution basis are shown per holder.
+      const dedupedHolders = useMemo(() => resolvedHolders(holdersRes), [holdersRes]);
+      const unquantifiedNames = useMemo(() => unquantifiedHolders(holdersRes), [holdersRes]);
 
       if (!symbol) return <div className="p-8 text-center text-xs text-[var(--text-secondary)]">هنوز نمادی انتخاب یا ایمپورت نشده است. از داشبورد یا جستجوی بالا یک نماد انتخاب کنید.</div>;
       if (loading) return <div className="p-8 text-center text-xs text-[var(--text-secondary)]">در حال واکشی اطلاعات نماد {symbol}...</div>;
@@ -846,7 +855,7 @@
         no_holder_observations: 'بدون مشاهده سهام‌دار',
         holders_only_total_shares_unavailable: 'بدون کل سهام شرکت',
       };
-      const mergedHoldersCount = holdersRes.rows.length - dedupedHolders.length;
+      const mergedHoldersCount = (holdersRes.total || holdersRes.rows.length) - dedupedHolders.length;
 
       return (
         <div className="space-y-3">
@@ -881,13 +890,13 @@
                 <div className="font-bold text-amber-400">{snap.total_shareholder_count !== null && snap.total_shareholder_count !== undefined ? (snap.total_shareholder_count_note ? `≥ ${fmtNum(snap.total_shareholder_count)}` : fmtNum(snap.total_shareholder_count)) : '—'}</div>
                 {snap.total_shareholder_count_note && <div className="text-[10px] text-amber-300">حداقل (ثبت نشده)</div>}
               </div>
-              <div title={snap.raw_ownership_percent_sum !== null && snap.raw_ownership_percent_sum !== undefined && snap.disclosed_ownership_percent_sum !== null && Math.abs(snap.raw_ownership_percent_sum - snap.disclosed_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(snap.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : undefined}>
+              <div title={snap.raw_ownership_percent_sum !== null && snap.raw_ownership_percent_sum !== undefined && snap.disclosed_ownership_percent_sum !== null && Math.abs(snap.raw_ownership_percent_sum - snap.disclosed_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(snap.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : (snap.status === 'review' ? snap.status_note : undefined)}>
                 <div className="text-[var(--text-secondary)]">جمع مالکیت عمده</div>
-                <div className="font-bold num">{fmtPct(snap.disclosed_ownership_percent_sum)}</div>
+                <div className="font-bold num">{fmtPct(snap.disclosed_ownership_percent_sum)}{snap.status === 'review' ? <span className="text-amber-400 text-xs" title={snap.status_note || undefined}> ⚠</span> : ''}</div>
               </div>
               <div title="۱۰۰ منهای جمع مالکیت عمدهٔ افشاشده — سهامی که در بازار آزاد دست مردم است و قابل معامله است">
                 <div className="text-[var(--text-secondary)]">سهام شناور</div>
-                <div className="font-bold num text-emerald-400">{snap.disclosed_ownership_percent_sum !== null && snap.disclosed_ownership_percent_sum !== undefined ? fmtPct(100 - snap.disclosed_ownership_percent_sum) : '—'}</div>
+                <div className="font-bold num text-emerald-400">{snap.status === 'ok' && snap.disclosed_ownership_percent_sum !== null && snap.disclosed_ownership_percent_sum !== undefined && Number(snap.disclosed_ownership_percent_sum) >= 0 && Number(snap.disclosed_ownership_percent_sum) <= 100 ? fmtPct(100 - snap.disclosed_ownership_percent_sum) : '—'}</div>
               </div>
             </div>
           </div>
@@ -1029,7 +1038,7 @@
 
               <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
                 <div className="p-2.5 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-2 text-xs">
-                  <span className="font-bold">سهام‌داران عمده ({toFa(dedupedHolders.length)} سهام‌دار یک‌تا‌شده از {toFa(holdersRes.rows.length)} رکورد)</span>
+                  <span className="font-bold">سهام‌داران عمده ({toFa(dedupedHolders.length)} سهام‌دار یک‌تا‌شده از {toFa(holdersRes.total || holdersRes.rows.length)} رکورد)</span>
                   <span className="text-[var(--text-secondary)]">به ترتیب درصد مالکیت — برای جدول کامل به تب «سهام‌داران عمده» بروید</span>
                 </div>
                 <table className="w-full text-xs text-right">
@@ -1047,7 +1056,7 @@
                   <tbody className="divide-y divide-[var(--border-subtle)]">
                     {dedupedHolders.slice(0, 15).map(h => (
                       <tr key={`${h.id_scheme}-${h.shareholder_id}`} onClick={() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`)} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
-                        <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد)</span> : ''}</td>
+                        <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد — {BASIS_FA[h.basis] || h.basis})</span> : ''}{h.unresolved ? <span className="text-[10px] text-amber-400" title="رکورد دیگری با همین سهام و نام وجود دارد که هویتش حل نشده؛ جمع ممکن است مضاعف باشد"> ⚠ نیاز به بررسی</span> : ''}</td>
                         <td className="p-2">{h.shareholder_type === 'legal' ? 'حقوقی' : h.shareholder_type === 'individual' ? 'حقیقی' : '—'}</td>
                         <td className="p-2 num">{fmtNum(h.shares)}</td>
                         <td className="p-2 num">
@@ -1075,7 +1084,9 @@
                   <select value={selectedDate || holdersRes.date_jalali || ''} onChange={e => setSelectedDate(e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] num">
                     {detail.available_dates.map(d => <option key={d} value={d}>{fmtDate(d)}</option>)}
                   </select>
-                  {mergedHoldersCount > 0 && <span className="text-[var(--text-secondary)]">({toFa(dedupedHolders.length)} سهام‌دار یک‌تا‌شده از {toFa(holdersRes.rows.length)} رکورد — رکوردهای تکراری همان سهام‌دار با چند شناسه یکی شده‌اند)</span>}
+                  {mergedHoldersCount > 0 && <span className="text-[var(--text-secondary)]">({toFa(dedupedHolders.length)} سهام‌دار یک‌تا‌شده از {toFa(holdersRes.total || holdersRes.rows.length)} رکورد — رکوردهای تکراری همان سهام‌دار با چند شناسه یکی شده‌اند)</span>}
+                  {holdersRes.status === 'review' && <span className="text-amber-300" title={holdersRes.status_note || undefined}>⚠ {toFa(holdersRes.unresolved_count)} سهام‌دار حل‌نشده — جمع ممکن است مضاعف باشد</span>}
+                  {holdersRes.status === 'unavailable' && <span className="text-amber-300">کل سهام شرکت برای این تاریخ ثبت نشده؛ درصد محاسبه نشد</span>}
                   {unquantifiedNames.length > 0 && <span className="text-amber-300">بدون دادهٔ تعداد سهم (در شمار سهام‌داران عمده نمی‌آیند): {unquantifiedNames.join('، ')}</span>}
                 </div>
                 <div className="flex gap-2">
@@ -1099,7 +1110,7 @@
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {dedupedHolders.map(h => (
                     <tr key={`${h.id_scheme}-${h.shareholder_id}`} onClick={() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`)} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
-                      <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد)</span> : ''}</td>
+                      <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد — {BASIS_FA[h.basis] || h.basis})</span> : ''}{h.unresolved ? <span className="text-[10px] text-amber-400" title="رکورد دیگری با همین سهام و نام وجود دارد که هویتش حل نشده؛ جمع ممکن است مضاعف باشد"> ⚠ نیاز به بررسی</span> : ''}</td>
                       <td className="p-2">{h.shareholder_type === 'legal' ? 'حقوقی' : h.shareholder_type === 'individual' ? 'حقیقی' : '—'}</td>
                       <td className="p-2 text-[10px] num text-[var(--text-secondary)]">{h.id_scheme}: {h.shareholder_id}</td>
                       <td className="p-2 num">{fmtNum(h.shares)}</td>
@@ -1411,7 +1422,7 @@
       useEffect(() => {
         if (!compQuery.trim()) { setCompResults([]); return; }
         const timer = setTimeout(() => {
-          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(compQuery.trim())}&limit=8}`)
+          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(compQuery.trim())}&limit=8`)
             .then(res => setCompResults(res.results || []))
             .catch(() => {});
         }, 200);
@@ -1901,8 +1912,8 @@
                     <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(s.symbol)}>{s.symbol}</td>
                     <td className="p-2">{s.company_name || '—'}</td>
                     <td className="p-2">{s.market}</td>
-                    <td className="p-2 num">{toFa(s.deduped_shareholder_count ?? s.disclosed_shareholder_count)}</td>
-                    <td className="p-2 num">{fmtPct(s.deduped_ownership_percent_sum ?? s.disclosed_ownership_percent_sum)}</td>
+                    <td className="p-2 num">{toFa(s.resolved_shareholder_count)}{s.resolved_status === 'review' ? <span className="text-amber-400" title={s.resolved_status_note || 'رکوردهای تکراری حل‌نشده دارد'}> ⚠</span> : ''}</td>
+                    <td className="p-2 num" title={s.resolved_status === 'review' ? s.resolved_status_note : undefined}>{fmtPct(s.resolved_ownership_percent_sum)}</td>
                     <td className="p-2 num">{s.market_value !== null && s.market_value !== undefined ? fmtMoney(s.market_value, currency) : '—'}</td>
                     <td className="p-2"><button onClick={() => removeSym(s.symbol)} className="text-red-400">حذف</button></td>
                   </tr>
