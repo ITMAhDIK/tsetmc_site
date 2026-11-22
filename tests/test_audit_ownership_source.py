@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,21 +70,24 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         )
 
     def test_audit_does_not_change_source_rows(self):
-        before = sqlite3.connect(self.db_path).execute(
-            "SELECT COUNT(*) FROM shareholder_holdings"
-        ).fetchone()[0]
+        with closing(sqlite3.connect(self.db_path)) as con:
+            before = con.execute(
+                "SELECT COUNT(*) FROM shareholder_holdings"
+            ).fetchone()[0]
         audit_source(self.db_path)
-        after = sqlite3.connect(self.db_path).execute(
-            "SELECT COUNT(*) FROM shareholder_holdings"
-        ).fetchone()[0]
+        with closing(sqlite3.connect(self.db_path)) as con:
+            after = con.execute(
+                "SELECT COUNT(*) FROM shareholder_holdings"
+            ).fetchone()[0]
         self.assertEqual(before, after)
 
 
     def test_denominator_disagreement_and_percentage_mismatch_are_reported(self):
-        with sqlite3.connect(self.db_path) as con:
+        with closing(sqlite3.connect(self.db_path)) as con:
             con.execute(
                 "UPDATE company_daily SET total_company_shares=90 "
                 "WHERE ins_code='X' AND date='2026-11-20'")
+            con.commit()
         report = audit_source(self.db_path)
         checks = report["checks"]
         self.assertEqual(
@@ -97,8 +101,9 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         )
 
     def test_holdings_denominator_is_used_when_company_daily_total_is_absent(self):
-        with sqlite3.connect(self.db_path) as con:
+        with closing(sqlite3.connect(self.db_path)) as con:
             con.execute("DELETE FROM company_daily")
+            con.commit()
         report = audit_source(self.db_path)
         checks = report["checks"]
         self.assertEqual(checks["dates_without_positive_denominator"]["count"], 0)
