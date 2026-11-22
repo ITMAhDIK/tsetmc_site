@@ -33,6 +33,19 @@
 - Full project test suite, Windows validation, full-database performance, live hash verification, canary, and before/after checks for احیا / احیا۳ remain pending.
 - Focused tests were run in the candidate preparation environment; they are not added as a standalone test suite in this GitHub PR.
 
+## Deterministic representative-row tie-break (2026-11-22)
+
+A follow-up review found that two members of one canonical holder could have the same best identity tier and the same normalized name while carrying different display fields (for example, shares change, price, or market value). The Python endpoint previously retained whichever row happened to arrive first.
+
+Candidate-only correction:
+- Keep identity-tier rank as the primary selection rule.
+- Keep `name_key` as the first tie-break, preserving parity with the step-8 SQL naming rule.
+- For equal rank and equal `name_key`, use a stable tuple of the remaining display fields so selection is independent of SQL row order.
+- This is only a deterministic fallback; it does not establish which conflicting source value is factually correct.
+- Added `tests/test_v7_representative_tie_break.py`, using an in-memory SQLite fixture only. It verifies forward/reverse input-order parity and unchanged same-date ownership calculation.
+
+Validation is pending in the user's local environment. No production database, sidecar, deployment, or live service is required for this test.
+
 ## Operational restrictions
 - No merge, rebase, deploy, canary, production DB open/write, or sidecar rebuild has been performed.
 - Do not connect this candidate to the production database or Sidecar. A legacy Sidecar requires rebuild due to the resolver schema marker.
