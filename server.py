@@ -50,6 +50,7 @@
 import argparse
 import csv
 from collections import Counter, defaultdict
+from decimal import Decimal, InvalidOperation
 import io
 import json
 import os
@@ -2041,8 +2042,35 @@ class SiteApi:
                 "shareholder_name", "shareholder_type", "shares_change",
                 "price", "market_value", "valuation_status", "entry_status",
                 "ownership_percent_reported", "ownership_percent_calculated")
-            rep_key = ((r["name_key"] or ""),) + tuple(
-                "" if r.get(field) is None else str(r.get(field))
+            numeric_rep_fields = {
+                "shares_change", "price", "market_value",
+                "ownership_percent_reported", "ownership_percent_calculated",
+            }
+
+            def text_rep_key(value):
+                # Keep NULL distinct from an empty string, with a stable order.
+                return (0, "") if value is None else (1, str(value))
+
+            def numeric_rep_key(value):
+                # Compare numeric source values numerically (not as strings:
+                # lexicographic ordering would put "9" above "10"). Decimal
+                # avoids binary-float ordering surprises and accepts numeric
+                # strings from SQLite/source adapters. Malformed/non-finite
+                # values remain deterministic and sort below valid numbers.
+                if value is None:
+                    return (0, "")
+                try:
+                    number = Decimal(str(value))
+                except (InvalidOperation, TypeError, ValueError):
+                    return (1, str(value))
+                if not number.is_finite():
+                    return (1, str(value))
+                return (2, number)
+
+            rep_key = (str(r.get("name_key") or ""),) + tuple(
+                numeric_rep_key(r.get(field))
+                if field in numeric_rep_fields
+                else text_rep_key(r.get(field))
                 for field in rep_fields)
             if g["rep"] is None:
                 take_rep = True
