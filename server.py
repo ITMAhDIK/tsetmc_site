@@ -719,6 +719,13 @@ def refresh_summaries(live, sidecar):
     """
     t0 = time.time()
     print("[refresh] rebuilding summaries from the live DB ...", flush=True)
+    # Invalidate readiness BEFORE touching any derived table. Any failure in
+    # exclusion collection or an earlier refresh stage must not leave a stale
+    # completion marker that lets API handlers serve a partial/old sidecar.
+    with sidecar:
+        sidecar.execute(
+            "DELETE FROM site_meta WHERE key IN "
+            "('last_refresh', 'ownership_resolver_schema')")
     cur = live.cursor()
     mirrored_snapshot_dates, repeated_source_ids, excluded_holder_rows = \
         _collect_excluded_holder_rows(live, sidecar)
@@ -1583,15 +1590,15 @@ class SiteApi:
                 print("[refresh] FAILED: %r" % (e,), flush=True)
 
     def require_ready(self, sc):
-        # Ready only once a full refresh has completed: the last_refresh
-        # marker is written at the very end of refresh_summaries. Checking
-        # site_watch alone used to open the API after the first table was
-        # built, serving empty holder/screener/portfolio data for minutes
-        # while the big holdings scan was still running.
+        # Ready only after a full refresh completed AND the expected ownership
+        # resolver schema was materialised. This rejects both partial builds
+        # and legacy v7 sidecars that still carry the old deduped_* layout.
         row = sc.execute(
             "SELECT value FROM site_meta WHERE key='last_refresh'").fetchone()
-        if not row or not row[0]:
-            raise ApiError(503, "داده‌ها هنوز آماده نشده‌اند؛ سرور در حال ساخت فهرست است."
+        ownership_schema = self.meta(sc, "ownership_resolver_schema")
+        if (not row or not row[0]
+                or ownership_schema != "resolved-v1-source-exclusions"):
+            raise ApiError(503, "داده‌ها هنوز آماده نیستند؛ ساخت کامل Sidecar لازم است."
                             + (" خطا: " + self._refresh_error
                                if self._refresh_error else ""))
 
