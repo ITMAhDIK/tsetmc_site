@@ -119,6 +119,25 @@ class RepresentativeTieBreakTests(unittest.TestCase):
             decimal_low, decimal_high, "ownership_percent_reported", "1.25"
         )
 
+    def test_missing_and_invalid_numeric_values_sort_below_valid_numbers(self):
+        missing = self.row("holder_id", 11, None, 100, 2500000)
+        zero = self.row("share_id", 22, 0, 100, 2500000)
+        self.assert_same_representative(
+            missing, zero, "shares_change", 0
+        )
+
+        malformed = self.row("holder_id", 11, "not-a-number", 100, 2500000)
+        valid = self.row("share_id", 22, 0, 100, 2500000)
+        self.assert_same_representative(
+            malformed, valid, "shares_change", 0
+        )
+
+        non_finite = self.row("holder_id", 11, float("nan"), 100, 2500000)
+        finite = self.row("share_id", 22, 0, 100, 2500000)
+        self.assert_same_representative(
+            non_finite, finite, "shares_change", 0
+        )
+
     def test_none_and_empty_text_have_stable_distinct_ordering(self):
         missing = self.row("holder_id", 11, 2, 100, 2500000)
         empty = self.row("share_id", 22, 2, 100, 2500000)
