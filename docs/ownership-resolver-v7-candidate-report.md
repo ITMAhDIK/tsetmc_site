@@ -41,10 +41,11 @@ Candidate-only correction:
 - Keep identity-tier rank as the primary selection rule.
 - Keep `name_key` as the first tie-break, preserving parity with the step-8 SQL naming rule.
 - For equal rank and equal `name_key`, use a stable tuple of the remaining display fields so selection is independent of SQL row order.
+- Compare numeric display fields numerically with `Decimal`, not lexicographically as strings. Numeric strings are parsed as numbers; `None`, malformed, and non-finite values have explicit deterministic ordering. Text fields distinguish `None` from an empty string.
 - This is only a deterministic fallback; it does not establish which conflicting source value is factually correct.
-- Added `tests/test_v7_representative_tie_break.py`, using an in-memory SQLite fixture only. It verifies forward/reverse input-order parity and unchanged same-date ownership calculation.
+- Expanded `tests/test_v7_representative_tie_break.py`, using an in-memory SQLite fixture only. It verifies forward/reverse input-order parity, multi-digit numeric values (9 vs 10), numeric strings, negative and decimal values, `None` versus empty text, and unchanged same-date ownership calculation.
 
-Validation is pending in the user's local environment. No production database, sidecar, deployment, or live service is required for this test.
+The typed-key correction and expanded tests are committed to the candidate branch. Local execution is still required before considering the PR ready. No production database, sidecar, deployment, or live service is required for these tests.
 
 ## Operational restrictions
 - No merge, rebase, deploy, canary, production DB open/write, or sidecar rebuild has been performed.
