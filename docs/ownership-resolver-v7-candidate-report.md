@@ -1,9 +1,9 @@
 # v7 ownership resolver candidate — implementation record
 
 ## Branches
-- Snapshot base: `snapshot/v7-recorded-2026-11-21`.
+- Snapshot overlay base: `snapshot/v7-recorded-2026-11-21`.
 - Candidate: `candidate/v7-ownership-resolver-2026-11-22`.
-- Review-only draft PR targets the snapshot branch, not `main`.
+- Review-only draft PR targets the two-file v7 snapshot overlay branch, not `main`.
 - PR #1 is intentionally unchanged.
 
 ## Provenance and limitations
@@ -11,7 +11,8 @@
 - `server.py` source SHA-256: `3ad3e3386706d06a89c571f9cd2ac5be019c4f8cdc3af362e07ec038ccde992b`.
 - HTML source SHA-256: `cf5fcf9d9b9ff13a00cd120d8a723819fb05eda3830151f98c6287d74313f3f1`.
 - Live-path hashes have not been re-verified because the tunnel is unavailable.
-- The snapshot was normalized from CRLF to LF for Git storage.
+- The snapshot overlay is **not a full historical repository export**: it was branched from the current GitHub `main` tree and only the two application entry files (`server.py` and `ai_studio_code.html`) were replaced with the recorded v7 files. Other repository files remain from `main` and must not be assumed to match the v7 workstation checkout.
+- The snapshot source files were normalized from CRLF to LF for Git storage.
 - Candidate package path `current/ai_studio_code.html` was mapped to repository-root `ai_studio_code.html`; that is the HTML path present on the repository.
 
 ## Implemented
