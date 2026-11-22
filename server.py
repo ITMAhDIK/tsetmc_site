@@ -223,7 +223,7 @@ def open_live_db(db_path):
     return con
 
 def open_sidecar_db(path):
-    con = sqlite3.connect(path, check_same_thread=False)
+    con = sqlite3.connect(path, uri=True, check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode = WAL")
     # Readers wait (instead of failing instantly) while the refresh
@@ -367,13 +367,14 @@ CREATE TABLE IF NOT EXISTS site_watch (
     total_shareholder_count_note TEXT,
     disclosed_ownership_percent_sum REAL,
     data_completeness TEXT,
-    -- Deduped latest snapshot (see refresh step 7): the pipeline stores
-    -- the same holder under several id schemes (ondate_share_id AND
-    -- share_id), so the raw disclosed sum can exceed 100% (مهر3: 265%).
-    -- These columns hold the one-per-share-count deduped values; the raw
-    -- columns above are kept so the UI can show both.
-    deduped_shareholder_count INTEGER,
-    deduped_ownership_percent_sum REAL,
+    -- Identity-resolved latest snapshot. Only verified/inferred xref
+    -- links and the provable-majority twin rule collapse holders. Source-
+    -- proven mirrored/repeated ondate rows are excluded separately.
+    resolved_shareholder_count INTEGER,
+    resolved_ownership_percent_sum REAL,
+    resolved_unresolved_count INTEGER,
+    resolved_status TEXT,
+    resolved_status_note TEXT,
     raw_ownership_percent_sum REAL,
     -- Latest price (from trading_days: the latest closing price) and
     -- market value (total shares x latest price). Price is the newest
@@ -387,11 +388,18 @@ CREATE TABLE IF NOT EXISTS site_watch (
 CREATE TABLE IF NOT EXISTS site_company_daily_dedup (
     ins_code TEXT NOT NULL,
     date TEXT NOT NULL,
-    deduped_pct REAL,
-    deduped_shares INTEGER,
-    deduped_count INTEGER,
-    raw_pct REAL,
+    resolved_count INTEGER,
+    resolved_shares INTEGER,
+    resolved_pct REAL,
     raw_count INTEGER,
+    raw_pct REAL,
+    raw_shares INTEGER,
+    unquantified_count INTEGER,
+    unresolved_count INTEGER,
+    unresolved_shares INTEGER,
+    total_shares INTEGER,
+    status TEXT,
+    status_note TEXT,
     PRIMARY KEY (ins_code, date)
 );
 CREATE TABLE IF NOT EXISTS site_excluded_holder_rows (
@@ -762,8 +770,11 @@ def refresh_summaries(live, sidecar):
             " total_shareholder_count_note TEXT,"
             " disclosed_ownership_percent_sum REAL,"
             " data_completeness TEXT,"
-            " deduped_shareholder_count INTEGER,"
-            " deduped_ownership_percent_sum REAL,"
+            " resolved_shareholder_count INTEGER,"
+            " resolved_ownership_percent_sum REAL,"
+            " resolved_unresolved_count INTEGER,"
+            " resolved_status TEXT,"
+            " resolved_status_note TEXT,"
             " raw_ownership_percent_sum REAL,"
             " latest_price REAL, latest_price_date TEXT,"
             " market_value REAL)")
@@ -774,10 +785,11 @@ def refresh_summaries(live, sidecar):
             " disclosed_shareholder_count, total_shareholder_count, "
             " total_shareholder_count_note, "
             " disclosed_ownership_percent_sum, data_completeness, "
-            " deduped_shareholder_count, deduped_ownership_percent_sum, "
+            " resolved_shareholder_count, resolved_ownership_percent_sum, "
+            " resolved_unresolved_count, resolved_status, resolved_status_note, "
             " raw_ownership_percent_sum, latest_price, latest_price_date, "
             " market_value) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(r["ins_code"], r["symbol"], r["company_name"],
               _market_for_display(r["market_raw"]),
               _norm_date(r["first_date"]),
@@ -788,7 +800,8 @@ def refresh_summaries(live, sidecar):
               r["total_shareholder_count"], r["total_shareholder_count_note"],
               r["disclosed_ownership_percent_sum"],
               r["data_completeness"],
-              None, None, r["disclosed_ownership_percent_sum"],
+              None, None, None, None, None,
+              r["disclosed_ownership_percent_sum"],
               None, None, None) for r in rows])
     print("[refresh] site_watch: %d symbols in %.1fs" % (len(rows), time.time() - t0),
           flush=True)
@@ -1073,136 +1086,287 @@ def refresh_summaries(live, sidecar):
               % (len(top), len(recent)), flush=True)
     except Exception as e:
         print("[refresh] panels skipped: %r" % (e,), flush=True)
-    # 8. Deduped daily ownership series. First remove only two kinds of
-    #    proven double representation: (a) IDs explicitly linked through
-    #    raw_source_ids, and (b) ondate_share_id rows when source_observations
-    #    proves that shareholders_on_date and shareholder_last are exact
-    #    whole-snapshot mirrors for the same symbol/date. In case (b), keep
-    #    the canonical share_id representation. Do NOT equate holders just
-    #    because names or share counts match. Repeated business signatures
-    #    inside one endpoint remain unresolved unless identity evidence
-    #    proves they are the same holder; totals outside [0,100] stay invalid
-    #    and are suppressed by the UI. The holdings scan remains streaming.
+    ownership_resolver_ok = False
+    # 8. Identity-resolved daily ownership series. The pipeline stores the
+    #    same holder under several id schemes (ondate_share_id AND
+    #    share_id), so company_daily's disclosed sum counts that holder
+    #    twice or three times and can exceed 100% (مهر3: 265.24%). The old
+    #    code "fixed" that by keeping one row per distinct share count --
+    #    which is not an identity key: two different holders can hold the
+    #    same number of shares, and it also summed the stored
+    #    ownership_percent_calc values, which divide historical shares by
+    #    the CURRENT total (Q1 proved it wrong for pre-increase dates).
+    #
+    #    The new aggregation resolves each (ins_code, date) in three
+    #    steps, all set-based SQL over the live DB (ATTACHed read-only):
+    #    (1) canonical identity from the pipeline's own xref table
+    #    (shareholder_id_xref): a row merges into its canonical holder
+    #    ONLY when the xref status is verified_same_source_row or
+    #    inferred_exact_match; unlinked / ambiguous / source_id rows stay
+    #    themselves. (2) provable-majority twins: an unlinked ondate row
+    #    and an unlinked share_id row with the same (ins, date, shares,
+    #    registry name), exactly one candidate on each side, whose shares
+    #    are a strict majority of the SAME-DATE issued total -- two people
+    #    cannot each hold >50% of one company on one date. The twin is
+    #    keyed to the share_id side. (3) everything else stays a separate
+    #    holder; rows that share (date, shares, name) with another
+    #    resolved holder but have no link are counted as unresolved
+    #    duplicate candidates and the day is marked 'review'.
+    #    Ownership is computed from shares, never by summing stored
+    #    percentages: resolved_pct = resolved_shares / total_shares(date)
+    #    * 100, where total_shares(date) is company_daily's same-date
+    #    total (fallback: the holdings rows' own total). Totals are never
+    #    clamped to 100%: a resolved total above 100% is impossible by
+    #    construction (each holder counted once), so if it ever appears
+    #    it means the denominator is wrong and the day is 'review'.
+    #    Names are used only as a consistency check, never as identity.
+    #    The live DB is ATTACHed read-only; a failure here logs and the
+    #    refresh continues (endpoints fall back to company_daily, as
+    #    before).
     try:
         t8 = time.time()
+        live_file = None
+        for _seq, _name, _file in live.execute(
+                "PRAGMA database_list").fetchall():
+            if _name == "main":
+                live_file = _file
+                break
+        if not live_file:
+            raise RuntimeError("live DB path not found (PRAGMA database_list)")
+        live_uri = ("file:" +
+                    urllib.request.pathname2url(os.path.abspath(live_file)) +
+                    "?mode=ro")
         with sidecar:
             sidecar.execute("DROP TABLE IF EXISTS site_company_daily_dedup")
             sidecar.execute(
                 "CREATE TABLE site_company_daily_dedup ("
                 " ins_code TEXT NOT NULL, date TEXT NOT NULL,"
-                " deduped_pct REAL, deduped_shares INTEGER,"
-                " deduped_count INTEGER, raw_pct REAL, raw_count INTEGER,"
+                " resolved_count INTEGER, resolved_shares INTEGER,"
+                " resolved_pct REAL, raw_count INTEGER, raw_pct REAL,"
+                " raw_shares INTEGER, unquantified_count INTEGER,"
+                " unresolved_count INTEGER, unresolved_shares INTEGER,"
+                " total_shares INTEGER, status TEXT, status_note TEXT,"
                 " PRIMARY KEY (ins_code, date))")
-        cur2 = live.cursor()
-        cursor = cur2.execute(
-            "SELECT h.ins_code, h.date, h.shares, h.ownership_percent_calc, "
-            "h.id_scheme, h.shareholder_id, s.raw_source_ids "
-            "FROM shareholder_holdings h "
-            "LEFT JOIN shareholders s ON s.id_scheme=h.id_scheme "
-            "AND s.shareholder_id=h.shareholder_id "
-            "ORDER BY h.ins_code, h.date")
-        batch = []
-        cur_key = None
-        seen_identities = set()
-        ded_pct = 0.0
-        ded_shares = 0
-        raw_pct = 0.0
-        raw_n = 0
-        n_rows = 0
-
-        def _flush_dedup():
-            nonlocal batch, n_rows
-            if cur_key is None:
-                return
-            batch.append((cur_key[0], cur_key[1],
-                          round(ded_pct, 6) if ded_pct else 0.0,
-                          ded_shares, len(seen_identities),
-                          round(raw_pct, 6) if raw_pct else 0.0, raw_n))
-            n_rows += 1
-            if len(batch) >= 20000:
-                with sidecar:
-                    sidecar.executemany(
-                        "INSERT INTO site_company_daily_dedup "
-                        "(ins_code, date, deduped_pct, deduped_shares, "
-                        " deduped_count, raw_pct, raw_count) "
-                        "VALUES (?,?,?,?,?,?,?)", batch)
-                batch = []
-
-        n_stream = 0
-        while True:
-            rows8 = cursor.fetchmany(20000)
-            if not rows8:
-                break
-            for r in rows8:
-                n_stream += 1
-                key = (r[0], r[1])
-                if key != cur_key:
-                    _flush_dedup()
-                    cur_key = key
-                    seen_identities = set()
-                    ded_pct = 0.0
-                    ded_shares = 0
-                    raw_pct = 0.0
-                    raw_n = 0
-                raw_n += 1
-                if r[3] is not None:
-                    raw_pct += r[3]
-                # If the two TSETMC endpoints are exact whole-snapshot
-                # mirrors, the ondate records are an alternate view of the
-                # canonical share_id rows already present for this date.
-                # Keep them in raw_pct for audit transparency, but do not
-                # add them a second time to the analytical total.
-                if r[4] == "ondate_share_id":
-                    source_key = (r[0], r[1], int(r[5])) if r[5] is not None else None
-                    if source_key in excluded_holder_rows:
-                        continue
-                sh = r[2]
-                # Deduplicate only when the source explicitly links two
-                # identifiers to the same holder. Equal share counts alone
-                # are NOT identity evidence: unrelated holders can own the
-                # same number of shares.
-                members = {(str(r[4] or ""), int(r[5]))}
-                raw_ids = r[6] or ""
-                for part in str(raw_ids).split(","):
-                    part = part.strip()
-                    if ":" not in part:
-                        continue
-                    scheme_part, id_part = part.split(":", 1)
-                    try:
-                        members.add((scheme_part.strip(), int(id_part.strip())))
-                    except ValueError:
-                        continue
-                identity_key = tuple(sorted(members))
-                if sh is not None and identity_key not in seen_identities:
-                    seen_identities.add(identity_key)
-                    ded_shares += sh
-                    if r[3] is not None:
-                        ded_pct += r[3]
-            if n_stream % 1000000 < 20000:
-                print("[refresh] dedup: %d rows streamed (%.1fs)"
-                      % (n_stream, time.time() - t8), flush=True)
-        _flush_dedup()
-        if batch:
+        sidecar.execute("ATTACH DATABASE ? AS live", (live_uri,))
+        try:
+            # Same-date issued-share total per (ins_code, date).
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_totals AS "
+                "SELECT h.ins_code AS ins_code, h.date AS date, "
+                "  CASE WHEN MAX(cd.total_company_shares) > 0 "
+                "    THEN MAX(cd.total_company_shares) "
+                "    WHEN MAX(h.total_company_shares) > 0 "
+                "    THEN MAX(h.total_company_shares) "
+                "    ELSE NULL END AS total_shares "
+                "FROM live.shareholder_holdings h "
+                "LEFT JOIN live.company_daily cd "
+                "  ON cd.ins_code = h.ins_code AND cd.date = h.date "
+                "GROUP BY h.ins_code, h.date")
+            # Raw aggregates (no joins): every source row, duplicates and
+            # all, plus the unquantified rows that carry no share count.
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_raw AS "
+                "SELECT ins_code, date, COUNT(*) AS raw_count, "
+                "  COALESCE(SUM(ownership_percent_calc), 0.0) AS raw_pct, "
+                "  COALESCE(SUM(shares), 0) AS raw_shares, "
+                "  SUM(CASE WHEN shares IS NULL THEN 1 ELSE 0 END) "
+                "    AS unquantified_count "
+                "FROM live.shareholder_holdings "
+                "GROUP BY ins_code, date")
+            # Quantified rows resolved to their canonical holder (step 1).
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_quant AS "
+                "SELECT h.ins_code AS ins_code, h.date AS date, "
+                "  CASE WHEN x.status IN ('verified_same_source_row', "
+                "    'inferred_exact_match') THEN x.canonical_scheme "
+                "    ELSE h.id_scheme END AS canon_scheme, "
+                "  CASE WHEN x.status IN ('verified_same_source_row', "
+                "    'inferred_exact_match') THEN x.canonical_id "
+                "    ELSE h.shareholder_id END AS canon_id, "
+                "  h.id_scheme AS id_scheme, "
+                "  h.shareholder_id AS shareholder_id, "
+                "  h.shares AS shares, "
+                "  COALESCE(s.name_normalized, s.name, '') AS nm "
+                "FROM live.shareholder_holdings h "
+                "LEFT JOIN live.shareholder_id_xref x "
+                "  ON x.ins_code = h.ins_code "
+                " AND x.source_scheme = h.id_scheme "
+                " AND x.source_id = h.shareholder_id "
+                "LEFT JOIN live.shareholders s "
+                "  ON s.id_scheme = h.id_scheme "
+                " AND s.shareholder_id = h.shareholder_id "
+                "WHERE h.shares IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM site_excluded_holder_rows x "
+                " WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                " AND x.id_scheme=h.id_scheme "
+                " AND x.shareholder_id=h.shareholder_id)")
+            sidecar.execute(
+                "CREATE INDEX tmp_dedup_quant_key "
+                "ON tmp_dedup_quant(ins_code, date, shares)")
+            # Provable-majority twins (step 2): unlinked ondate <-> share
+            # pairs, same (ins, date, shares, name), exactly one
+            # candidate on each side, shares a strict majority of the
+            # same-date total. Keyed to the share_id side.
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_twins AS "
+                "SELECT q1.ins_code AS ins_code, q1.date AS date, "
+                "  q1.shareholder_id AS ondate_id, "
+                "  q2.shareholder_id AS share_id "
+                "FROM tmp_dedup_quant q1 "
+                "JOIN tmp_dedup_quant q2 "
+                "  ON q2.ins_code = q1.ins_code AND q2.date = q1.date "
+                " AND q2.shares = q1.shares "
+                " AND q1.id_scheme = 'ondate_share_id' "
+                " AND q2.id_scheme = 'share_id' "
+                " AND q1.canon_scheme = q1.id_scheme "
+                " AND q1.canon_id = q1.shareholder_id "
+                " AND q2.canon_scheme = q2.id_scheme "
+                " AND q2.canon_id = q2.shareholder_id "
+                " AND q1.nm = q2.nm "
+                " AND q1.shares * 2 > (SELECT total_shares "
+                "   FROM tmp_dedup_totals t "
+                "   WHERE t.ins_code = q1.ins_code AND t.date = q1.date) "
+                " AND NOT EXISTS (SELECT 1 FROM tmp_dedup_quant q3 "
+                "   WHERE q3.ins_code = q1.ins_code AND q3.date = q1.date "
+                "   AND q3.shares = q1.shares "
+                "   AND q3.id_scheme = 'ondate_share_id' "
+                "   AND q3.canon_scheme = q3.id_scheme "
+                "   AND q3.canon_id = q3.shareholder_id "
+                "   AND q3.shareholder_id <> q1.shareholder_id) "
+                " AND NOT EXISTS (SELECT 1 FROM tmp_dedup_quant q4 "
+                "   WHERE q4.ins_code = q1.ins_code AND q4.date = q1.date "
+                "   AND q4.shares = q1.shares "
+                "   AND q4.id_scheme = 'share_id' "
+                "   AND q4.canon_scheme = q4.id_scheme "
+                "   AND q4.canon_id = q4.shareholder_id "
+                "   AND q4.shareholder_id <> q2.shareholder_id)")
+            # Final holder per quantified row: twin members collapse to
+            # the share_id side, the rest keep their canonical id.
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_final AS "
+                "SELECT q.ins_code AS ins_code, q.date AS date, "
+                "  CASE WHEN t.share_id IS NOT NULL THEN 'share_id' "
+                "    ELSE q.canon_scheme END AS final_scheme, "
+                "  CASE WHEN t.share_id IS NOT NULL THEN t.share_id "
+                "    ELSE q.canon_id END AS final_id, "
+                "  q.shares AS shares, q.nm AS nm "
+                "FROM tmp_dedup_quant q "
+                "LEFT JOIN tmp_dedup_twins t "
+                "  ON t.ins_code = q.ins_code AND t.date = q.date "
+                " AND ((q.id_scheme = 'ondate_share_id' "
+                "      AND q.shareholder_id = t.ondate_id) "
+                "   OR (q.id_scheme = 'share_id' "
+                "      AND q.shareholder_id = t.share_id))")
+            # One row per resolved holder (MAX shares: twin members carry
+            # the same shares by construction; a canonical with two
+            # disagreeing rows is a pipeline conflict and the larger
+            # value is kept -- see the report).
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_holders AS "
+                "SELECT ins_code, date, final_scheme, final_id, "
+                "  MAX(shares) AS shares, MAX(nm) AS nm "
+                "FROM tmp_dedup_final "
+                "GROUP BY ins_code, date, final_scheme, final_id")
+            sidecar.execute(
+                "CREATE INDEX tmp_dedup_holders_key "
+                "ON tmp_dedup_holders(ins_code, date, shares, nm)")
+            # Unresolved duplicate candidates (step 3): distinct resolved
+            # holders sharing (date, shares, name) with no link between
+            # them. They stay separate holders, but the day is 'review'
+            # because the total may double-count one person.
+            sidecar.execute(
+                "CREATE TEMP TABLE tmp_dedup_unres AS "
+                "SELECT g.ins_code AS ins_code, g.date AS date, "
+                "  COUNT(*) AS unresolved_count, "
+                "  COALESCE(SUM(g.shares), 0) AS unresolved_shares "
+                "FROM tmp_dedup_holders g "
+                "JOIN (SELECT ins_code, date, shares, nm "
+                "      FROM tmp_dedup_holders "
+                "      GROUP BY ins_code, date, shares, nm "
+                "      HAVING COUNT(*) > 1) d "
+                "  ON d.ins_code = g.ins_code AND d.date = g.date "
+                " AND d.shares = g.shares AND d.nm = g.nm "
+                "GROUP BY g.ins_code, g.date")
             with sidecar:
-                sidecar.executemany(
+                sidecar.execute(
                     "INSERT INTO site_company_daily_dedup "
-                    "(ins_code, date, deduped_pct, deduped_shares, "
-                    " deduped_count, raw_pct, raw_count) "
-                    "VALUES (?,?,?,?,?,?,?)", batch)
-        print("[refresh] dedup: %d (symbol,date) rows in %.1fs"
-              % (n_rows, time.time() - t8), flush=True)
+                    "(ins_code, date, resolved_count, resolved_shares, "
+                    " resolved_pct, raw_count, raw_pct, raw_shares, "
+                    " unquantified_count, unresolved_count, "
+                    " unresolved_shares, total_shares, status, status_note) "
+                    "SELECT r.ins_code, r.date, "
+                    "  COALESCE(h.resolved_count, 0), "
+                    "  COALESCE(h.resolved_shares, 0), "
+                    "  CASE WHEN t.total_shares IS NULL "
+                    "    OR t.total_shares = 0 THEN NULL "
+                    "    ELSE ROUND(COALESCE(h.resolved_shares, 0) * 100.0 "
+                    "      / t.total_shares, 6) END, "
+                    "  r.raw_count, r.raw_pct, r.raw_shares, "
+                    "  r.unquantified_count, "
+                    "  COALESCE(u.unresolved_count, 0), "
+                    "  COALESCE(u.unresolved_shares, 0), "
+                    "  t.total_shares, "
+                    "  CASE WHEN t.total_shares IS NULL "
+                    "    OR t.total_shares = 0 THEN 'unavailable' "
+                    "    WHEN COALESCE(u.unresolved_count, 0) > 0 "
+                    "    THEN 'review' "
+                    "    WHEN COALESCE(h.resolved_shares, 0) * 100.0 "
+                    "      / t.total_shares > 100 THEN 'review' "
+                    "    ELSE 'ok' END, "
+                    "  CASE WHEN t.total_shares IS NULL "
+                    "    OR t.total_shares = 0 "
+                    "    THEN 'کل سهام شرکت برای این تاریخ ثبت نشده؛ "
+                    "درصد محاسبه نشد.' "
+                    "    WHEN COALESCE(u.unresolved_count, 0) > 0 "
+                    "    THEN 'رکوردهای تکراری حل‌نشده با سهام و نام "
+                    "یکسان وجود دارد؛ جمع ممکن است مضاعف باشد.' "
+                    "    WHEN COALESCE(h.resolved_shares, 0) * 100.0 "
+                    "      / t.total_shares > 100 "
+                    "    THEN 'جمع مالکیت حل‌شده بیش از ۱۰۰٪ است؛ "
+                    "نیاز به بازبینی دارد.' "
+                    "    ELSE NULL END "
+                    "FROM tmp_dedup_raw r "
+                    "LEFT JOIN tmp_dedup_totals t "
+                    "  ON t.ins_code = r.ins_code AND t.date = r.date "
+                    "LEFT JOIN (SELECT ins_code, date, COUNT(*) "
+                    "    AS resolved_count, "
+                    "    COALESCE(SUM(shares), 0) AS resolved_shares "
+                    "  FROM tmp_dedup_holders "
+                    "  GROUP BY ins_code, date) h "
+                    "  ON h.ins_code = r.ins_code AND h.date = r.date "
+                    "LEFT JOIN tmp_dedup_unres u "
+                    "  ON u.ins_code = r.ins_code AND u.date = r.date")
+            n_rows = sidecar.execute(
+                "SELECT COUNT(*) FROM site_company_daily_dedup").fetchone()[0]
+            n_review, n_unavail = sidecar.execute(
+                "SELECT SUM(CASE WHEN status='review' THEN 1 ELSE 0 END), "
+                "  SUM(CASE WHEN status='unavailable' THEN 1 ELSE 0 END) "
+                "FROM site_company_daily_dedup").fetchone()
+            print("[refresh] dedup: %d (symbol,date) rows, %d review, "
+                  "%d unavailable in %.1fs"
+                  % (n_rows, n_review or 0, n_unavail or 0,
+                     time.time() - t8), flush=True)
+            ownership_resolver_ok = True
+        finally:
+            sidecar.execute("DETACH DATABASE live")
+            for _tmp in ("tmp_dedup_totals", "tmp_dedup_raw",
+                         "tmp_dedup_quant", "tmp_dedup_twins",
+                         "tmp_dedup_final", "tmp_dedup_holders",
+                         "tmp_dedup_unres"):
+                sidecar.execute("DROP TABLE IF EXISTS " + _tmp)
     except Exception as e:
         print("[refresh] dedup skipped: %r" % (e,), flush=True)
-    # 9. Enrich site_watch with the deduped latest snapshot, the latest
-    #    price, and the market value. Runs after step 8 so the dedup
-    #    table exists. The price comes from trading_days (latest closing
-    #    price): the price column of shareholder_holdings is NULL on the
-    #    latest date for 573 of 608 symbols on the real DB, so using it
-    #    left market_value NULL almost everywhere. The total-holder-count
-    #    fallback: the pipeline
-    #    often leaves company_daily.total_shareholder_count NULL; then
-    #    the deduped disclosed count is shown as a lower bound ("at least
-    #    N major holders") with a note, instead of "نامشخص (NULL)".
+    ownership_watch_enrich_ok = False
+    # 9. Enrich site_watch with the identity-resolved latest snapshot,
+    #    the latest price, and the market value. Runs after step 8 so the
+    #    resolved table exists. The price comes from trading_days (latest
+    #    closing price): the price column of shareholder_holdings is NULL
+    #    on the latest date for 573 of 608 symbols on the real DB, so
+    #    using it left market_value NULL almost everywhere. The
+    #    total-holder-count fallback: the pipeline often leaves
+    #    company_daily.total_shareholder_count NULL; then the resolved
+    #    disclosed count is shown as a lower bound ("at least N major
+    #    holders") with a note, instead of "نامشخص (NULL)".
     try:
         t9 = time.time()
         latest_price = {}
@@ -1220,7 +1384,8 @@ def refresh_summaries(live, sidecar):
                 "  total_shareholder_count, disclosed_shareholder_count, "
                 "  disclosed_ownership_percent_sum FROM site_watch").fetchall():
             d = sidecar.execute(
-                "SELECT deduped_count, deduped_pct FROM "
+                "SELECT resolved_count, resolved_pct, unresolved_count, "
+                "  status, status_note FROM "
                 "  site_company_daily_dedup WHERE ins_code=? AND date=?",
                 (w["ins_code"], w["latest_date"])).fetchone()
             price, pdate = latest_price.get(w["ins_code"], (None, None))
@@ -1230,19 +1395,24 @@ def refresh_summaries(live, sidecar):
             total_n = w["total_shareholder_count"]
             note = None
             if total_n is None and d is not None:
-                total_n = d["deduped_count"]
+                total_n = d["resolved_count"]
                 note = ("تعداد کل سهام‌داران در داده ثبت نشده؛ این عدد "
                         "تعداد سهام‌داران عمدهٔ یک‌تا‌شده است (حداقل).")
             updates.append((
-                d["deduped_count"] if d else w["disclosed_shareholder_count"],
-                d["deduped_pct"] if d else w["disclosed_ownership_percent_sum"],
+                d["resolved_count"] if d else None,
+                d["resolved_pct"] if d else None,
+                d["unresolved_count"] if d else 0,
+                d["status"] if d else None,
+                d["status_note"] if d else None,
                 w["disclosed_ownership_percent_sum"],
                 price, _norm_date(pdate) if pdate else None, mv,
                 total_n, note, w["ins_code"]))
         with sidecar:
             sidecar.executemany(
-                "UPDATE site_watch SET deduped_shareholder_count=?, "
-                "  deduped_ownership_percent_sum=?, "
+                "UPDATE site_watch SET resolved_shareholder_count=?, "
+                "  resolved_ownership_percent_sum=?, "
+                "  resolved_unresolved_count=?, resolved_status=?, "
+                "  resolved_status_note=?, "
                 "  raw_ownership_percent_sum=?, latest_price=?, "
                 "  latest_price_date=?, market_value=?, "
                 "  total_shareholder_count=?, "
@@ -1250,6 +1420,7 @@ def refresh_summaries(live, sidecar):
                 updates)
         print("[refresh] watch enriched: %d symbols in %.1fs"
               % (len(updates), time.time() - t9), flush=True)
+        ownership_watch_enrich_ok = True
     except Exception as e:
         print("[refresh] watch enrich skipped: %r" % (e,), flush=True)
     # Sidecar layout version, so the next start forces a rebuild when the
@@ -1258,6 +1429,22 @@ def refresh_summaries(live, sidecar):
         sidecar.execute(
             "INSERT OR REPLACE INTO site_meta (key, value) "
             "VALUES ('sidecar_version', ?)", (str(SIDECAR_VERSION),))
+    # A failed ownership build must never be marked ready or accepted by
+    # the unchanged-fingerprint shortcut. The numeric sidecar version stays
+    # 7 during this isolated port; this marker distinguishes the new layout.
+    if not ownership_resolver_ok or not ownership_watch_enrich_ok:
+        with sidecar:
+            sidecar.execute(
+                "DELETE FROM site_meta WHERE key='ownership_resolver_schema'")
+            sidecar.execute(
+                "DELETE FROM site_meta WHERE key='last_refresh'")
+        raise RuntimeError(
+            "ownership resolver or watch enrichment failed; sidecar remains not-ready")
+    with sidecar:
+        sidecar.execute(
+            "INSERT OR REPLACE INTO site_meta (key, value) "
+            "VALUES ('ownership_resolver_schema', ?)",
+            ("resolved-v1-source-exclusions",))
     # Completion marker, written ONLY after every table and panel is built.
     # require_ready() uses it, so the API answers 503 (not partial data)
     # until the first full refresh has finished.
@@ -1360,10 +1547,12 @@ class SiteApi:
                 if fingerprint is not None:
                     have = self.meta(sc, "db_fingerprint")
                     version = self.meta(sc, "sidecar_version")
+                    ownership_schema = self.meta(sc, "ownership_resolver_schema")
                     n_watch = sc.execute(
                         "SELECT COUNT(*) FROM site_watch").fetchone()[0]
                     if have == fingerprint and n_watch > 0 and \
-                            version == str(SIDECAR_VERSION):
+                            version == str(SIDECAR_VERSION) and \
+                            ownership_schema == "resolved-v1-source-exclusions":
                         print("[refresh] live DB unchanged since last build; "
                               "summaries are current, skipping rebuild.",
                               flush=True)
@@ -1473,15 +1662,13 @@ class SiteApi:
                 "symbol": "symbol",
                 "total_shares": "total_company_shares",
                 "disclosed_count":
-                    "COALESCE(deduped_shareholder_count, "
-                    "disclosed_shareholder_count)",
+                    "resolved_shareholder_count",
                 "disclosed_pct":
-                    "COALESCE(deduped_ownership_percent_sum, "
-                    "disclosed_ownership_percent_sum)",
+                    "resolved_ownership_percent_sum",
                 "latest_date": "latest_date",
                 "market_value": "market_value",
             }
-            col = sort_map.get(sort_by, "disclosed_ownership_percent_sum")
+            col = sort_map.get(sort_by, "resolved_ownership_percent_sum")
             direction = "DESC" if sort_dir != "ASC" else "ASC"
             where = []
             args = []
@@ -1499,7 +1686,9 @@ class SiteApi:
             rows = sc.execute(
                 "SELECT symbol, company_name, market, total_company_shares, "
                 "  disclosed_shareholder_count, disclosed_ownership_percent_sum, "
-                "  deduped_shareholder_count, deduped_ownership_percent_sum, "
+                "  resolved_shareholder_count, resolved_ownership_percent_sum, "
+                "  resolved_unresolved_count, resolved_status, "
+                "  resolved_status_note, "
                 "  raw_ownership_percent_sum, latest_price, latest_price_date, "
                 "  market_value, total_shareholder_count, "
                 "  latest_date_jalali FROM site_watch " + clause +
@@ -1552,8 +1741,11 @@ class SiteApi:
         try:
             w = self.resolve_symbol(sc, symbol)
             dedup = {r["date"]: dict(r) for r in sc.execute(
-                "SELECT date, deduped_pct, deduped_shares, deduped_count, "
-                "  raw_pct, raw_count FROM site_company_daily_dedup "
+                "SELECT date, resolved_pct, resolved_shares, "
+                "  resolved_count, raw_pct, raw_count, raw_shares, "
+                "  unquantified_count, unresolved_count, unresolved_shares, "
+                "  total_shares, status, status_note "
+                "FROM site_company_daily_dedup "
                 "WHERE ins_code=?", (w["ins_code"],)).fetchall()}
         finally:
             sc.close()
@@ -1565,29 +1757,40 @@ class SiteApi:
             daily = self._company_daily(live, w["ins_code"])
         finally:
             live.close()
-        # The history chart and table show the DEDUPED series: the pipeline
-        # stores the same holder under several id schemes, so the raw
-        # company_daily sum can exceed 100%. The raw values ride along
-        # for the tooltip, so the correction is visible, not silent.
+        # The history chart and table show the IDENTITY-RESOLVED series:
+        # the pipeline stores the same holder under several id schemes,
+        # so the raw company_daily sum can exceed 100%. The raw values
+        # ride along for the tooltip, so the correction is visible, not
+        # silent. Days whose identity could not be fully reconciled carry
+        # status 'review' (or 'unavailable' when no same-date total
+        # exists) with an explanatory note; the percentage shown is the
+        # resolved total and is never clamped.
         history = []
         for r in daily:
             d = dedup.get(_norm_date(r["date"]))
             history.append({
                 "date_jalali": gregorian_yyyymmdd_to_jalali(r["date"]),
                 "disclosed_shareholder_count":
-                    d["deduped_count"] if d else
-                    r["disclosed_shareholder_count"],
+                    d["resolved_count"] if d else None,
                 "disclosed_ownership_percent_sum":
-                    d["deduped_pct"] if d else
-                    r["disclosed_ownership_percent_sum"],
+                    d["resolved_pct"] if d else None,
                 "raw_ownership_percent_sum":
                     d["raw_pct"] if d else
                     r["disclosed_ownership_percent_sum"],
                 "raw_shareholder_count":
                     d["raw_count"] if d else
                     r["disclosed_shareholder_count"],
-                "deduped_shares": d["deduped_shares"] if d else None,
-                "deduped": d is not None,
+                "resolved_shares": d["resolved_shares"] if d else None,
+                "resolved": d is not None,
+                "unquantified_count":
+                    d["unquantified_count"] if d else None,
+                "unresolved_count":
+                    d["unresolved_count"] if d else None,
+                "unresolved_shares":
+                    d["unresolved_shares"] if d else None,
+                "total_shares": d["total_shares"] if d else None,
+                "status": d["status"] if d else None,
+                "status_note": d["status_note"] if d else None,
             })
         return {
             "instrument": {
@@ -1604,21 +1807,20 @@ class SiteApi:
             "latest_snapshot": {
                 "total_company_shares": w["total_company_shares"],
                 "disclosed_shareholder_count":
-                    w["deduped_shareholder_count"]
-                    if w["deduped_shareholder_count"] is not None
-                    else w["disclosed_shareholder_count"],
+                    w["resolved_shareholder_count"],
                 "raw_disclosed_shareholder_count":
                     w["disclosed_shareholder_count"],
                 "total_shareholder_count": w["total_shareholder_count"],
                 "total_shareholder_count_note": w["total_shareholder_count_note"],
                 "disclosed_ownership_percent_sum":
-                    w["deduped_ownership_percent_sum"]
-                    if w["deduped_ownership_percent_sum"] is not None
-                    else w["disclosed_ownership_percent_sum"],
+                    w["resolved_ownership_percent_sum"],
                 "raw_ownership_percent_sum":
                     w["raw_ownership_percent_sum"]
                     if w["raw_ownership_percent_sum"] is not None
                     else w["disclosed_ownership_percent_sum"],
+                "unresolved_count": w["resolved_unresolved_count"],
+                "status": w["resolved_status"],
+                "status_note": w["resolved_status_note"],
                 "data_completeness": w["data_completeness"],
                 "latest_price": w["latest_price"],
                 "latest_price_date": w["latest_price_date"],
@@ -1647,6 +1849,10 @@ class SiteApi:
         order = ("ABS(h.shares_change) DESC" if sort_by == "change"
                  else "h.shares DESC")
         live = self.live()
+        # All rows for the date (no LIMIT here): the resolved groups
+        # below must cover every holder on this date, or their totals
+        # would undercount. Per-date row counts are small (the latest
+        # snapshot has ~5.5k rows across all 608 symbols).
         try:
             exclusion_clause = (
                 " AND NOT EXISTS ("
@@ -1661,6 +1867,7 @@ class SiteApi:
             rows = live.execute(
                 "SELECT h.id_scheme AS id_scheme, h.shareholder_id AS shareholder_id, "
                 "  s.name AS shareholder_name, "
+                "  COALESCE(s.name_normalized, s.name, '') AS name_key, "
                 "  s.shareholder_type AS shareholder_type, "
                 "  h.shares AS shares, h.ownership_percent AS ownership_percent_reported, "
                 "  h.ownership_percent_calc AS ownership_percent_calculated, "
@@ -1673,69 +1880,286 @@ class SiteApi:
                 "  ON s.id_scheme = h.id_scheme "
                 " AND s.shareholder_id = h.shareholder_id "
                 "WHERE h.ins_code=? AND h.date=? " + exclusion_clause +
-                " ORDER BY %s LIMIT ?" % order,
-                (w["ins_code"], date_g, limit)).fetchall()
+                " ORDER BY %s" % order,
+                (w["ins_code"], date_g)).fetchall()
+            groups = self._resolve_date_rows(
+                live, w["ins_code"], date_g, [dict(r) for r in rows])
         finally:
             live.close()
         out = []
-        for r in rows:
+        for r in rows[:limit]:
             d = dict(r)
             d["shareholder_name"] = d["shareholder_name"] or "نامشخص"
             out.append(d)
-        return {"total": total, "rows": out, "date_jalali": date_jalali}
+        resolved_shares = sum(g["shares"] or 0 for g in groups)
+        # resolved_shareholder_count counts QUANTIFIED holders only, so
+        # it agrees with the precomputed daily table (step 8) and with
+        # market-watch / stock-detail; holders without a share count are
+        # reported separately and never silently dropped.
+        quantified = [g for g in groups if g["shares"] is not None]
+        resolved_pct = None
+        total_shares = groups[0]["total_shares"] if groups else None
+        if total_shares:
+            resolved_pct = round(resolved_shares * 100.0 / total_shares, 6)
+        unresolved_n = sum(1 for g in groups if g["unresolved"])
+        if total_shares is None or total_shares <= 0:
+            status = "unavailable"
+            note = ("کل سهام شرکت برای این تاریخ ثبت نشده؛ درصد "
+                    "محاسبه نشد.")
+        elif unresolved_n:
+            status = "review"
+            note = ("رکوردهای تکراری حل‌نشده با سهام و نام یکسان وجود "
+                    "دارد؛ جمع ممکن است مضاعف باشد.")
+        elif resolved_pct is not None and resolved_pct > 100:
+            # A resolved total over 100% is never silently 'ok': the
+            # records are distinct by every rule we have, yet they sum
+            # past the issued shares, so the day needs reconciliation.
+            status = "review"
+            note = ("جمع مالکیت حل‌شده بیش از ۱۰۰٪ است؛ "
+                    "نیاز به بازبینی دارد.")
+        else:
+            status = "ok"
+            note = None
+        return {"total": total, "rows": out, "date_jalali": date_jalali,
+                "groups": groups,
+                "resolved_shareholder_count": len(quantified),
+                "unquantified_count": len(groups) - len(quantified),
+                "resolved_shares": resolved_shares,
+                "resolved_ownership_percent_sum": resolved_pct,
+                "unresolved_count": unresolved_n,
+                "status": status, "status_note": note}
+
+    def _resolve_date_rows(self, live, ins_code, date_g, rows):
+        """Group one (ins_code, date)'s holdings rows into resolved
+        holders. Same rules as refresh step 8, applied to one day's rows
+        in Python: (1) the pipeline's xref canonical (verified /
+        inferred only); (2) provable-majority twins among the unlinked
+        rows -- same (date, shares, registry name), exactly one candidate
+        on each side, shares a strict majority of the same-date issued
+        total; (3) everything else stays a separate holder, and groups
+        sharing (shares, name) with another group are flagged
+        unresolved. Names are a consistency check only, never identity.
+        Returns groups ordered by shares desc; each group carries a
+        stable backend-supplied group_key the frontend groups by."""
+        rank = {"verified_same_source_row": 4,
+                "inferred_exact_match": 3,
+                "source_id": 2,
+                "unlinked_record_id": 1,
+                "ambiguous_not_linked": 1}
+        if not rows:
+            return []
+        pairs = {(r["id_scheme"], r["shareholder_id"]) for r in rows}
+        ph = ",".join("(?,?)" for _ in pairs)
+        args = [v for p in pairs for v in p]
+        canon = {}
+        for r in live.execute(
+                "SELECT source_scheme, source_id, canonical_scheme, "
+                "  canonical_id, status FROM shareholder_id_xref "
+                "WHERE ins_code=? AND (source_scheme, source_id) IN (%s)"
+                % ph, [ins_code] + args).fetchall():
+            if r["status"] in ("verified_same_source_row",
+                               "inferred_exact_match"):
+                canon[(r["source_scheme"], r["source_id"])] = (
+                    r["canonical_scheme"], r["canonical_id"], r["status"])
+        tot = live.execute(
+            "SELECT total_company_shares FROM company_daily "
+            "WHERE ins_code=? AND date=?", (ins_code, date_g)).fetchone()
+        total = tot["total_company_shares"] if tot else None
+        if total is None or total <= 0:
+            total = live.execute(
+                "SELECT MAX(total_company_shares) "
+                "FROM shareholder_holdings WHERE ins_code=? AND date=?",
+                (ins_code, date_g)).fetchone()[0]
+        # (1) group by canonical identity.
+        groups = {}
+        for r in rows:
+            link = canon.get((r["id_scheme"], r["shareholder_id"]))
+            key = (link[0], link[1]) if link else (
+                r["id_scheme"], r["shareholder_id"])
+            basis = None
+            if link:
+                basis = ("verified" if link[2] == "verified_same_source_row"
+                         else "inferred")
+            g = groups.get(key)
+            if g is None:
+                g = {"group_key": "%s:%s" % key, "members": [],
+                     "shares": None, "name": None, "name_key": "",
+                     "shareholder_type": None, "identity_status": None,
+                     "basis": basis or "single", "unresolved": False,
+                     "total_shares": total, "rep": None}
+                groups[key] = g
+            g["members"].append({"id_scheme": r["id_scheme"],
+                                 "shareholder_id": r["shareholder_id"]})
+            if r["shares"] is not None and (
+                    g["shares"] is None or r["shares"] > g["shares"]):
+                g["shares"] = r["shares"]
+            if (g["identity_status"] is None or
+                    rank.get(r["identity_status"], 0) >
+                    rank.get(g["identity_status"], 0)):
+                g["identity_status"] = r["identity_status"]
+                g["name"] = r["shareholder_name"]
+                g["name_key"] = r["name_key"] or ""
+                g["shareholder_type"] = r["shareholder_type"]
+                # Representative row: the best-tier member supplies the
+                # display fields (change, price, value, entry status).
+                g["rep"] = r
+            if basis and g["basis"] == "single":
+                g["basis"] = basis
+        # (2) provable-majority twins among the unlinked single-row
+        # groups: bucket the candidates by shares (not by name -- the
+        # name check runs after the exactly-one check, as in the
+        # portfolio twin rule), require exactly one ondate + one share
+        # candidate, equal registry names, strict majority of the
+        # same-date total. Twins collapse to the share_id side.
+        cands = [g for g in groups.values()
+                 if len(g["members"]) == 1 and g["shares"] is not None
+                 and g["members"][0]["id_scheme"] in (
+                     "ondate_share_id", "share_id")
+                 and g["group_key"] == "%s:%s" % (
+                     g["members"][0]["id_scheme"],
+                     g["members"][0]["shareholder_id"])]
+        by_shares = {}
+        for g in cands:
+            by_shares.setdefault(g["shares"], []).append(g)
+        merged = set()
+        for shares, lst in by_shares.items():
+            ondates = [g for g in lst
+                       if g["members"][0]["id_scheme"] == "ondate_share_id"]
+            share_ids = [g for g in lst
+                         if g["members"][0]["id_scheme"] == "share_id"]
+            if len(ondates) != 1 or len(share_ids) != 1:
+                continue
+            o, s = ondates[0], share_ids[0]
+            if o["name_key"] != s["name_key"]:
+                continue
+            if not total or shares * 2 <= total:
+                continue
+            s["members"] = s["members"] + o["members"]
+            s["basis"] = "majority_twin"
+            merged.add(o["group_key"])
+        # (3) unresolved: distinct groups sharing (shares, name).
+        by_sn = {}
+        for g in groups.values():
+            if g["group_key"] in merged:
+                continue
+            if g["shares"] is None:
+                continue
+            by_sn.setdefault((g["shares"], g["name_key"]), []).append(g)
+        for lst in by_sn.values():
+            if len(lst) > 1:
+                for g in lst:
+                    g["unresolved"] = True
+        out = []
+        for g in groups.values():
+            if g["group_key"] in merged:
+                continue
+            pct = None
+            if g["shares"] is not None and total:
+                pct = round(g["shares"] * 100.0 / total, 6)
+            rep = g["rep"]
+            out.append({
+                "group_key": g["group_key"],
+                "members": g["members"],
+                "merged_count": len(g["members"]),
+                "shareholder_name": g["name"] or "نامشخص",
+                "shareholder_type": g["shareholder_type"],
+                "shares": g["shares"],
+                "ownership_percent": pct,
+                "identity_status": g["identity_status"],
+                "basis": g["basis"],
+                "unresolved": g["unresolved"],
+                "total_shares": total,
+                # Display fields from the representative (best-tier)
+                # member row; the change/value of a merged group is
+                # that member's, and the group's pct is the same-date
+                # computed one above.
+                "shares_change": rep["shares_change"] if rep else None,
+                "price": rep["price"] if rep else None,
+                "market_value": rep["market_value"] if rep else None,
+                "valuation_status": (rep["valuation_status"]
+                                     if rep else None),
+                "entry_status": rep["entry_status"] if rep else None,
+                "ownership_percent_reported": (
+                    rep["ownership_percent_reported"] if rep else None),
+            })
+        out.sort(key=lambda g: (g["shares"] is None, -(g["shares"] or 0)))
+        return out
 
     def stock_ownership_series(self, symbol, params):
-        scheme = _q_str(params, "id_scheme").strip()
-        sh_id = _q_str(params, "shareholder_id").strip()
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
             dedup = {r["date"]: dict(r) for r in sc.execute(
-                "SELECT date, deduped_pct, deduped_shares, deduped_count, "
-                "  raw_pct FROM site_company_daily_dedup WHERE ins_code=?",
+                "SELECT date, resolved_pct, resolved_shares, "
+                "  resolved_count, raw_pct, status, status_note "
+                "FROM site_company_daily_dedup WHERE ins_code=?",
                 (w["ins_code"],)).fetchall()}
         finally:
             sc.close()
+        scheme = _q_str(params, "id_scheme").strip()
+        sh_id = _q_str(params, "shareholder_id").strip()
         live = self.live()
         try:
             daily = self._company_daily(live, w["ins_code"])
-            # Company series: the DEDUPED percent (the raw pipeline sum
-            # counts the same holder under several id schemes and can
-            # exceed 100%). The shares series is the deduped share count
-            # the major holders hold in total -- the "shareholder changes"
-            # chart: it rises when they buy, falls when they sell.
+            # Same-date issued-share totals, for recomputing ownership
+            # percentages from shares (the stored
+            # ownership_percent_calc divides historical shares by the
+            # CURRENT total, which Q1 proved wrong for pre-increase
+            # dates). company_daily is authoritative per date; the
+            # holdings rows' own total is the fallback.
+            totals = {r["date"]: r["total_company_shares"] for r in
+                      live.execute(
+                          "SELECT date, total_company_shares "
+                          "FROM company_daily WHERE ins_code=?",
+                          (w["ins_code"],)).fetchall()}
+
+            def _pct_on_date(shares, date, row_total=None):
+                total = totals.get(date)
+                if total is None or total <= 0:
+                    total = row_total
+                if shares is None or total is None or total <= 0:
+                    return None
+                return round(shares * 100.0 / total, 6)
+
+            # Company series: the IDENTITY-RESOLVED percent (the raw
+            # pipeline sum counts the same holder under several id
+            # schemes and can exceed 100%). The shares series is the
+            # resolved share count the major holders hold in total --
+            # the "shareholder changes" chart: it rises when they buy,
+            # falls when they sell.
             company_series = []
             company_shares_series = []
             for r in daily:
                 d = dedup.get(_norm_date(r["date"]))
-                pct = (d["deduped_pct"] if d else
-                       r["disclosed_ownership_percent_sum"])
+                pct = d["resolved_pct"] if d else None
                 if pct is not None:
                     company_series.append({
                         "time": fmt_gregorian_date(r["date"]), "value": pct})
-                if d and d["deduped_shares"] is not None:
+                if d and d["resolved_shares"] is not None:
                     company_shares_series.append({
                         "time": fmt_gregorian_date(r["date"]),
-                        "value": d["deduped_shares"]})
+                        "value": d["resolved_shares"]})
             holder_series = []
             ev_where = "h.change_type IN ('new','increase','decrease')"
             ev_args = [w["ins_code"]]
             if scheme and sh_id:
                 holder_series = [
                     {"time": fmt_gregorian_date(r["date"]),
-                     "value": r["ownership_percent_calc"]}
+                     "value": _pct_on_date(r["shares"], r["date"],
+                                           r["total_company_shares"])}
                     for r in live.execute(
-                        "SELECT h.date, h.ownership_percent_calc "
+                        "SELECT h.date, h.shares, h.total_company_shares "
                         "FROM shareholder_holdings h "
                         "WHERE h.ins_code=? AND h.id_scheme=? AND h.shareholder_id=? "
                         "AND NOT EXISTS ("
-                        "  SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
-                        "  WHERE x.ins_code=h.ins_code AND x.date=h.date "
-                        "    AND x.id_scheme=h.id_scheme "
-                        "    AND x.shareholder_id=h.shareholder_id) "
+                        "SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
+                        "WHERE x.ins_code=h.ins_code AND x.date=h.date "
+                        "AND x.id_scheme=h.id_scheme "
+                        "AND x.shareholder_id=h.shareholder_id) "
                         "ORDER BY h.date ASC",
                         (w["ins_code"], scheme, int(sh_id))).fetchall()
-                    if r["ownership_percent_calc"] is not None]
+                    if _pct_on_date(r["shares"], r["date"],
+                                    r["total_company_shares"]) is not None]
                 ev_where += " AND h.id_scheme=? AND h.shareholder_id=?"
                 ev_args += [scheme, int(sh_id)]
             events = []
@@ -1748,8 +2172,9 @@ class SiteApi:
             for r in live.execute(
                 "SELECT h.date AS date, h.jalali_date AS date_jalali, "
                 "  h.change_type AS change_type, h.shares_change AS shares_change, "
-                "  h.ownership_percent_calc AS ownership_percent_calculated, "
-                "  h.market_value AS market_value, h.shares AS shares, "
+                "  h.shares AS shares, "
+                "  h.total_company_shares AS total_company_shares, "
+                "  h.market_value AS market_value, "
                 "  h.price AS price, "
                 "  s.name AS shareholder_name "
                 "FROM shareholder_holdings h "
@@ -1776,7 +2201,11 @@ class SiteApi:
                     "shareholder_name": r["shareholder_name"] or "نامشخص",
                     "change_type": r["change_type"],
                     "shares_change": r["shares_change"],
-                    "ownership_percent_calculated": r["ownership_percent_calculated"],
+                    # Same-date ownership, recomputed from shares (see
+                    # _pct_on_date above); None when no same-date total
+                    # exists, instead of the stored calc value.
+                    "ownership_percent_calculated": _pct_on_date(
+                        r["shares"], r["date"], r["total_company_shares"]),
                     "value_rial": val,
                 })
         finally:
@@ -2642,6 +3071,9 @@ class SiteApi:
             for scheme, sh_id in id_pairs:
                 row = live.execute(
                     "SELECT h.*, "
+                    "  (SELECT cd.total_company_shares FROM company_daily cd "
+                    "   WHERE cd.ins_code=h.ins_code AND cd.date=h.date "
+                    "   LIMIT 1) AS same_date_total_company_shares, "
                     "  (SELECT t.p_closing FROM trading_days t "
                     "   WHERE t.ins_code = h.ins_code AND t.date <= h.date "
                     "     AND t.p_closing IS NOT NULL AND t.p_closing > 0 "
@@ -2752,11 +3184,19 @@ class SiteApi:
                 value = (h["shares"] * price
                          if h["shares"] is not None and price is not None
                          else None)
+                same_date_total = h.get("same_date_total_company_shares")
+                if same_date_total is None or same_date_total <= 0:
+                    same_date_total = h.get("total_company_shares")
+                same_date_pct = None
+                if (h["shares"] is not None and same_date_total is not None
+                        and same_date_total > 0):
+                    same_date_pct = round(
+                        h["shares"] * 100.0 / same_date_total, 6)
                 pos = {
                     "symbol": symbol,
                     "observation_date_jalali": fmt_jalali_date(h["jalali_date"]),
                     "shares": h["shares"],
-                    "ownership_percent_calculated": h["ownership_percent_calc"],
+                    "ownership_percent_calculated": same_date_pct,
                     "price": price,
                     "price_date": h.get("close_price_date") or h.get("date"),
                     "price_date_jalali": (
@@ -2878,11 +3318,9 @@ class SiteApi:
     _SCREEN_FIELDS = {
         "ownership_percent_calculated": ("h.ownership_percent_calc", "num"),
         "disclosed_shareholder_count":
-            ("COALESCE(w.deduped_shareholder_count, "
-             "w.disclosed_shareholder_count)", "num"),
+            ("w.resolved_shareholder_count", "num"),
         "disclosed_ownership_percent_sum":
-            ("COALESCE(w.deduped_ownership_percent_sum, "
-             "w.disclosed_ownership_percent_sum)", "num"),
+            ("w.resolved_ownership_percent_sum", "num"),
         "shares_change": ("h.shares_change", "num"),
         "change_type": ("h.change_type", "str"),
         "entry_status": ("h.entry_status", "str"),
@@ -2939,8 +3377,7 @@ class SiteApi:
             "  n.name AS shareholder_name, "
             "  h.ownership_percent_calc AS ownership_percent_calculated, "
             "  h.shares_change AS shares_change, "
-            "  COALESCE(w.deduped_ownership_percent_sum, "
-            "    w.disclosed_ownership_percent_sum) "
+            "  w.resolved_ownership_percent_sum "
             "    AS disclosed_ownership_percent_sum "
             "FROM site_holder_latest h "
             "JOIN site_watch w ON w.ins_code = h.ins_code "
@@ -3021,9 +3458,9 @@ class SiteApi:
                 "SELECT wl.symbol AS symbol, w.company_name AS company_name, "
                 "  w.market AS market, "
                 "  w.disclosed_shareholder_count AS disclosed_shareholder_count, "
-                "  w.deduped_shareholder_count AS deduped_shareholder_count, "
+                "  w.resolved_shareholder_count AS resolved_shareholder_count, "
                 "  w.disclosed_ownership_percent_sum AS disclosed_ownership_percent_sum, "
-                "  w.deduped_ownership_percent_sum AS deduped_ownership_percent_sum, "
+                "  w.resolved_ownership_percent_sum AS resolved_ownership_percent_sum, "
                 "  w.market_value AS market_value, "
                 "  w.latest_price AS latest_price "
                 "FROM watchlist wl LEFT JOIN site_watch w "
