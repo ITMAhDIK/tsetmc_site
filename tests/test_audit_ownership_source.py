@@ -78,6 +78,36 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(before, after)
 
+
+    def test_denominator_disagreement_and_percentage_mismatch_are_reported(self):
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                "UPDATE company_daily SET total_company_shares=90 "
+                "WHERE ins_code='X' AND date='2026-11-20'")
+        report = audit_source(self.db_path)
+        checks = report["checks"]
+        self.assertEqual(
+            checks["company_daily_vs_holdings_denominator_disagreements"]["count"],
+            1,
+        )
+        self.assertEqual(
+            checks["percentage_recalculation"]
+                  ["reported_percent_vs_same_date_shares"]["count"],
+            3,
+        )
+
+    def test_holdings_denominator_is_used_when_company_daily_total_is_absent(self):
+        with sqlite3.connect(self.db_path) as con:
+            con.execute("DELETE FROM company_daily")
+        report = audit_source(self.db_path)
+        checks = report["checks"]
+        self.assertEqual(checks["dates_without_positive_denominator"]["count"], 0)
+        self.assertEqual(
+            checks["percentage_recalculation"]
+                  ["reported_percent_vs_same_date_shares"]["count"],
+            0,
+        )
+
     def test_invalid_sample_limit_is_rejected(self):
         with self.assertRaises(ValueError):
             audit_source(self.db_path, sample_limit=0)
