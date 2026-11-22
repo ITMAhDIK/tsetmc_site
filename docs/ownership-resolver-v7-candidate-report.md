@@ -65,3 +65,18 @@ Validation state for this additional correction:
 - Source and test file are committed to this PR branch.
 - The four new tests have **not yet been executed** because the isolated local execution environment was unavailable during this review.
 - They must be run with the full project suite by the user in their own local shell before the PR is considered ready.
+
+
+## Read-only source ownership integrity audit (2026-11-22)
+
+A candidate-only diagnostic was added before making any further ownership-calculation changes:
+
+- `tools/audit_ownership_source.py` opens the raw holdings DB in SQLite read-only mode and enables `PRAGMA query_only=ON`.
+- It reports duplicate source keys, conflicting same-date issued-share totals, disagreement between `company_daily` and holdings denominators, dates without a positive denominator, raw share totals above 100% before identity resolution, source/pipeline percentage differences against the same-date denominator, duplicate/multi-target xref keys, and conflicting quantities inside verified/inferred canonical groups.
+- The denominator comparison follows the resolver's intended precedence: positive `company_daily.total_company_shares`, otherwise positive holdings `total_company_shares`.
+- It writes only an optional JSON report file. It does not write either database, open the site Sidecar, contact TSETMC, run the server, or change the frontend.
+- Added synthetic SQLite tests in `tests/test_audit_ownership_source.py` for duplicate keys, raw totals above 100%, canonical quantity conflicts, percentage mismatches, denominator fallback, and read-only behavior.
+
+**Local execution is pending.** Run the commands in `docs/ownership-integrity-audit.md` on the workstation, then share the JSON output. Do not modify the resolver based only on these static findings. The audit's raw totals are diagnostic and do not represent final identity-resolved ownership.
+
+This addition does not change the Sidecar schema/version and does not authorize a Sidecar rebuild, canary, production DB write, deployment, or merge. PR #2 remains Draft.
