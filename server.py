@@ -2023,34 +2023,42 @@ class SiteApi:
                      "shares": None, "name": None, "name_key": "",
                      "shareholder_type": None, "identity_status": None,
                      "basis": basis or "single", "unresolved": False,
-                     "total_shares": total, "rep": None}
+                     "total_shares": total, "rep": None,
+                     "rep_key": None}
                 groups[key] = g
             g["members"].append({"id_scheme": r["id_scheme"],
                                  "shareholder_id": r["shareholder_id"]})
             if r["shares"] is not None and (
                     g["shares"] is None or r["shares"] > g["shares"]):
                 g["shares"] = r["shares"]
-            # Representative row: the best-tier member supplies the
-            # display fields (change, price, value, entry status).
-            # A rank tie is broken by the largest name_key -- the same
-            # rule the step-8 SQL uses (MAX(nm) among the top-ranked
-            # members) -- so both paths name a canonical group
-            # identically (D1 fix). The old code kept the first row on
-            # a tie, which depended on the row order of the query.
-            if g["identity_status"] is None:
+            # Representative row: the best identity tier wins. Within
+            # that tier, name_key is the SQL-compatible primary tie-break
+            # (D1); a stable tuple of the remaining display fields resolves
+            # equal-name ties so endpoint output never depends on SQL row
+            # order. This final tie-break is deterministic, not evidence
+            # that conflicting source values are correct.
+            rep_fields = (
+                "shareholder_name", "shareholder_type", "shares_change",
+                "price", "market_value", "valuation_status", "entry_status",
+                "ownership_percent_reported", "ownership_percent_calculated")
+            rep_key = ((r["name_key"] or ""),) + tuple(
+                "" if r.get(field) is None else str(r.get(field))
+                for field in rep_fields)
+            if g["rep"] is None:
                 take_rep = True
             else:
                 r_rank = rank.get(r["identity_status"], 0)
                 g_rank = rank.get(g["identity_status"], 0)
                 take_rep = (r_rank > g_rank or
                             (r_rank == g_rank and
-                             (r["name_key"] or "") > g["name_key"]))
+                             rep_key > g["rep_key"]))
             if take_rep:
                 g["identity_status"] = r["identity_status"]
                 g["name"] = r["shareholder_name"]
                 g["name_key"] = r["name_key"] or ""
                 g["shareholder_type"] = r["shareholder_type"]
                 g["rep"] = r
+                g["rep_key"] = rep_key
             if basis and g["basis"] == "single":
                 g["basis"] = basis
         # (2) provable-majority twins among the unlinked single-row
