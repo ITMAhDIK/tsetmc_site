@@ -36,3 +36,17 @@
 - No merge, rebase, deploy, canary, production DB open/write, or sidecar rebuild has been performed.
 - Do not connect this candidate to the production database or Sidecar. A legacy Sidecar requires rebuild due to the resolver schema marker.
 - Any rebuild/canary requires a separate impact audit, backup, and explicit approval.
+
+## Additional readiness audit finding (2026-11-22)
+
+A static review found that `require_ready()` originally checked only the legacy `last_refresh` marker. If a rebuild failed before the resolver's own failure guard (for example, during source-exclusion collection), an old marker could survive and permit API handlers to treat a stale/partial sidecar as ready.
+
+Correction committed to this candidate:
+- `refresh_summaries()` now deletes both `last_refresh` and `ownership_resolver_schema` before the first rebuild operation.
+- `require_ready()` now requires both a completion timestamp and the exact `resolved-v1-source-exclusions` marker.
+- Added `tests/test_ownership_resolver_readiness.py` with four regression tests covering valid readiness, legacy/mismatched schema rejection, and early rebuild failure.
+
+Validation state for this additional correction:
+- Source and test file are committed to this PR branch.
+- The four new tests have **not yet been executed** because the isolated local execution environment was unavailable during this review.
+- They must be run with the full project suite by the user in their own local shell before the PR is considered ready.
