@@ -1,0 +1,38 @@
+# v7 ownership resolver candidate — implementation record
+
+## Branches
+- Snapshot base: `snapshot/v7-recorded-2026-11-21`.
+- Candidate: `candidate/v7-ownership-resolver-2026-11-22`.
+- Review-only draft PR targets the snapshot branch, not `main`.
+- PR #1 is intentionally unchanged.
+
+## Provenance and limitations
+- Input snapshot: v7 captured 2026-11-21 20:45 from `D:\\tsetmc_site`.
+- `server.py` source SHA-256: `3ad3e3386706d06a89c571f9cd2ac5be019c4f8cdc3af362e07ec038ccde992b`.
+- HTML source SHA-256: `cf5fcf9d9b9ff13a00cd120d8a723819fb05eda3830151f98c6287d74313f3f1`.
+- Live-path hashes have not been re-verified because the tunnel is unavailable.
+- The snapshot was normalized from CRLF to LF for Git storage.
+- Candidate package path `current/ai_studio_code.html` was mapped to repository-root `ai_studio_code.html`; that is the HTML path present on the repository.
+
+## Implemented
+- `open_sidecar_db` uses `uri=True` for read-only URI attachment compatibility.
+- v5 date-scoped ownership resolver and `resolved_*` output fields are ported onto v7.
+- v7 source-proven duplicate exclusions (`site_excluded_holder_rows`) are preserved and excluded before resolver grouping.
+- Same-date denominator is required; unavailable/invalid denominator does not fall back to raw or stale percentages.
+- Out-of-range totals remain review-required; values are not silently clamped.
+- Frontend consumes resolved groups and does not merge holders by name.
+- `SIDECAR_VERSION` remains 7. `ownership_resolver_schema=resolved-v1-source-exclusions` forces rebuild when absent; failed resolver/enrichment must not leave a successful `last_refresh` marker.
+
+## Validation status reported for this candidate
+- `py_compile`: pass.
+- Three focused `unittest` checks: pass.
+- SQL stage-8 flow on synthetic SQLite fixtures: pass.
+- `uri=True` ATTACH smoke test: pass; this is not Windows validation.
+- JSX/JavaScript parser diagnostics: zero.
+- Full project test suite, Windows validation, full-database performance, live hash verification, canary, and before/after checks for احیا / احیا۳ remain pending.
+- Focused tests were run in the candidate preparation environment; they are not added as a standalone test suite in this GitHub PR.
+
+## Operational restrictions
+- No merge, rebase, deploy, canary, production DB open/write, or sidecar rebuild has been performed.
+- Do not connect this candidate to the production database or Sidecar. A legacy Sidecar requires rebuild due to the resolver schema marker.
+- Any rebuild/canary requires a separate impact audit, backup, and explicit approval.
