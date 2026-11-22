@@ -62,27 +62,72 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         return result[0]
 
+    def assert_same_representative(self, first, second, expected_field,
+                                   expected_value):
+        forward = self.resolve([first, second])
+        reverse = self.resolve([second, first])
+        self.assertEqual(
+            tuple(forward.get(k) for k in (
+                "shareholder_name", "shareholder_type", "shares_change",
+                "price", "market_value", "valuation_status", "entry_status",
+                "ownership_percent_reported",
+            )),
+            tuple(reverse.get(k) for k in (
+                "shareholder_name", "shareholder_type", "shares_change",
+                "price", "market_value", "valuation_status", "entry_status",
+                "ownership_percent_reported",
+            )),
+        )
+        self.assertEqual(forward[expected_field], expected_value)
+        self.assertEqual(reverse[expected_field], expected_value)
+        self.assertEqual(forward["merged_count"], 2)
+        self.assertEqual(reverse["merged_count"], 2)
+        self.assertEqual(forward["ownership_percent"], 25.0)
+        self.assertEqual(reverse["ownership_percent"], 25.0)
+
     def test_equal_rank_and_name_choose_same_representative_in_any_row_order(self):
         first = self.row("holder_id", 11, 2, 100, 2500000)
         second = self.row("share_id", 22, 3, 200, 5000000)
 
+        self.assert_same_representative(
+            first, second, "shares_change", 3
+        )
         forward = self.resolve([first, second])
-        reverse = self.resolve([second, first])
-
-        fields = (
-            "shareholder_name", "shareholder_type", "shares_change",
-            "price", "market_value", "valuation_status", "entry_status",
-            "ownership_percent_reported",
-        )
-        self.assertEqual(
-            tuple(forward[field] for field in fields),
-            tuple(reverse[field] for field in fields),
-        )
-        self.assertEqual(forward["shares_change"], 3)
         self.assertEqual(forward["price"], 200)
         self.assertEqual(forward["market_value"], 5000000)
-        self.assertEqual(forward["merged_count"], 2)
-        self.assertEqual(forward["ownership_percent"], 25.0)
+
+    def test_numeric_strings_and_multi_digit_values_use_numeric_order(self):
+        first = self.row("holder_id", 11, 9, 100, 2500000)
+        second = self.row("share_id", 22, "10", 100, 2500000)
+
+        self.assert_same_representative(
+            first, second, "shares_change", "10"
+        )
+
+    def test_negative_and_decimal_values_use_numeric_order(self):
+        negative_low = self.row("holder_id", 11, -10, 100, 2500000)
+        negative_high = self.row("share_id", 22, -2, 100, 2500000)
+        self.assert_same_representative(
+            negative_low, negative_high, "shares_change", -2
+        )
+
+        decimal_low = self.row("holder_id", 11, 2, 100, 2500000)
+        decimal_high = self.row("share_id", 22, 2, 100, 2500000)
+        decimal_low["ownership_percent_reported"] = 1.2
+        decimal_high["ownership_percent_reported"] = "1.25"
+        self.assert_same_representative(
+            decimal_low, decimal_high, "ownership_percent_reported", "1.25"
+        )
+
+    def test_none_and_empty_text_have_stable_distinct_ordering(self):
+        missing = self.row("holder_id", 11, 2, 100, 2500000)
+        empty = self.row("share_id", 22, 2, 100, 2500000)
+        missing["shareholder_type"] = None
+        empty["shareholder_type"] = ""
+
+        self.assert_same_representative(
+            missing, empty, "shareholder_type", ""
+        )
 
 
 if __name__ == "__main__":
