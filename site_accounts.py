@@ -460,12 +460,15 @@ class AccountService:
         username = self._validate_username(body.get("username"))
         password = self._validate_password(body.get("password"))
         display_name = str(body.get("display_name") or username).strip()[:80]
+        if body.get("email"):
+            raise AccountError(400, "برای اتصال Gmail از ورود با Google استفاده کنید تا مالکیت ایمیل تأیید شود.")
+        if body.get("phone"):
+            raise AccountError(400, "برای اتصال شماره همراه از ورود پیامکی و کد یک‌بارمصرف استفاده کنید.")
         con = self._connect()
         try:
             with con:
                 return self._create_user(
                     con, username, password, display_name,
-                    email=body.get("email"), phone=body.get("phone"),
                     referral_code=body.get("referral_code"))
         finally:
             con.close()
@@ -558,7 +561,8 @@ class AccountService:
             row = con.execute(
                 "SELECT id,password_hash,is_active FROM site_users "
                 "WHERE username=? COLLATE NOCASE OR public_id=? COLLATE NOCASE "
-                "OR email=? COLLATE NOCASE OR phone=?",
+                "OR (email=? COLLATE NOCASE AND email_verified=1) "
+                "OR (phone=? AND phone_verified=1)",
                 (identifier, identifier, identifier.lower(), phone_identifier)).fetchone()
             if not row or not row["is_active"] or not self._verify_password(password, row["password_hash"]):
                 self._login_failure(identifier)
@@ -781,12 +785,15 @@ class AccountService:
                     user_id = int(linked["user_id"])
                 else:
                     existing = con.execute(
-                        "SELECT id FROM site_users WHERE email=? COLLATE NOCASE",
+                        "SELECT id,email_verified FROM site_users WHERE email=? COLLATE NOCASE",
                         (email,)).fetchone()
+                    if existing and not existing["email_verified"]:
+                        raise AccountError(
+                            409,
+                            "این ایمیل قبلاً بدون تأیید به حساب دیگری متصل شده است؛ ابتدا با شناسه همان حساب وارد شوید و با پشتیبانی تماس بگیرید.",
+                        )
                     if existing:
                         user_id = int(existing["id"])
-                        con.execute("UPDATE site_users SET email_verified=1 WHERE id=?",
-                                    (user_id,))
                     else:
                         base = re.sub(r"[^a-z0-9_.-]", "", email.split("@")[0].lower())[:20]
                         username = (base or "google") + "_" + secrets.token_hex(3)
