@@ -3701,6 +3701,7 @@ class SiteApi:
         offset = _q_int(params, "offset", 0, 0, 100000000)
         live, sc = self.live(), self.sidecar()
         try:
+            self.require_ready(sc)
             ids = self._linked_identity_ids(live, sc, scheme, sh_id)
             total, page_rows = 0, []
             for row in self._iter_portfolio_history_observations(
@@ -3777,6 +3778,7 @@ class SiteApi:
         live = self.live()
         sc = self.sidecar()
         try:
+            self.require_ready(sc)
             reg = live.execute(
                 "SELECT name, identity_status, shareholder_type, "
                 "  first_seen_date, last_seen_date FROM shareholders "
