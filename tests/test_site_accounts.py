@@ -196,3 +196,62 @@ def test_account_route_matcher_is_scoped():
     assert AccountService.handles("/api/v1/market/sector-config")
     assert not AccountService.handles("/api/v1/market/overview")
     assert not AccountService.handles("/api/v1/stocks/ABC/prices")
+
+
+def test_phone_login_accepts_local_09xx_format(service):
+    user_id = service.register({
+        "username": "phone_login_01",
+        "password": "phone-login-password-123",
+        "phone": "09121234567",
+    })
+    assert service.login({
+        "identifier": "09121234567",
+        "password": "phone-login-password-123",
+    }) == user_id
+    assert service.login({
+        "identifier": "+989121234567",
+        "password": "phone-login-password-123",
+    }) == user_id
+
+
+def test_google_oauth_state_keeps_referral_code(monkeypatch, service):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("GOOGLE_REDIRECT_URI", "https://example.test/api/v1/auth/google/callback")
+    service.google_start("https://example.test", "REFCODE1")
+    con = service._connect()
+    try:
+        row = con.execute(
+            "SELECT referral_code FROM site_oauth_states ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        assert row["referral_code"] == "REFCODE1"
+    finally:
+        con.close()
+
+
+def test_temporary_staff_password_must_be_changed_before_private_endpoints(service):
+    staff = service.create_staff({
+        "username": "temp_staff_01",
+        "temporary_password": "temporary-password-123",
+        "role": "support",
+    })
+    con = service._connect()
+    try:
+        row = con.execute("SELECT id FROM site_users WHERE username=?",
+                          ("temp_staff_01",)).fetchone()
+        user = service._safe_user(con, row["id"])
+    finally:
+        con.close()
+
+    with pytest.raises(AccountError) as exc:
+        service.dispatch("GET", "/api/v1/wallet", {}, {}, user, "http://localhost")
+    assert exc.value.status == 403
+
+    service.dispatch("POST", "/api/v1/auth/change-password", {}, {
+        "new_password": "new-temporary-password-456",
+    }, user, "http://localhost")
+    updated = active_user(service, user["id"])
+    assert updated["must_change_password"] == 0
+    assert service.login({
+        "identifier": "temp_staff_01",
+        "password": "new-temporary-password-456",
+    }) == user["id"]
