@@ -1,35 +1,50 @@
-# Membership and privacy deployment guide
+# راهنمای استقرار ره‌نگار بورس، حساب‌ها و انتشار داده
 
-This branch keeps account and billing state separate from both the read-only TSETMC source database and the analytics sidecar.
+## جهت محصول
 
-## Persistent files
+رابط اصلی محصول همان تجربهٔ کامل محلی در `ai_studio_code.html` است؛ نه داشبورد سادهٔ Pages. تمام صفحه‌های تحلیل نماد، تحلیل سهام‌داران، بازسازی پرتفوی، فیلتر پیشرفته و دیده‌بان حفظ شده‌اند و صفحات حساب، عضویت، مدیریت و گروه‌بندی رسمی بازار به آن افزوده شده‌اند.
 
-Keep the following files on a persistent server volume and include them in the normal backup plan:
+داده‌های بازار و مالکیت که از منابع بورس جمع‌آوری شده‌اند، عمداً از طریق API عمومی سایت قابل مشاهده‌اند. این انتخاب محصول است، نه یک تنظیم موقت. با این حال، فایل فیزیکی دیتابیس، فایل‌های اکسل، فایل‌های پیکربندی و اطلاعات محرمانهٔ حساب‌های کاربران مستقیماً از مسیر استاتیک قابل دانلود نیستند.
 
-- `site_accounts.sqlite` — users, password hashes, sessions, subscriptions, orders, wallet ledger, referrals and tickets.
-- `site_data.sqlite` — existing analytics sidecar (managed by the existing application).
+## فایل‌های پایدار و مرز داده
 
-Do not put either SQLite file, the source holdings database, instrument registries, raw exports or workbook directories under a public static path. The HTTP handler now serves only an explicit allow-list of frontend assets. The source database remains read-only.
+روی حجم ذخیره‌سازی دائمی سرور نگه دارید و در نسخهٔ پشتیبان قرار دهید:
 
-## Required environment variables
+- `site_accounts.sqlite` — حساب‌ها، هش گذرواژه‌ها، نشست‌ها، اشتراک‌ها، سفارش‌ها، کیف پول، پاداش دعوت، تیکت‌ها، دیده‌بان‌های شخصی و فیلترهای ذخیره‌شدهٔ هر کاربر.
+- `site_data.sqlite` — داده‌های تحلیلی و خلاصه‌سازی‌شدهٔ فعلی.
+- دیتابیس اصلی TSETMC و پوشهٔ خروجی Excel — منبع دادهٔ بازار و سهام‌داری؛ فقط خواندنی برای API عمومی.
 
-Set these on the server's service manager or protected environment file, not in source control:
+**دادهٔ بازار عمومی است:** جستجوی سهام‌دار، سوابق مشاهده، پرتفوی، سهام‌داران هر نماد، سری مالکیت، اطلاعات کیفیت داده، فیلتر عمومی و خروجی CSV از API سایت در دسترس بازدیدکنندگان هستند.
 
-| Variable | Purpose |
+**دادهٔ خصوصی حساب عمومی نیست:** گذرواژه، توکن نشست، گردش کیف پول، سفارش‌ها، اطلاعات تماس تأییدشده، مکاتبات تیکت و تنظیمات شخصی فقط از طریق نشست معتبر و کنترل دسترسی حساب قابل خواندن‌اند. دیده‌بان و فیلترهای ذخیره‌شده نیز در دیتابیس حساب‌ها به تفکیک شناسهٔ کاربر ذخیره می‌شوند.
+
+Handler فقط فایل‌های رابط کاربری را از فهرست مجاز سرو می‌کند. فایل‌های SQLite، اکسل، فایل پیکربندی رجیستری و سورس‌کد به‌عنوان فایل عمومی ارائه نمی‌شوند.
+
+## استقرار واقعی
+
+GitHub Pages فقط فایل‌های ایستای HTML/CSS/JavaScript را میزبانی می‌کند. اجرای Python، اتصال به دیتابیس محلی، نشست کاربری، پیامک، OAuth و پرداخت روی Pages اجرا نمی‌شوند.
+
+برای نسخهٔ واقعی باید این مخزن روی یک میزبان Python (یا VPS) اجرا شود؛ دیتابیس منبع TSETMC و sidecar روی همان سرور یا volume امن در دسترس باشند؛ و reverse proxy HTTPS به `server.py` هدایت کند. Pages فعلی فقط پیش‌نمایش ایستا است و نباید به‌عنوان سامانهٔ اشتراک واقعی معرفی شود.
+
+## متغیرهای محیطی الزامی
+
+این مقادیر را در Secret/Environment سرور قرار دهید، نه در سورس‌کد، GitHub Pages یا فایل عمومی:
+
+| متغیر | کاربرد |
 | --- | --- |
-| `SITE_PUBLIC_BASE_URL` | Canonical public HTTPS origin, e.g. `https://example.com`. Used for secure cookies and payment callback URLs. |
-| `SITE_BOOTSTRAP_ADMIN_KEY` | Long random one-time key for initial Super Admin activation. Remove or rotate it after initial setup. |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID. |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret. |
-| `GOOGLE_REDIRECT_URI` | Exact registered callback URL: `https://example.com/api/v1/auth/google/callback`. |
-| `SITE_SMS_API_URL` | HTTPS endpoint of the chosen SMS provider adapter. |
-| `SITE_SMS_API_TOKEN` | Secret bearer token for the SMS adapter. |
-| `ZARINPAL_MERCHANT_ID` | ZarinPal merchant identifier. |
-| `ZARINPAL_SANDBOX` | Set to `1` for sandbox testing; set to `0` for production. |
+| `SITE_PUBLIC_BASE_URL` | دامنهٔ canonical با HTTPS؛ برای کوکی امن و callback پرداخت |
+| `SITE_BOOTSTRAP_ADMIN_KEY` | کلید تصادفی یک‌بارمصرف راه‌اندازی نخستین Super Admin |
+| `GOOGLE_CLIENT_ID` | شناسهٔ OAuth گوگل |
+| `GOOGLE_CLIENT_SECRET` | Secret OAuth گوگل |
+| `GOOGLE_REDIRECT_URI` | آدرس دقیق callback ثبت‌شده در Google |
+| `SITE_SMS_API_URL` | endpoint سرویس‌دهندهٔ پیامک |
+| `SITE_SMS_API_TOKEN` | توکن محرمانهٔ سرویس‌دهندهٔ پیامک |
+| `ZARINPAL_MERCHANT_ID` | شناسهٔ پذیرندهٔ زرین‌پال |
+| `ZARINPAL_SANDBOX` | برای تست `1` و برای تولید `0` |
 
-### SMS adapter contract
+### قرارداد سرویس پیامک
 
-The service sends an HTTPS JSON POST with a bearer token and these fields:
+درخواست HTTPS از نوع JSON با Bearer token ارسال می‌شود:
 
 ```json
 {
@@ -39,130 +54,109 @@ The service sends an HTTPS JSON POST with a bearer token and these fields:
 }
 ```
 
-The configured adapter must deliver the code to the requested phone and return a successful JSON response. This is intentionally provider-neutral. Do not use a fake development code in production.
+سرویس‌دهنده باید کد را واقعاً به شمارهٔ مقصد برساند و پاسخ موفق برگرداند. کد ثابت یا مسیر توسعه را در تولید فعال نکنید.
 
-### Google OAuth
+### ورود با Google
 
-Create a Web application OAuth client. Register the exact `GOOGLE_REDIRECT_URI` above in Google's authorized redirect URIs. The implementation uses Authorization Code flow with PKCE, state, nonce, verified email and token audience checks.
+یک OAuth client از نوع Web application بسازید و آدرس دقیق `GOOGLE_REDIRECT_URI` را در Authorized redirect URIs ثبت کنید. پیاده‌سازی از Authorization Code + PKCE، state، nonce، تأیید ایمیل و کنترل audience استفاده می‌کند.
 
-### Payment gateway
+### پرداخت
 
-The checkout implementation uses ZarinPal v4 request/verify endpoints. Amounts are stored and displayed in Toman; the gateway amount is converted to Rial (Toman × 10). The callback must use the same public HTTPS domain configured in `SITE_PUBLIC_BASE_URL`.
+درگاه فعلی، ZarinPal v4 است. مبالغ در سایت به تومان نمایش و در درخواست درگاه به ریال تبدیل می‌شوند (تومان × ۱۰). قبل از دریافت وجه واقعی، درخواست، انصراف، تأیید موفق، callback تکراری، بازگشت اعتبار کیف پول و callback روی HTTPS باید در Sandbox آزموده شوند. اطلاعات پذیرنده در این مخزن وجود ندارد؛ تا زمان تنظیم و آزمون credential واقعی، پرداخت واقعی آمادهٔ استفاده نیست.
 
-Before accepting real payments:
-1. Test request, cancellation, successful verification and duplicate callbacks in sandbox.
-2. Confirm the merchant account's settlement rules and refund workflow.
-3. Confirm the public callback URL is reachable through the reverse proxy.
-4. Check wallet-debit rollback on failed/abandoned gateway requests.
+## راه‌اندازی نخستین Super Admin
 
-A production gateway credential is not included in this repository. Until it is configured and end-to-end tested, checkout must be treated as unavailable.
+1. نسخه را ابتدا روی staging با HTTPS اجرا کنید.
+2. مقدار تصادفی و طولانی برای `SITE_BOOTSTRAP_ADMIN_KEY` در محیط سرور بگذارید.
+3. از فرم ثبت‌نام، حساب اصلی خود را بسازید.
+4. وارد پروفایل شوید و بخش «راه‌اندازی اولیه سوپرادمین» را باز کنید.
+5. کلید راه‌اندازی را در همان فرم خصوصی وارد کنید. این عملیات یک‌بارمصرف است.
+6. بعد از ارتقای نقش، از حساب خارج و دوباره وارد شوید.
+7. از «پنل سوپرادمین» حساب Admin و Support بسازید؛ گذرواژهٔ موقت را از راه امن ارسال کنید. تغییر آن در اولین ورود اجباری است.
+8. کلید bootstrap را از محیط سرور حذف یا rotate و برنامه را restart کنید.
 
-The public group dashboard uses the official TSETMC instrument-sector registry in `data/instrument_sectors.json`. The checked-in snapshot on this branch contains 724 instrument mappings, so it must be treated as partial until the server-side synchronization job has completed and coverage is reviewed. The dashboard reports coverage and does not imply that missing instruments have been classified.
+نقش Super Admin هرگز از فرم عمومی ثبت‌نام قابل انتخاب نیست. فقط Super Admin می‌تواند Admin یا Support جدید بسازد و نقش کارکنان را تغییر دهد.
 
-To refresh the registry on the server (do not run this against a client laptop or against a public upload), provide the actual local source database path:
+## نقش‌ها
+
+- **member:** پروفایل، اشتراک، کیف پول، کد دعوت، ایجاد و پاسخ به تیکت‌های خود.
+- **support:** مشاهده و پاسخ به تیکت‌های ارجاع‌شده و به‌روزرسانی وضعیت/ارجاع.
+- **admin:** داشبورد تیم، آمار کاربران و عملیات پشتیبانی.
+- **super_admin:** تمام امکانات مدیریتی، ایجاد Admin/Support، تغییر نقش‌ها و دسترسی به پنل جداگانهٔ زیرساخت.
+
+## ورود و ماندگاری نشست
+
+- ورود با نام کاربری، شناسهٔ عمومی کاربر، ایمیل تأییدشده یا شمارهٔ تلفن تأییدشده.
+- ورود بدون رمز از طریق SMS OTP پس از تأیید شماره.
+- ورود با Google OAuth پس از تأیید ایمیل Google.
+- گزینهٔ «ورود من را به خاطر بسپار»: نشست ۳۰ روزه؛ نشست معمولی ۱۲ ساعت.
+- توکن نشست به‌صورت SHA-256 hash ذخیره می‌شود؛ Cookie از نوع HttpOnly و SameSite=Lax است و روی HTTPS دارای Secure flag می‌شود.
+- درخواست‌های تغییردهنده با CSRF token محافظت می‌شوند.
+- کاربر جدیدی که از مسیر Google/شماره تأیید شود، یک‌بار دورهٔ آزمایشی سه‌روزه می‌گیرد. ثبت‌نام صرفاً با username/password، مالکیت شماره یا ایمیل را تأیید نمی‌کند.
+
+## قیمت‌گذاری و مشوق‌ها
+
+مبالغ به تومان هستند؛ طرح ماهانه پایین‌تر از سقف درخواستی ۸۹۹٬۰۰۰ تومان تنظیم شده است.
+
+| طرح | مدت | قیمت کل | معادل تقریبی ماهانه |
+| --- | ---: | ---: | ---: |
+| حرفه‌ای ماهانه | ۳۰ روز | ۶۹۰٬۰۰۰ | ۶۹۰٬۰۰۰ |
+| حرفه‌ای سه‌ماهه | ۹۰ روز | ۱٬۸۹۰٬۰۰۰ | ۶۳۰٬۰۰۰ |
+| حرفه‌ای شش‌ماهه | ۱۸۰ روز | ۳٬۴۸۰٬۰۰۰ | ۵۸۰٬۰۰۰ |
+| حرفه‌ای سالانه | ۳۶۵ روز | ۶٬۶۰۰٬۰۰۰ | حدود ۵۴۲٬۰۰۰ |
+
+طرح‌های بلندمدت با تخفیف مؤثر نسبت به تمدید ماهانه عرضه می‌شوند. اشتراک خریداری‌شده به انتهای اعتبار فعال اضافه می‌شود؛ اعتبار پرداخت‌شدهٔ قبلی جایگزین یا حذف نمی‌شود.
+
+مقایسهٔ قیمت‌های عمومی که در ۲۴ نوامبر ۲۰۲۶ بررسی شد:
+- صفحهٔ اصلی بازارباشه، طرح سرمایه‌گذار را ۲۷۰٬۰۰۰ تومان در ماه و طرح حرفه‌ای را ۲٬۰۰۰٬۰۰۰ تومان در ماه فهرست می‌کند: https://bazaarbasheh.ir/
+- صفحهٔ اشتراک بازارباشه برای بسته‌های مدت‌دار، قیمت طرح سرمایه‌گذار و حرفه‌ای را جداگانه نمایش می‌دهد: https://bazaarbasheh.ir/accounts/subscribe/
+- مرجع مقایسهٔ ثانویهٔ ره‌آورد ۳۶۵ برای بسته‌های ماهانه نقره‌ای/طلایی/پلاتینیوم به‌ترتیب ۴۳۰٬۰۰۰، ۵۷۰٬۰۰۰ و ۲٬۵۳۵٬۰۰۰ تومان گزارش می‌کند: https://iranrebate.com/education/rahavard365/
+
+این قیمت‌ها فقط benchmark عمومی‌اند و ممکن است با تخفیف‌ها یا تغییرات بعدی عوض شوند. قیمت ۶۹۰٬۰۰۰ تومان تصمیم قیمت‌گذاری اولیهٔ خود محصول است، نه تضمین برابری امکانات با سایر رقبا. پیش از دریافت وجه واقعی، نرخ تبدیل ثبت‌نام به خرید، هزینهٔ پیامک/درگاه/زیرساخت و نرخ تمدید را پایش کنید.
+
+کد `WELCOME15` برای ۱۵٪ تخفیف اولین خرید موفق است؛ حداکثر ۲٬۰۰۰ بار قابل استفاده و برای هر حساب فقط یک‌بار. پاداش دعوت‌کننده، ۱۰۰٬۰۰۰ تومان اعتبار کیف پول است و فقط پس از اولین پرداخت موفق فرد دعوت‌شده و حداکثر یک‌بار برای هر دعوت تعلق می‌گیرد. این پاداش اعتبار داخل سایت است و به‌معنای برداشت نقدی نیست.
+
+## گروه‌بندی رسمی بازار
+
+دسته‌بندی گروه و زیرگروه از کدهای `cSecVal` و `cSoSecVal` در رجیستری رسمی ابزارهای TSETMC تولید می‌شود. رجیستری فعلی شاخه ۷۲۴ ابزار را پوشش می‌دهد و کامل نیست؛ UI درصد پوشش را نمایش می‌دهد و نباید آن را پوشش کامل کل نمادهای بازار معرفی کند. کاربران Premium می‌توانند برچسب گروه‌های شخصی خود را برای کدهای رسمی ذخیره کنند؛ کد اصلی بورس تغییر نمی‌کند و تنظیمات برای هر حساب جداست.
+
+برای نوسازی رجیستری روی سرور، مسیر واقعی DB را مشخص کنید و ابزار را فقط در محیط امن سرور اجرا کنید:
 
 ```powershell
 python tools/sync_instrument_sectors.py --db "<absolute path to tsetmc_holdings.sqlite>" --output "data/instrument_sectors.json"
 ```
 
-The tool reads the source database read-only and writes the JSON registry atomically/resumably. Its defaults are 0.12 seconds between requests, two retries, and a checkpoint every 25 instruments. Use `--limit` only for a small pilot; do not interpret a limited run as complete. This is a network-backed registry refresh, separate from account or billing setup.
+## نمودارها و ابزارهای TradingView-style
 
-## First Super Admin setup
+تمام نمودارهای این UI از یک مؤلفهٔ مشترک بر پایهٔ TradingView Lightweight Charts نسخهٔ ۵٫۳٫۰ استفاده می‌کنند. امکانات فعلی رابط شامل:
+- کندل، bar، line و area در جایی که دادهٔ متناظر وجود دارد؛
+- بازه‌های ۱ ماه، ۳ ماه، ۶ ماه، ۱ سال، ۳ سال و کل تاریخچه؛
+- SMA 20/50، EMA 20، Bollinger Bands و حجم؛
+- مقیاس عادی، لگاریتمی و درصدی، autoscale و تمام‌صفحه؛
+- ابزارهای خط روند، خط افقی، مستطیل و فیبوناچی؛
+- ذخیرهٔ محلی ابزارهای ترسیم، نشانگر رویدادها و crosshair / hover.
 
-1. Deploy the new branch to a staging environment over HTTPS.
-2. Set `SITE_BOOTSTRAP_ADMIN_KEY` to a unique random secret known only to the owner.
-3. Register the owner's ordinary account using the normal registration screen.
-4. Log in and open **حساب و اشتراک**.
-5. Expand **راه‌اندازی اولیه سوپرادمین** and submit the bootstrap key.
-6. The bootstrap operation is one-time and invalidates the current session. Log in again.
-7. Add admin and support accounts from **پنل سوپرادمین**. Give each staff member a temporary password through a secure channel. It must be changed on first login.
-8. Remove the bootstrap key from the server environment and restart the application after setup.
+Lightweight Charts یک renderer آزاد و متن‌باز است؛ برخلاف Advanced Charts، اندیکاتورهای آماده یا رابط کامل TradingView را در خود ندارد. اندیکاتورها، toolbar و ابزارهای رسم این محصول کد اختصاصی ما هستند. TradingView برای Lightweight Charts افزونه‌های رسمی دارد، اما هر افزونه باید با داده و نسخهٔ پروژه یکپارچه و جداگانه آزموده شود. Advanced Charts/Trading Platform محصولات جداگانه و دارای مجوز هستند؛ نباید امکانات آن‌ها را به‌عنوان بخشی از Lightweight Charts رایگان وعده داد.
 
-Never set the Super Admin role manually in a public registration request. The server does not accept role selection during member registration.
+منابع رسمی:
+- نسخهٔ ۵٫۳٫۰: https://github.com/tradingview/lightweight-charts/releases
+- راهنمای مهاجرت v4 به v5: https://tradingview.github.io/lightweight-charts/docs/migrations/from-v4-to-v5
+- کاتالوگ افزونه‌ها: https://tradingview.github.io/lightweight-charts/plugins
+- مقایسهٔ کتابخانه‌ها: https://www.tradingview.com/free-charting-libraries/
 
-## Roles
+لوگوی attribution روی نمودار فعال باقی می‌ماند و فایل NOTICE باید در مخزن حفظ شود.
 
-- **member** — personal profile, subscription, wallet and own support-ticket creation/replies.
-- **support** — support inbox, replies and ticket assignment/status workflow; no user/role administration.
-- **admin** — staff/ticket overview and support operations.
-- **super_admin** — admin capabilities plus creating staff, changing staff roles and accessing the separate infrastructure administration page.
+## چک‌لیست پیش از تولید
 
-The last active Super Admin cannot be demoted through the staff role endpoint.
+- [ ] قرار دادن همهٔ secretها در environment سرور.
+- [ ] HTTPS reverse proxy، دامنه و callback URLها.
+- [ ] پیکربندی و آزمون واقعی SMS OTP و Google OAuth.
+- [ ] آزمون کامل پرداخت زرین‌پال در Sandbox، callback تکراری و rollback اعتبار کیف پول.
+- [ ] پشتیبان‌گیری و بازیابی `site_accounts.sqlite`.
+- [ ] تأیید دسترسی عمومی APIهای دادهٔ بورس و سهام‌داری.
+- [ ] تأیید اینکه فایل SQLite، اکسل، رجیستری و سورس از HTTP static قابل دریافت نیستند.
+- [ ] تأیید اینکه دیده‌بان و فیلتر ذخیره‌شدهٔ دو حساب به هم نشت نمی‌کنند.
+- [ ] تأیید اینکه فقط Super Admin می‌تواند حساب Admin/Support بسازد.
+- [ ] آزمون موبایل و دسکتاپ، نمودارها و ماندگاری ابزارهای رسم.
 
-Standard password registration creates a username-based account only. Gmail is linked through verified Google OAuth, and phone ownership is established through SMS OTP. The server rejects unverified email/phone claims in the registration API; a phone or email is accepted as a password-login identifier only after it has been verified.
-
-## Authentication and session behaviour
-
-- Password login accepts username, public user ID, email or phone.
-- Remember-me sessions last 30 days; ordinary sessions last 12 hours.
-- Session tokens are stored as SHA-256 hashes, and cookies are HttpOnly and SameSite=Lax. The Secure flag is set when the canonical origin is HTTPS.
-- Write requests require the session CSRF token in `X-CSRF-Token`.
-- Phone login uses five-minute, six-digit one-time codes with per-number request and attempt limits.
-- New phone/Google users receive a one-time three-day trial. Ordinary username/password registrations do not receive automatic phone verification.
-
-## Privacy boundary
-
-The public pages are intentionally limited to market/sector aggregates and stock price analysis. These paths are disabled on the public API:
-
-- shareholder search and observation-history,
-- all investor portfolio endpoints,
-- per-stock shareholder records,
-- raw ownership series and data-quality records,
-- legacy screener query/export.
-
-Public market watch responses omit share counts and all ownership/holder columns. The public stock detail response omits company-history and owner information. Corporate-action markers omit old/new share totals and ratios. The static-file handler does not serve SQLite files, JSON registries, spreadsheets, source files or arbitrary files from the project directory.
-
-Do not re-enable a raw endpoint by hiding its frontend tab. If a new analytical feature needs source data, compute the result on the server and return only the approved aggregate fields.
-
-## Subscription catalogue currently seeded
-
-Prices are in Toman:
-
-| Plan | Duration | Price |
-| --- | ---: | ---: |
-| Professional Monthly | 30 days | 2,790,000 |
-| Professional Quarterly | 90 days | 7,990,000 |
-| Professional Semiannual | 180 days | 15,490,000 |
-| Professional Annual | 365 days | 28,900,000 |
-
-The `WELCOME5` promotion gives 5% off the first successful purchase (limited to 2,000 redemptions). The subscription is extended from the current expiry date rather than overwriting unused paid time.
-
-### Market positioning reference checked on 2026-11-24
-
-Public comparison prices checked on 2026-11-24:
-
-- BazaarBasheh's own subscription page lists its Professional tier at 2,000,000 Toman per month and 18,000,000 Toman for one year: https://bazaarbasheh.ir/accounts/subscribe/
-- A recent third-party overview of Rahavard365 lists Silver at 430,000, Gold at 570,000 and Platinum at 2,535,000 Toman per month: https://iranrebate.com/education/rahavard365/
-
-The 2,790,000 Toman monthly price is deliberately positioned slightly above the cited 2,535,000 Toman Platinum monthly reference, and above the cited 2,000,000 Toman monthly professional plan. After the 5% first-purchase discount, the 30-day price remains about 2,650,500 Toman, just above the 2,535,000 Toman monthly Platinum reference. The annual price also sits above the cited 18,000,000 Toman annual professional package. This is a high-end positioning decision, not evidence that the product already matches every competitor's feature breadth. Review willingness to pay and feature parity before charging real customers.
-
-## Referral reward
-
-Every user has a unique referral code and a shareable `/?ref=CODE` link. The inviter receives 100,000 Toman in wallet credit only after the invited user's first successful paid subscription. Signup alone does not pay a reward. A unique ledger reference prevents duplicate credit from repeated payment callbacks. The current reward is a site credit, not a cash withdrawal promise.
-
-## Charts
-
-The app continues to use the repository's existing TradingView Lightweight Charts 4.2.3 integration. The UI now adds price ranges, SMA/EMA, Bollinger bands, volume, log/percentage scale, fullscreen, drawing tools, Fibonacci retracement and per-symbol drawing persistence.
-
-Lightweight Charts is the free open-source chart renderer; it does not include a complete TradingView interface or built-in indicator catalogue. The chart toolbar and indicators in this branch are custom code. TradingView publishes separate Advanced Charts/Trading Platform products with materially broader prebuilt capabilities and licensing conditions. See:
-- https://www.tradingview.com/free-charting-libraries/
-- https://tradingview.github.io/lightweight-charts/plugins
-- https://tradingview.github.io/lightweight-charts/docs/plugins/intro
-
-The existing CDN version is pinned to 4.2.3 because the application currently uses its v4 API. The required `NOTICE` attribution text is copied into the repository and the chart attribution logo is explicitly kept visible. Do not remove the logo or notice. Do not load v5 plugins into this page without a planned v5 migration and compatibility tests.
-
-## Pre-production checklist
-
-- [ ] Set all secrets in the server environment.
-- [ ] Configure HTTPS reverse proxy, domain, callback routing and HSTS.
-- [ ] Configure SMS adapter and test delivery/rate limits.
-- [ ] Configure Google OAuth and test new/existing linked accounts.
-- [ ] Run ZarinPal sandbox end-to-end tests including duplicate callbacks and wallet rollback.
-- [ ] Back up and restore `site_accounts.sqlite` in staging.
-- [ ] Verify unauthenticated requests to every disabled raw endpoint receive HTTP 410.
-- [ ] Verify public JSON responses do not include holder names, IDs, share counts, raw percentage sums or company-history rows.
-- [ ] Verify Premium group customization is rejected for free members and works only for the owner's account.
-- [ ] Verify Super Admin bootstrap is one-time and first admin cannot demote the final Super Admin.
-- [ ] Complete a manual responsive-browser pass on desktop and mobile.
-
-This branch is not production-deployed by this document. Do not merge to production until the external provider credentials and staging checks are complete.
+این شاخه تا زمانی که روی یک میزبان Python با دیتابیس واقعی اجرا و credentialهای بیرونی پیکربندی نشوند، یک نسخهٔ آمادهٔ استقرار است؛ انتشار GitHub Pages به‌تنهایی سرویس ورود و پرداخت را فعال نمی‌کند.
