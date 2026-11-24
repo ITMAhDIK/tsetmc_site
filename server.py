@@ -1178,8 +1178,8 @@ def refresh_summaries(live, sidecar):
     def _history_col(column, fallback="NULL"):
         return "h." + column if column in history_source_columns else fallback
     total_shares_expr = (
-        "COALESCE(cd.total_company_shares, %s)" %
-        _history_col("total_company_shares"))
+        "CASE WHEN cd.ins_code IS NOT NULL THEN cd.total_company_shares "
+        "ELSE %s END" % _history_col("total_company_shares"))
     price_expr = _history_col("price")
     history_select = (
         "SELECT h.id_scheme AS id_scheme, h.shareholder_id AS shareholder_id, "
@@ -1214,7 +1214,9 @@ def refresh_summaries(live, sidecar):
         + _history_col("prev_close_date") + " AS prev_close_date, "
         "c.cisin AS cisin "
         "FROM shareholder_holdings h "
-        "LEFT JOIN (SELECT ins_code, date, MAX(total_company_shares) AS total_company_shares "
+        "LEFT JOIN (SELECT ins_code, date, "
+        "CASE WHEN MIN(total_company_shares)=MAX(total_company_shares) "
+        "THEN MAX(total_company_shares) ELSE NULL END AS total_company_shares "
         "FROM company_daily GROUP BY ins_code, date) cd "
         "ON cd.ins_code=h.ins_code AND cd.date=h.date "
         "LEFT JOIN companies c ON c.ins_code=h.ins_code "
