@@ -3902,7 +3902,7 @@ class SiteApi:
             # Rebuild the full dated history from all defensibly linked identity IDs.
             # A later company snapshot without this holder is labelled "assumed sold"
             # per the product's chosen convention, with a visible threshold caveat.
-            historical_summary, historical_symbols, history_series = \\
+            historical_summary, historical_symbols, history_series = \
                 build_portfolio_history_summary(
                     self._iter_portfolio_history_observations(
                         live, ids, (scheme, sh_id), as_of_dashed=as_of_dashed))
