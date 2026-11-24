@@ -9,7 +9,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.28.5/babel.min.js"></script>
-  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@5.3.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     :root {
       --bg-canvas: #0b0e14;
@@ -67,9 +67,17 @@
       : 'http://127.0.0.1:8000';
 
     async function apiFetch(path, options = {}) {
+      const { headers: requestHeaders = {}, ...requestOptions } = options;
+      const csrfHeaders = window.__siteCsrf
+        ? { 'X-CSRF-Token': window.__siteCsrf } : {};
       const res = await fetch(`${API_BASE}${path}`, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-        ...options,
+        ...requestOptions,
+        credentials: requestOptions.credentials || 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          ...csrfHeaders,
+          ...requestHeaders,
+        },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -258,8 +266,10 @@
     // tools (trend line / rectangle / horizontal line) as an SVG overlay.
     // Markers + ohlc are memoized by the parent (JSON key) so the chart
     // is not rebuilt on every render.
-    function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = false, allowFullscreen = true, onHover = null }) {
+    function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = true, allowFullscreen = true, onHover = null, persistKey = null }) {
       const ref = useRef(null);
+      const generatedChartId = React.useId();
+      const drawingStorageKey = persistKey || ('chart-' + generatedChartId);
       const wrapRef = useRef(null);
       const chartRef = useRef(null);
       const seriesRef = useRef(null);
@@ -271,9 +281,50 @@
       const [draft, setDraft] = useState(null);
       // Scale controls (TradingView-style, bottom-right): A = auto-scale,
       // L = logarithmic price scale.
-      const [logScale, setLogScale] = useState(false);
+      const [scaleMode, setScaleMode] = useState('normal');
       const [autoScale, setAutoScale] = useState(true);
+      const [rangeMode, setRangeMode] = useState('all');
+      const [indicators, setIndicators] = useState({
+        sma20: false, sma50: false, ema20: false, bollinger: false, volume: true,
+      });
+      const [loadedDrawingsKey, setLoadedDrawingsKey] = useState(null);
       const [, setDrawVersion] = useState(0);
+
+      useEffect(() => {
+        setLoadedDrawingsKey(null);
+        let loaded = [];
+        if (drawingStorageKey) {
+          try {
+            const saved = window.localStorage.getItem('rn-chart:' + drawingStorageKey);
+            const parsed = saved ? JSON.parse(saved) : [];
+            loaded = Array.isArray(parsed) ? parsed.slice(0, 250) : [];
+          } catch (e) {
+            loaded = [];
+          }
+        }
+        setDrawings(loaded);
+        setLoadedDrawingsKey(drawingStorageKey);
+      }, [drawingStorageKey]);
+
+      useEffect(() => {
+        if (!drawingStorageKey || loadedDrawingsKey !== drawingStorageKey) return;
+        try {
+          window.localStorage.setItem('rn-chart:' + drawingStorageKey,
+            JSON.stringify(drawings.slice(-250)));
+        } catch (e) { /* local persistence is optional when storage is unavailable */ }
+      }, [drawings, loadedDrawingsKey, drawingStorageKey]);
+
+      const applyRange = (mode) => {
+        setRangeMode(mode);
+        const chart = chartRef.current;
+        const count = cleanData.length;
+        if (!chart || !count) return;
+        const sessions = { '1M': 22, '3M': 66, '6M': 132, '1Y': 264, '3Y': 792, 'ALL': count };
+        const span = Math.min(count, sessions[mode] || count);
+        chart.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, count - span), to: count + 1,
+        });
+      };
       const markersKey = JSON.stringify(markers || []);
 
       const cleanData = useMemo(() => {
@@ -308,12 +359,17 @@
             background: { type: 'solid', color: isLight ? '#ffffff' : '#131722' },
             textColor: isLight ? '#475569' : '#8b95a8',
             fontFamily: 'Vazirmatn, sans-serif',
+            attributionLogo: true,
           },
           grid: {
             vertLines: { color: isLight ? '#e2e8f0' : '#1e2536' },
             horzLines: { color: isLight ? '#e2e8f0' : '#1e2536' },
           },
-          rightPriceScale: { borderColor: isLight ? '#cbd5e1' : '#242b3d', mode: logScale ? 1 : 0, autoScale },
+          rightPriceScale: {
+            borderColor: isLight ? '#cbd5e1' : '#242b3d',
+            mode: scaleMode === 'log' ? 1 : (scaleMode === 'percentage' ? 2 : 0),
+            autoScale,
+          },
           timeScale: { borderColor: isLight ? '#cbd5e1' : '#242b3d', timeVisible: false, tickMarkFormatter: tickFmt },
           localization: {
             priceFormatter: (p) => `${p.toFixed(2)} ${unitLabel}`,
@@ -322,20 +378,106 @@
         });
         let series;
         if (type === 'candlestick') {
-          series = chart.addCandlestickSeries({ upColor: '#00c853', downColor: '#ff3d00', wickUpColor: '#00c853', wickDownColor: '#ff3d00', borderVisible: false });
+          series = chart.addSeries(window.LightweightCharts.CandlestickSeries, { upColor: '#00c853', downColor: '#ff3d00', wickUpColor: '#00c853', wickDownColor: '#ff3d00', borderVisible: false });
         } else if (type === 'bar') {
-          series = chart.addBarSeries({ upColor: '#00c853', downColor: '#ff3d00' });
+          series = chart.addSeries(window.LightweightCharts.BarSeries, { upColor: '#00c853', downColor: '#ff3d00' });
         } else if (type === 'line') {
-          series = chart.addLineSeries({ color, lineWidth: 2 });
+          series = chart.addSeries(window.LightweightCharts.LineSeries, { color, lineWidth: 2 });
         } else {
-          series = chart.addAreaSeries({ lineColor: color, topColor: `${color}55`, bottomColor: `${color}05`, lineWidth: 2 });
+          series = chart.addSeries(window.LightweightCharts.AreaSeries, { lineColor: color, topColor: `${color}55`, bottomColor: `${color}05`, lineWidth: 2 });
         }
         series.setData(cleanData);
+
+        // Optional moving averages and Bollinger bands. These are computed
+        // client-side from the visible price series and never reveal holder rows.
+        const closeRows = cleanData.map(row => ({
+          time: row.time,
+          close: row.close !== undefined ? Number(row.close) : Number(row.value),
+        }));
+        const overlaySeries = [];
+        const addIndicator = (rows, lineColor, title, width = 1) => {
+          if (!rows.length) return;
+          const line = chart.addSeries(window.LightweightCharts.LineSeries, {
+            color: lineColor, lineWidth: width, title,
+            priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          line.setData(rows);
+          overlaySeries.push(line);
+        };
+        const averageRows = (period, exponential = false) => {
+          const out = [];
+          let ema = null;
+          const alpha = 2 / (period + 1);
+          for (let i = 0; i < closeRows.length; i++) {
+            const value = closeRows[i].close;
+            if (!Number.isFinite(value)) continue;
+            if (exponential) {
+              ema = ema === null ? value : (alpha * value + (1 - alpha) * ema);
+              if (i >= period - 1) out.push({ time: closeRows[i].time, value: ema });
+            } else if (i >= period - 1) {
+              const windowRows = closeRows.slice(i - period + 1, i + 1);
+              if (windowRows.length === period) {
+                out.push({ time: closeRows[i].time,
+                  value: windowRows.reduce((sum, item) => sum + item.close, 0) / period });
+              }
+            }
+          }
+          return out;
+        };
+        if (indicators.sma20) addIndicator(averageRows(20), '#f5a623', 'SMA 20', 1);
+        if (indicators.sma50) addIndicator(averageRows(50), '#ab47bc', 'SMA 50', 1);
+        if (indicators.ema20) addIndicator(averageRows(20, true), '#26a69a', 'EMA 20', 1);
+        if (indicators.bollinger) {
+          const upper = [], lower = [];
+          for (let i = 19; i < closeRows.length; i++) {
+            const values = closeRows.slice(i - 19, i + 1).map(x => x.close);
+            if (values.some(v => !Number.isFinite(v))) continue;
+            const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+            const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+            const delta = Math.sqrt(variance) * 2;
+            upper.push({ time: closeRows[i].time, value: mean + delta });
+            lower.push({ time: closeRows[i].time, value: mean - delta });
+          }
+          addIndicator(upper, '#78909c', 'BB Upper', 1);
+          addIndicator(lower, '#78909c', 'BB Lower', 1);
+        }
+
+        // Daily volume is displayed in its own compressed lower scale.
+        if (indicators.volume && Array.isArray(ohlc) && ohlc.length) {
+          const volumeRows = ohlc.filter(row => row && row.time && Number(row.volume) > 0)
+            .map(row => ({
+              time: String(row.time).slice(0, 10),
+              value: Number(row.volume),
+              color: Number(row.close) >= Number(row.open) ? '#26a69a55' : '#ef535055',
+            }));
+          if (volumeRows.length) {
+            const volumeSeries = chart.addSeries(window.LightweightCharts.HistogramSeries, {
+              priceScaleId: 'volume',
+              priceFormat: { type: 'volume' },
+              lastValueVisible: false,
+              priceLineVisible: false,
+            });
+            volumeSeries.setData(volumeRows);
+            chart.priceScale('volume').applyOptions({
+              scaleMargins: { top: 0.82, bottom: 0 },
+              visible: false,
+            });
+          }
+        }
+
         const parsedMarkers = JSON.parse(markersKey || '[]');
         if (parsedMarkers.length > 0) {
-          try { series.setMarkers(parsedMarkers); } catch (e) { /* markers on missing times are ignored */ }
+          try { window.LightweightCharts.createSeriesMarkers(series, parsedMarkers); } catch (e) { /* markers on missing times are ignored */ }
         }
         chart.timeScale().fitContent();
+        if (rangeMode !== 'all') {
+          const sessions = { '1M': 22, '3M': 66, '6M': 132, '1Y': 264, '3Y': 792 };
+          const span = Math.min(cleanData.length, sessions[rangeMode.toUpperCase()] || cleanData.length);
+          chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, cleanData.length - span), to: cleanData.length + 1,
+          });
+        }
         // Right-edge anchor: zooming out must never leave empty space on
         // the right; clamp the visible range so the last bar stays at the
         // right edge (2 bars of breathing room).
@@ -371,7 +513,7 @@
         });
         ro.observe(ref.current);
         return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
-      }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, logScale, autoScale]);
+      }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, scaleMode, autoScale, indicators]);
 
       // --- drawing overlay ---
       const pointFromEvent = (e) => {
@@ -446,6 +588,25 @@
                 const x = Math.min(xy.a.x, xy.b.x), y = Math.min(xy.a.y, xy.b.y);
                 return <rect key={d.id} x={x} y={y} width={Math.abs(xy.b.x - xy.a.x)} height={Math.abs(xy.b.y - xy.a.y)} fill="#2962ff22" stroke="#2962ff" strokeWidth={1.5} />;
               }
+              if (d.kind === 'fib') {
+                const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+                const low = Math.min(d.p1.price, d.p2.price);
+                const high = Math.max(d.p1.price, d.p2.price);
+                return <g key={d.id}>
+                  {ratios.map(ratio => {
+                    const price = low + (high - low) * ratio;
+                    const y = seriesRef.current ? seriesRef.current.priceToCoordinate(price) : null;
+                    if (y === null || y === undefined) return null;
+                    return <g key={ratio}>
+                      <line x1={Math.min(xy.a.x, xy.b.x)} y1={y}
+                        x2={Math.max(xy.a.x, xy.b.x)} y2={y}
+                        stroke="#e0a93b" strokeWidth={1} strokeDasharray="4 3" />
+                      <text x={Math.max(xy.a.x, xy.b.x) - 3} y={y - 3}
+                        fill="#e0a93b" fontSize={9} textAnchor="end">{(ratio * 100).toFixed(1)}%</text>
+                    </g>;
+                  })}
+                </g>;
+              }
               return <line key={d.id} x1={xy.a.x} y1={xy.a.y} x2={xy.b.x} y2={xy.b.y} stroke="#00c853" strokeWidth={2} />;
             })}
           </svg>
@@ -456,31 +617,38 @@
       if (cleanData.length === 0) return <div className="p-6 text-center text-xs text-[var(--text-secondary)]">سری زمانی معتبری برای رسم نمودار در این بازه موجود نیست.</div>;
       return (
         <div ref={wrapRef} className={full ? 'fixed inset-0 z-[100] bg-[var(--bg-canvas)] p-4 flex flex-col' : 'relative w-full'}>
-          {(enableDrawing || allowFullscreen) && (
-            <div className="flex flex-wrap gap-1.5 items-center mb-1.5 text-[11px]">
-              {allowFullscreen && (
-                <button onClick={() => setFull(f => !f)} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
-                  {full ? '✕ خروج از تمام‌صفحه' : '⛶ تمام‌صفحه'}
-                </button>
-              )}
-              {enableDrawing && (
-                <>
-                  <span className="text-[var(--text-secondary)]">ابزار ترسیم:</span>
-                  <button onClick={() => setTool(t => t === 'line' ? null : 'line')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'line' ? 'bg-emerald-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>╲ خط روند</button>
-                  <button onClick={() => setTool(t => t === 'rect' ? null : 'rect')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'rect' ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>▭ مستطیل</button>
-                  <button onClick={() => setTool(t => t === 'hline' ? null : 'hline')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'hline' ? 'bg-amber-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>― خط افقی</button>
-                  <button onClick={() => setDrawings(ds => ds.slice(0, -1))} disabled={drawings.length === 0} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">↩ بازگشت</button>
-                  <button onClick={() => setDrawings([])} disabled={drawings.length === 0} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">✕ پاک کردن ترسیم‌ها</button>
-                  {tool && <span className="text-amber-300">روی نمودار بکشید (ابزار فعال: {tool === 'line' ? 'خط روند' : tool === 'rect' ? 'مستطیل' : 'خط افقی'})</span>}
-                </>
-              )}
-            </div>
-          )}
+          <div className="flex flex-wrap gap-1 items-center mb-1.5 text-[10px]" dir="rtl">
+            {allowFullscreen && <button onClick={() => setFull(f => !f)}
+              className="px-2 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+              {full ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه'}</button>}
+            <span className="text-[var(--text-muted)]">بازه</span>
+            {['1M','3M','6M','1Y','3Y','ALL'].map(mode =>
+              <button key={mode} onClick={() => applyRange(mode)}
+                className={`px-2 py-1 rounded border ${rangeMode.toUpperCase() === mode ? 'border-blue-500 bg-blue-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>{mode}</button>)}
+            <span className="mx-1 text-[var(--text-muted)]">اندیکاتور</span>
+            {[
+              ['sma20','SMA 20'],['sma50','SMA 50'],['ema20','EMA 20'],
+              ['bollinger','Bollinger'],['volume','حجم'],
+            ].map(([key,label]) => <button key={key}
+              onClick={() => setIndicators(v => ({...v,[key]:!v[key]}))}
+              className={`px-2 py-1 rounded border ${indicators[key] ? 'border-blue-500 text-blue-300 bg-blue-500/15' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'}`}>{label}</button>)}
+            {enableDrawing && <>
+              <span className="mx-1 text-[var(--text-muted)]">ترسیم</span>
+              <button onClick={() => setTool(t => t === 'line' ? null : 'line')} className={`px-2 py-1 rounded border ${tool === 'line' ? 'bg-emerald-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>خط روند</button>
+              <button onClick={() => setTool(t => t === 'rect' ? null : 'rect')} className={`px-2 py-1 rounded border ${tool === 'rect' ? 'bg-blue-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>مستطیل</button>
+              <button onClick={() => setTool(t => t === 'hline' ? null : 'hline')} className={`px-2 py-1 rounded border ${tool === 'hline' ? 'bg-amber-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>خط افقی</button>
+              <button onClick={() => setTool(t => t === 'fib' ? null : 'fib')} className={`px-2 py-1 rounded border ${tool === 'fib' ? 'bg-amber-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>فیبوناچی</button>
+              <button onClick={() => setDrawings(ds => ds.slice(0, -1))} disabled={!drawings.length} className="px-2 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">بازگشت</button>
+              <button onClick={() => setDrawings([])} disabled={!drawings.length} className="px-2 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">پاک‌کردن</button>
+            </>}
+            {tool && <span className="text-amber-300">ابزار {tool === 'fib' ? 'فیبوناچی' : tool === 'hline' ? 'خط افقی' : tool === 'rect' ? 'مستطیل' : 'خط روند'} فعال است</span>}
+          </div>
           <div className="relative flex-1" style={full ? { minHeight: 0 } : undefined}>
             <div ref={ref} className="w-full" dir="ltr" />
             <div className="absolute bottom-1 right-1 z-10 flex gap-1" dir="ltr">
               <button title="مقیاس خودکار (Auto scale)" onClick={() => setAutoScale(a => !a)} className={`w-6 h-6 rounded border text-[11px] font-bold ${autoScale ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>A</button>
-              <button title="مقیاس لگاریتمی (Log scale)" onClick={() => setLogScale(l => !l)} className={`w-6 h-6 rounded border text-[11px] font-bold ${logScale ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>L</button>
+              <button title="مقیاس لگاریتمی" onClick={() => setScaleMode(m => m === 'log' ? 'normal' : 'log')} className={`w-6 h-6 rounded border text-[10px] font-bold ${scaleMode === 'log' ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>LOG</button>
+              <button title="مقیاس درصدی" onClick={() => setScaleMode(m => m === 'percentage' ? 'normal' : 'percentage')} className={`w-6 h-6 rounded border text-[10px] font-bold ${scaleMode === 'percentage' ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>%</button>
             </div>
             {enableDrawing && (
               <div
@@ -495,6 +663,114 @@
             {renderDrawings()}
           </div>
         </div>
+      );
+    }
+
+
+    // Official TSETMC market group / subgroup view based on cSecVal/cSoSecVal.
+    function MarketSectorGroupsPanel({ currency, user }) {
+      const [market, setMarket] = useState('ALL');
+      const [payload, setPayload] = useState(null);
+      const [mapping, setMapping] = useState({});
+      const [editing, setEditing] = useState(false);
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+      const [expanded, setExpanded] = useState({});
+      const refresh = () => {
+        setError('');
+        apiFetch('/api/v1/market/groups?market=' + encodeURIComponent(market))
+          .then(setPayload).catch(e => setError(e.message));
+      };
+      useEffect(() => { refresh(); }, [market]);
+      useEffect(() => {
+        if (!user || !user.is_premium) { setMapping({}); return; }
+        apiFetch('/api/v1/market/sector-config')
+          .then(result => setMapping(result.mapping || {}))
+          .catch(() => setMapping({}));
+      }, [user && user.id, user && user.is_premium]);
+      const groups = payload && Array.isArray(payload.groups) ? payload.groups : [];
+      const codes = useMemo(() => Array.from(new Set(
+        groups.flatMap(group => group.official_group_codes || [])
+      )).sort(), [groups]);
+      const saveMapping = async () => {
+        setSaving(true); setError(''); setNotice('');
+        try {
+          const clean = Object.fromEntries(Object.entries(mapping)
+            .map(([code,label]) => [String(code),String(label || '').trim()])
+            .filter(([,label]) => label));
+          const result = await apiFetch('/api/v1/market/sector-config', {
+            method:'POST', body:JSON.stringify({mapping:clean}),
+          });
+          setMapping(result.mapping || clean); setEditing(false);
+          setNotice('گروه‌بندی اختصاصی حساب شما ذخیره شد.'); refresh();
+        } catch(e) { setError(e.message); }
+        finally { setSaving(false); }
+      };
+      return (
+        <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden mb-3">
+          <div className="p-3 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <h2 className="font-bold text-sm">گروه‌بندی رسمی بازار</h2>
+              <p className="text-[11px] text-[var(--text-secondary)] mt-1">ارزش بازار، تعداد نماد و زیرگروه‌ها بر پایهٔ کدهای رسمی TSETMC</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={market} onChange={e=>setMarket(e.target.value)}
+                className="px-2.5 py-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs">
+                <option value="ALL">بورس و فرابورس</option><option value="TSE">بورس تهران</option><option value="IFB">فرابورس</option>
+              </select>
+              {user && user.is_premium && <button onClick={()=>setEditing(v=>!v)} className="px-3 py-2 rounded bg-blue-600 text-white text-xs">{editing?'بستن ویرایش':'شخصی‌سازی گروه‌ها'}</button>}
+            </div>
+          </div>
+          {error && <div className="p-3 text-xs text-red-400">{error}</div>}
+          {notice && <div className="p-3 text-xs text-emerald-400">{notice}</div>}
+          {payload && <div className="px-3 pt-3 flex flex-wrap gap-x-5 gap-y-1 text-[10px] text-[var(--text-secondary)]">
+            <span>پوشش ارزش بازار: <strong className="num text-[var(--text-primary)]">{fmtPct(payload.classification_coverage_pct,2)}</strong></span>
+            <span>ارزش بازار قابل مشاهده: <strong className="num text-[var(--text-primary)]">{fmtMoney(payload.total_market_value_rial,currency)}</strong></span>
+            {payload.registry_available && <span className="text-amber-300">رجیستری رسمی فعلی پوشش کامل همه نمادها را ندارد؛ باقی موارد در «سایر» قرار می‌گیرند.</span>}
+          </div>}
+          {editing && user && user.is_premium && <div className="p-3 mt-3 border-y border-[var(--border-subtle)] bg-[var(--bg-elevated)] space-y-2">
+            <p className="text-[10px] text-[var(--text-secondary)]">نام یکسان برای چند کد، آن‌ها را در یک گروه شخصی ادغام می‌کند؛ کدهای رسمی تغییر نمی‌کنند.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {codes.map(code => {
+                const group=groups.find(item=>(item.official_group_codes||[]).includes(code));
+                return <label key={code} className="flex items-center gap-2 text-xs">
+                  <span className="w-12 text-[var(--text-muted)] num">{code}</span>
+                  <input value={mapping[code]||''} placeholder={group?group.label:'نام دلخواه'}
+                    onChange={e=>setMapping(v=>({...v,[code]:e.target.value}))}
+                    className="min-w-0 flex-1 px-2.5 py-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                </label>;
+              })}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={()=>setMapping({})} className="px-3 py-2 rounded border border-[var(--border-subtle)] text-xs">بازنشانی</button>
+              <button onClick={saveMapping} disabled={saving} className="px-3 py-2 rounded bg-emerald-600 text-white text-xs disabled:opacity-50">{saving?'در حال ذخیره...':'ذخیره گروه‌بندی من'}</button>
+            </div>
+          </div>}
+          <div className="p-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {!payload && !error && <div className="text-xs text-[var(--text-secondary)] p-5">در حال دریافت گروه‌های بازار...</div>}
+            {groups.map((group,index)=>{
+              const key=group.label+index, isOpen=!!expanded[key];
+              return <div key={key} className="rounded-lg border border-[var(--border-subtle)] p-3">
+                <button type="button" onClick={()=>setExpanded(v=>({...v,[key]:!isOpen}))} className="w-full flex items-center justify-between gap-3 text-right">
+                  <span className="font-semibold text-sm truncate">{group.label}</span>
+                  <span className="text-[11px] text-[var(--text-secondary)] num whitespace-nowrap">{fmtNum(group.instrument_count)} نماد · {fmtPct(group.market_share_pct,2)}</span>
+                </button>
+                <div className="h-2 rounded-full bg-[var(--bg-elevated)] overflow-hidden mt-2">
+                  <div className="h-full rounded-full bg-blue-500" style={{width:Math.max(0,Math.min(100,Number(group.market_share_pct)||0))+'%'}} />
+                </div>
+                <div className="flex justify-between items-center gap-2 mt-2 text-[11px]">
+                  <span className="text-[var(--text-secondary)]">ارزش بازار گروه</span><strong className="num">{fmtMoney(group.market_value_rial,currency)}</strong>
+                </div>
+                {(group.subgroups||[]).length>0 && <div className="mt-2 flex flex-wrap gap-1">
+                  {group.subgroups.slice(0,isOpen?100:4).map(sub=><span key={sub.label} className="px-2 py-1 rounded bg-[var(--bg-elevated)] text-[10px] text-[var(--text-secondary)]">{sub.label} · {fmtNum(sub.instrument_count)}</span>)}
+                  {!isOpen && group.subgroups.length>4 && <span className="text-[10px] text-[var(--text-muted)]">و {fmtNum(group.subgroups.length-4)} زیرگروه دیگر</span>}
+                </div>}
+                {isOpen && <div className="mt-2 text-[10px] text-[var(--text-muted)]">کدهای رسمی: {(group.official_group_codes||[]).join('، ')}</div>}
+              </div>;
+            })}
+          </div>
+        </section>
       );
     }
 
@@ -2091,31 +2367,893 @@
     }
 
     // --- 10. Page 7: Account & Plans (Local Placeholder) ---
-    function AccountAndPlansPage({ plan, setPlan }) {
+    function InvestorAffinityPage({ theme, currency }) {
+      const [scheme, setScheme] = useState('share_id');
+      const [rawId, setRawId] = useState('');
+      const [result, setResult] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const runAnalysis = async (event) => {
+        event.preventDefault();
+        const digits = String(rawId || '').replace(/[^\d]/g, '');
+        if (!digits) { setError('شناسه عددی را وارد کنید.'); return; }
+        setLoading(true); setError(''); setResult(null);
+        try {
+          const key = scheme + ':' + digits;
+          const data = await apiFetch('/api/v1/analytics/sector-affinity?investor_id=' +
+            encodeURIComponent(key));
+          setResult(data);
+        } catch (e) { setError(e.message); }
+        finally { setLoading(false); }
+      };
+
+      const groups = result && result.groups ? result.groups : [];
+      const quality = result && result.data_quality ? result.data_quality : {};
+      const history = result && result.history ? result.history : [];
+      const historySeries = history.filter(row => row.total_value_rial !== null)
+        .map(row => ({ time: row.date, value: row.total_value_rial }));
+      const directionLabel = value => value === 'increasing' ? 'افزایش'
+        : value === 'decreasing' ? 'کاهش' : 'خنثی';
+
       return (
-        <div className="space-y-3 text-xs">
-          <div className="p-3 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
-            حالت اجرای محلی: سیستم احراز هویت ابری (Supabase) در نسخه ویندوز محلی غیرفعال است و تغییر سطح دسترسی زیر صرفاً نمایشی است.
+        <div className="space-y-4 max-w-6xl mx-auto">
+          <div>
+            <div className="text-[11px] text-blue-400">ابزار اختصاصی Premium</div>
+            <h1 className="text-xl font-bold mt-1">تحلیل گرایش سرمایه‌گذار به صنایع</h1>
+            <p className="text-xs text-[var(--text-secondary)] mt-1">
+              فقط سهم گروه‌ها از ارزش پرتفوی و شاخص علاقه‌مندی نشان داده می‌شود؛ نام اشخاص، نمادهای داخل پرتفوی، تعداد سهام و شناسه‌های پیوندخورده نمایش داده نمی‌شوند.
+            </p>
           </div>
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex justify-between items-center">
-            <div>
-              <div className="font-bold text-sm">حساب کاربری محلی و سطح دسترسی</div>
-              <div className="text-[var(--text-secondary)]">در اجرای محلی، تمام امکانات تحلیلی بدون محدودیت در دسترس شماست.</div>
-            </div>
-            <button onClick={() => setPlan(p => p === 'free' ? 'premium' : 'free')} className="px-3 py-1.5 rounded bg-blue-600 text-white">
-              سطح نمایشی: {plan}
+          <form onSubmit={runAnalysis} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 flex flex-wrap items-end gap-3">
+            <label className="text-xs">
+              <span className="block mb-1.5 text-[var(--text-secondary)]">نوع شناسه</span>
+              <select value={scheme} onChange={e => setScheme(e.target.value)}
+                className="p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
+                <option value="holder_id">شناسه holder_id</option>
+                <option value="share_id">شناسه share_id</option>
+                <option value="ondate_share_id">شناسه ondate_share_id</option>
+              </select>
+            </label>
+            <label className="flex-1 min-w-48 text-xs">
+              <span className="block mb-1.5 text-[var(--text-secondary)]">شناسه عددی</span>
+              <input value={rawId} onChange={e => setRawId(e.target.value)}
+                inputMode="numeric" required placeholder="فقط بخش عددی شناسه"
+                className="w-full p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] num" />
+            </label>
+            <button disabled={loading} className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+              {loading ? 'در حال محاسبه تحلیل...' : 'محاسبه گرایش صنایع'}
             </button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="p-4 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
-              <h3 className="font-bold text-sm">طرح رایگان (Free)</h3>
-              <p className="text-[var(--text-secondary)]">نمای بازار، صفحات پایه نمادها، محدودیت تاریخچه سهام‌داری و ۱ دیده‌بان.</p>
+          </form>
+          <ErrorBox error={error} />
+
+          {loading && <div className="p-8 text-center text-xs text-[var(--text-secondary)]">در حال محاسبه تحلیل از تاریخچه مشاهدات...</div>}
+
+          {result && (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                {[
+                  ['ارزش پرتفوی مشاهده‌شده', result.current_portfolio_value_rial === null
+                    ? '—' : fmtMoney(result.current_portfolio_value_rial, currency)],
+                  ['آخرین مشاهده', result.latest_observation_date
+                    ? fmtGregorianDate(result.latest_observation_date) : '—'],
+                  ['اطمینان کلی تحلیل', fmtPct(quality.confidence_score == null
+                    ? null : quality.confidence_score * 100, 1)],
+                  ['پوشش ارزش‌گذاری', fmtPct(quality.valuation_coverage_pct, 1)],
+                ].map(([label,value]) => (
+                  <div key={label} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+                    <div className="text-[10px] text-[var(--text-secondary)]">{label}</div>
+                    <div className="font-bold text-sm mt-1">{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                <div className="p-3 border-b border-[var(--border-subtle)]">
+                  <h2 className="font-bold text-sm">روند ارزش پرتفوی افشاشده</h2>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+                    مجموع ارزش فقط از موقعیت‌هایی محاسبه می‌شود که در همان تاریخ مقدار و قیمت معتبر داشته‌اند؛ داده به روزهای فاقد مشاهده منتقل نمی‌شود.
+                  </p>
+                </div>
+                <div className="p-2">
+                  <LWChart data={historySeries} type="area" height={360}
+                    theme={theme} unitLabel="ریال" enableDrawing={true}
+                    persistKey={'investor-affinity-' + scheme + '-' + rawId} />
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                <div className="p-3 border-b border-[var(--border-subtle)]">
+                  <h2 className="font-bold text-sm">رتبه‌بندی علاقه‌مندی گروه‌های صنعتی</h2>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+                    امتیاز ترکیبی از وزن فعلی، تمایل تاریخی و تغییر خالص مشاهده‌شده است؛ تغییر افشای سهام‌داری اثبات معامله واقعی نیست.
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-right">
+                    <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                      <tr>
+                        <th className="p-3">گروه رسمی بورس</th>
+                        <th className="p-3">امتیاز علاقه‌مندی</th>
+                        <th className="p-3">وزن فعلی</th>
+                        <th className="p-3">گرایش تاریخی</th>
+                        <th className="p-3">تغییر خالص اخیر</th>
+                        <th className="p-3">جهت</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)]">
+                      {groups.map((group,index) => (
+                        <tr key={group.label + '-' + index}>
+                          <td className="p-3 font-semibold">{group.label || 'گروه نامشخص'}</td>
+                          <td className="p-3 num font-bold">{fmtNum(group.interest_score)}</td>
+                          <td className="p-3 num">{fmtPct(group.current_weight_pct,2)}</td>
+                          <td className="p-3 num">{fmtPct(group.historical_affinity_pct,2)}</td>
+                          <td className="p-3 num">{fmtPct(group.recent_net_change_pct_of_portfolio,2)}</td>
+                          <td className="p-3">{directionLabel(group.rotation_direction)}</td>
+                        </tr>
+                      ))}
+                      {groups.length === 0 && <tr><td colSpan="6" className="p-5 text-center text-[var(--text-secondary)]">گروه طبقه‌بندی‌شده‌ای برای نمایش نیست.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                {[
+                  ['پوشش طبقه‌بندی صنایع', quality.sector_classification_coverage_pct],
+                  ['اطمینان هویت', quality.identity_confidence_pct],
+                  ['پوشش شواهد تغییر خالص', quality.rotation_evidence_coverage_pct],
+                ].map(([label,value]) => (
+                  <div key={label} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+                    <div className="text-[10px] text-[var(--text-secondary)]">{label}</div>
+                    <div className="font-bold num mt-1">{fmtPct(value,1)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-[var(--text-muted)]">
+                وضعیت تحلیل: {result.status || 'نامشخص'} · وزن امتیاز: تخصیص فعلی ۵۰٪، گرایش تاریخی ۳۰٪، تغییر خالص اخیر ۲۰٪.
+                این نمودار ارزش روزانه خالص دارایی نیست و فقط تاریخ‌های افشای قابل ارزش‌گذاری را نشان می‌دهد.
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // --- 6. Account, subscription, wallet and support ---
+    function AccountAndPlansPage({ user, setUser, onOpenAdmin }) {
+      const [mode, setMode] = useState('login');
+      const [identifier, setIdentifier] = useState('');
+      const [password, setPassword] = useState('');
+      const [remember, setRemember] = useState(true);
+      const [username, setUsername] = useState('');
+      const [displayName, setDisplayName] = useState('');
+      const [email, setEmail] = useState('');
+      const [phone, setPhone] = useState('');
+      const [referralCode, setReferralCode] = useState(
+        new URLSearchParams(window.location.search).get('ref') || '');
+      const [otp, setOtp] = useState('');
+      const [otpSent, setOtpSent] = useState(false);
+      const [newPassword, setNewPassword] = useState('');
+      const [bootstrapKey, setBootstrapKey] = useState('');
+      const [plans, setPlans] = useState([]);
+      const [promo, setPromo] = useState('WELCOME15');
+      const [wallet, setWallet] = useState({ balance_toman: 0, transactions: [] });
+      const [tickets, setTickets] = useState([]);
+      const [selectedTicket, setSelectedTicket] = useState(null);
+      const [messages, setMessages] = useState([]);
+      const [ticketSubject, setTicketSubject] = useState('');
+      const [ticketMessage, setTicketMessage] = useState('');
+      const [replyMessage, setReplyMessage] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+
+      const isStaff = !!(user && ['support','admin','super_admin'].includes(user.role));
+
+      const refreshPrivateData = async () => {
+        if (!user) return;
+        const results = await Promise.allSettled([
+          apiFetch('/api/v1/wallet'),
+          apiFetch('/api/v1/tickets'),
+        ]);
+        if (results[0].status === 'fulfilled') setWallet(results[0].value);
+        if (results[1].status === 'fulfilled') setTickets(results[1].value.tickets || []);
+      };
+
+      useEffect(() => {
+        apiFetch('/api/v1/public/plans')
+          .then(res => setPlans(res.plans || []))
+          .catch(e => setError(e.message));
+      }, []);
+
+      useEffect(() => {
+        if (!user) {
+          setWallet({ balance_toman: 0, transactions: [] });
+          setTickets([]);
+          setSelectedTicket(null);
+          setMessages([]);
+          return;
+        }
+        refreshPrivateData().catch(e => setError(e.message));
+      }, [user && user.id]);
+
+      useEffect(() => {
+        if (!selectedTicket || !user) { setMessages([]); return; }
+        apiFetch('/api/v1/tickets/' + selectedTicket + '/messages')
+          .then(res => setMessages(res.messages || []))
+          .catch(e => setError(e.message));
+      }, [selectedTicket, user && user.id]);
+
+      const applyAuthResult = (result) => {
+        const nextUser = result.user || null;
+        window.__siteCsrf = nextUser ? (nextUser.csrf_token || '') : '';
+        setUser(nextUser);
+        setNotice(nextUser ? 'ورود با موفقیت انجام شد.' : '');
+        setError('');
+      };
+
+      const submitLogin = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const res = await apiFetch('/api/v1/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ identifier, password, remember }),
+          });
+          applyAuthResult(res);
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const submitRegister = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const res = await apiFetch('/api/v1/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({
+              username, password, display_name: displayName || username,
+              referral_code: referralCode || null, remember,
+            }),
+          });
+          applyAuthResult(res);
+          setNotice('حساب ساخته شد. برای استفاده از ورود پیامکی، شماره باید با کد یک‌بارمصرف تأیید شود.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const requestOtp = async () => {
+        setBusy(true); setError(''); setNotice('');
+        try {
+          await apiFetch('/api/v1/auth/otp/request', {
+            method: 'POST',
+            body: JSON.stringify({ phone, referral_code: referralCode || null }),
+          });
+          setOtpSent(true);
+          setNotice('کد یک‌بارمصرف ارسال شد؛ پنج دقیقه برای واردکردن آن فرصت دارید.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const verifyOtp = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          const res = await apiFetch('/api/v1/auth/otp/verify', {
+            method: 'POST',
+            body: JSON.stringify({ phone, code: otp, remember }),
+          });
+          applyAuthResult(res);
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const logout = async () => {
+        try { await apiFetch('/api/v1/auth/logout', { method: 'POST', body: '{}' }); }
+        catch (e) { /* The server may already have expired this session. */ }
+        window.__siteCsrf = '';
+        setUser(null);
+        setMode('login');
+        setNotice('از حساب خارج شدید.');
+      };
+
+      const buyPlan = async (plan) => {
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const result = await apiFetch('/api/v1/subscriptions/checkout', {
+            method: 'POST',
+            body: JSON.stringify({ plan_slug: plan.slug, promo_code: promo || null, use_wallet: true }),
+          });
+          if (result.checkout_url) {
+            window.location.assign(result.checkout_url);
+            return;
+          }
+          if (result.paid_with_wallet) {
+            setNotice('اشتراک با اعتبار کیف پول فعال شد.');
+            await refreshPrivateData();
+          }
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const createTicket = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/tickets', {
+            method: 'POST',
+            body: JSON.stringify({ subject: ticketSubject, message: ticketMessage }),
+          });
+          setTicketSubject(''); setTicketMessage('');
+          setNotice('تیکت شما ثبت شد.');
+          await refreshPrivateData();
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const replyTicket = async (event) => {
+        event.preventDefault();
+        if (!selectedTicket) return;
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/tickets/' + selectedTicket + '/messages', {
+            method: 'POST', body: JSON.stringify({ message: replyMessage }),
+          });
+          setReplyMessage('');
+          const res = await apiFetch('/api/v1/tickets/' + selectedTicket + '/messages');
+          setMessages(res.messages || []);
+          await refreshPrivateData();
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const changePassword = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/auth/change-password', {
+            method: 'POST', body: JSON.stringify({ new_password: newPassword }),
+          });
+          setNewPassword('');
+          const me = await apiFetch('/api/v1/auth/me');
+          applyAuthResult(me);
+          setNotice('رمز عبور تغییر کرد.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const bootstrapSuperAdmin = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/auth/bootstrap-superadmin', {
+            method: 'POST', body: JSON.stringify({ bootstrap_key: bootstrapKey }),
+          });
+          setBootstrapKey('');
+          await apiFetch('/api/v1/auth/logout', { method: 'POST', body: '{}' }).catch(() => {});
+          window.__siteCsrf = '';
+          setUser(null);
+          setNotice('راه‌اندازی سوپرادمین انجام شد؛ دوباره با همین حساب وارد شوید.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const copyReferral = () => {
+        const link = window.location.origin + '/?ref=' + encodeURIComponent(user.referral_code);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).then(
+            () => setNotice('لینک دعوت کپی شد.'),
+            () => setError('کپی خودکار انجام نشد؛ کد دعوت را دستی کپی کنید.')
+          );
+        } else {
+          setNotice('کد دعوت شما: ' + user.referral_code);
+        }
+      };
+
+      if (!user) {
+        return (
+          <div className="max-w-3xl mx-auto space-y-4">
+            <div className="text-center py-4">
+              <div className="text-[11px] text-blue-400">ره‌نگار بورس</div>
+              <h1 className="text-2xl font-bold mt-1">حساب کاربری و اشتراک</h1>
+              <p className="text-xs text-[var(--text-secondary)] mt-2">برای ذخیره تنظیمات، خرید اشتراک و پشتیبانی وارد شوید.</p>
             </div>
-            <div className="p-4 rounded border border-emerald-500/40 bg-[var(--bg-panel)] space-y-1.5">
-              <h3 className="font-bold text-sm text-emerald-400">طرح حرفه‌ای (Premium)</h3>
-              <p className="text-[var(--text-secondary)]">تاریخچه کامل، بازسازی پرتفوی چندشرکتی، غربالگر پیشرفته و خروجی اکسل/CSV.</p>
+            <ErrorBox error={error} />
+            {notice && <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">{notice}</div>}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ['login','ورود با شناسه/شماره'],
+                  ['register','ساخت حساب'],
+                  ['phone','ورود پیامکی'],
+                ].map(([id,label]) => (
+                  <button key={id} onClick={() => { setMode(id); setError(''); }}
+                    className={'px-3 py-2 rounded-lg text-xs border ' +
+                      (mode === id ? 'bg-blue-600 text-white border-blue-600' :
+                        'bg-[var(--bg-elevated)] border-[var(--border-subtle)]')}>
+                    {label}
+                  </button>
+                ))}
+                <a href={'/api/v1/auth/google/start' +
+                    (referralCode ? '?ref=' + encodeURIComponent(referralCode) : '')}
+                  className="mr-auto px-3 py-2 rounded-lg text-xs border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+                  ورود با حساب Google
+                </a>
+              </div>
+
+              {mode === 'login' && (
+                <form onSubmit={submitLogin} className="space-y-3">
+                  <label className="block text-xs">
+                    <span className="block mb-1.5 text-[var(--text-secondary)]">شناسه، کد کاربری، ایمیل یا شماره همراه</span>
+                    <input value={identifier} onChange={e => setIdentifier(e.target.value)}
+                      autoComplete="username" required
+                      className="w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="block mb-1.5 text-[var(--text-secondary)]">رمز عبور</span>
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                      autoComplete="current-password" required
+                      className="w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+                    ورود من را به خاطر بسپار
+                  </label>
+                  <button disabled={busy} className="w-full py-3 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-50">
+                    {busy ? 'در حال ورود...' : 'ورود به حساب'}
+                  </button>
+                </form>
+              )}
+
+              {mode === 'register' && (
+                <form onSubmit={submitRegister} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="text-xs">شناسه ورود
+                    <input value={username} onChange={e => setUsername(e.target.value)} required minLength={4}
+                      autoComplete="username" placeholder="مثلاً trader_01"
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="text-xs">نام نمایشی
+                    <input value={displayName} onChange={e => setDisplayName(e.target.value)}
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <div className="md:col-span-2 text-[10px] text-[var(--text-secondary)]">
+                    برای ورود با Gmail از دکمه Google و برای ساخت حساب با شماره همراه از ورود پیامکی استفاده کنید تا مالکیت راه ارتباطی تأیید شود.
+                  </div>
+                  <label className="text-xs">رمز عبور (حداقل ۱۰ نویسه)
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                      minLength={10} autoComplete="new-password" required
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="text-xs">کد دعوت (اختیاری)
+                    <input value={referralCode} onChange={e => setReferralCode(e.target.value)}
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <div className="md:col-span-2 flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                      <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+                      ورود من را به خاطر بسپار
+                    </label>
+                    <button disabled={busy} className="px-5 py-3 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+                      {busy ? 'در حال ساخت حساب...' : 'ساخت حساب'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {mode === 'phone' && (
+                <div className="space-y-3">
+                  <label className="block text-xs">شماره همراه
+                    <input value={phone} onChange={e => setPhone(e.target.value)}
+                      placeholder="0912..." autoComplete="tel"
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  {!otpSent ? (
+                    <button onClick={requestOtp} disabled={busy}
+                      className="w-full py-3 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">ارسال کد ورود</button>
+                  ) : (
+                    <form onSubmit={verifyOtp} className="space-y-3">
+                      <input value={otp} onChange={e => setOtp(e.target.value)} required maxLength={6}
+                        placeholder="کد شش‌رقمی پیامک‌شده"
+                        className="w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-center tracking-widest" />
+                      <button disabled={busy} className="w-full py-3 rounded-lg bg-emerald-600 text-white text-xs">تأیید کد و ورود</button>
+                      <button type="button" onClick={() => { setOtpSent(false); setOtp(''); }}
+                        className="w-full py-2 text-xs text-[var(--text-secondary)]">ارسال کد جدید</button>
+                    </form>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+                    ورود من را به خاطر بسپار
+                  </label>
+                </div>
+              )}
+            </div>
+            <div className="text-center text-[10px] text-[var(--text-muted)]">
+              ورود پیامکی، Google و پرداخت بعد از تنظیم کلیدهای سرویس روی سرور فعال می‌شوند.
             </div>
           </div>
+        );
+      }
+
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[11px] text-blue-400">حساب کاربری</div>
+              <h1 className="text-xl font-bold mt-1">سلام {user.display_name || user.username}</h1>
+              <p className="text-xs text-[var(--text-secondary)] mt-1">
+                شناسه: <span className="num">{user.public_id}</span> · نقش: {user.role}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {user && ['admin','super_admin'].includes(user.role) &&
+                <button onClick={onOpenAdmin} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs">پنل مدیریت / پشتیبانی</button>}
+              <button onClick={logout} className="px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-xs">خروج از حساب</button>
+            </div>
+          </div>
+          <ErrorBox error={error} />
+          {notice && <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">{notice}</div>}
+
+          {user.must_change_password ? (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+              <h2 className="font-bold text-sm text-amber-300">تغییر رمز عبور الزامی است</h2>
+              <p className="text-xs text-[var(--text-secondary)] mt-1 mb-3">برای حساب‌های ساخته‌شده توسط مدیر، رمز موقت باید در اولین ورود تغییر کند.</p>
+              <form onSubmit={changePassword} className="flex flex-wrap gap-2">
+                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                  minLength={10} required placeholder="رمز عبور جدید"
+                  className="flex-1 min-w-52 p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                <button disabled={busy} className="px-4 py-2 rounded bg-amber-600 text-white text-xs">ثبت رمز جدید</button>
+              </form>
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="text-[11px] text-[var(--text-secondary)]">وضعیت اشتراک</div>
+              <div className="font-bold text-lg mt-1">{user.is_premium ? 'حرفه‌ای / فعال' : 'رایگان'}</div>
+              <div className="text-[11px] text-[var(--text-secondary)] mt-2">
+                {user.subscription && user.subscription.ends_at
+                  ? 'اعتبار تا ' + fmtDate(user.subscription.ends_at.slice(0,10))
+                  : 'برای فعال‌سازی امکانات حرفه‌ای، یک طرح انتخاب کنید.'}
+              </div>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="text-[11px] text-[var(--text-secondary)]">موجودی کیف پول</div>
+              <div className="font-bold text-lg num mt-1">{fmtNum(wallet.balance_toman || user.wallet_balance_toman || 0)} تومان</div>
+              <div className="text-[11px] text-[var(--text-secondary)] mt-2">اعتبار دعوت و بازپرداخت خریدهای ناموفق</div>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="text-[11px] text-[var(--text-secondary)]">کد دعوت اختصاصی</div>
+              <div className="font-bold text-xl num mt-1 tracking-wider">{user.referral_code}</div>
+              <div className="flex justify-between items-center gap-2 mt-2">
+                <span className="text-[10px] text-[var(--text-secondary)]">پاداش پس از اولین خرید دعوت‌شده: ۱۰۰٬۰۰۰ تومان</span>
+                <button onClick={copyReferral} className="text-[11px] text-blue-400">کپی لینک</button>
+              </div>
+            </div>
+          </div>
+
+          {user.role === 'member' && (
+            <details className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+              <summary className="cursor-pointer text-xs font-semibold">راه‌اندازی اولیه سوپرادمین (فقط یک بار)</summary>
+              <p className="text-[10px] text-[var(--text-secondary)] mt-2">
+                فقط اولین حساب فعال و فقط با کلید محرمانه‌ای که روی سرور تنظیم می‌شود می‌تواند سوپرادمین شود. کلید را در پیام یا کد عمومی وارد نکنید.
+              </p>
+              <form onSubmit={bootstrapSuperAdmin} className="flex flex-wrap gap-2 mt-2">
+                <input type="password" value={bootstrapKey} onChange={e => setBootstrapKey(e.target.value)}
+                  required placeholder="کلید راه‌اندازی محرمانه"
+                  className="flex-1 min-w-48 p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                <button disabled={busy} className="px-4 py-2 rounded bg-amber-600 text-white text-xs">فعال‌سازی سوپرادمین</button>
+              </form>
+            </details>
+          )}
+
+          <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <div>
+                <h2 className="font-bold text-sm">خرید اشتراک حرفه‌ای</h2>
+                <p className="text-[10px] text-[var(--text-secondary)] mt-1">تخفیف افتتاحیه ۱۵٪ برای خرید اول با کد WELCOME15</p>
+              </div>
+              <label className="text-xs flex items-center gap-2">
+                <span className="text-[var(--text-secondary)]">کد تخفیف</span>
+                <input value={promo} onChange={e => setPromo(e.target.value.toUpperCase())}
+                  className="w-36 p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] num" />
+              </label>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              {plans.map(plan => (
+                <div key={plan.slug} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 flex flex-col">
+                  <div className="text-xs text-[var(--text-secondary)]">{plan.name}</div>
+                  <div className="text-xl font-bold num mt-2">{fmtNum(plan.price_toman)} <span className="text-xs font-normal">تومان</span></div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-1">{fmtNum(plan.duration_days)} روز دسترسی</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-1">
+                    معادل ماهانه {fmtNum(Math.round(plan.price_toman / Math.max(1, plan.duration_days / 30)))} تومان
+                  </div>
+                  <div className="text-[10px] text-emerald-400 mt-2">
+                    {plan.duration_days > 30
+                      ? 'صرفه‌جویی ' + fmtNum(Math.max(0, Math.round((1 - plan.price_toman / (690000 * plan.duration_days / 30)) * 100))) + '٪ نسبت به تمدید ماهانه'
+                      : 'قیمت پایه اشتراک'}
+                  </div>
+                  <button onClick={() => buyPlan(plan)} disabled={busy}
+                    className="mt-4 w-full py-2.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+                    انتخاب و پرداخت
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="text-[10px] text-[var(--text-muted)]">
+              پرداخت ریالی از طریق درگاه متصل انجام می‌شود؛ مبلغ‌ها به تومان نمایش داده می‌شوند.
+            </div>
+          </section>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+              <h2 className="font-bold text-sm">کیف پول و گردش اعتبار</h2>
+              <div className="text-2xl font-bold num">{fmtNum(wallet.balance_toman || 0)} تومان</div>
+              <div className="space-y-2 max-h-56 overflow-auto">
+                {(wallet.transactions || []).length === 0 ? (
+                  <p className="text-xs text-[var(--text-secondary)]">هنوز تراکنشی ثبت نشده است.</p>
+                ) : wallet.transactions.map((row, index) => (
+                  <div key={index} className="flex justify-between gap-3 border-b border-[var(--border-subtle)] pb-2 text-[11px]">
+                    <span className="text-[var(--text-secondary)]">{row.description}</span>
+                    <strong className={'num ' + (row.amount_toman >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                      {row.amount_toman > 0 ? '+' : ''}{fmtNum(row.amount_toman)} تومان
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+              <h2 className="font-bold text-sm">{isStaff ? 'صندوق تیکت‌های پشتیبانی' : 'ثبت تیکت پشتیبانی'}</h2>
+              {!isStaff && (
+                <form onSubmit={createTicket} className="space-y-2">
+                  <input value={ticketSubject} onChange={e => setTicketSubject(e.target.value)}
+                    minLength={5} maxLength={120} required placeholder="موضوع تیکت"
+                    className="w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                  <textarea value={ticketMessage} onChange={e => setTicketMessage(e.target.value)}
+                    minLength={10} maxLength={5000} required rows={3} placeholder="شرح درخواست شما"
+                    className="w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                  <button disabled={busy} className="px-4 py-2 rounded bg-blue-600 text-white text-xs">ثبت تیکت</button>
+                </form>
+              )}
+              <div className="space-y-1.5 max-h-64 overflow-auto">
+                {(tickets || []).length === 0 ? (
+                  <div className="text-xs text-[var(--text-secondary)]">تیکتی ثبت نشده است.</div>
+                ) : tickets.map(ticket => (
+                  <button key={ticket.id} onClick={() => setSelectedTicket(ticket.id)}
+                    className={'w-full text-right p-2 rounded border text-xs ' +
+                      (selectedTicket === ticket.id ? 'border-blue-500 bg-blue-500/10' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]')}>
+                    <span className="font-semibold">{ticket.subject}</span>
+                    <span className="block text-[10px] text-[var(--text-secondary)] mt-1">{ticket.status} · #{toFa(ticket.id)}</span>
+                  </button>
+                ))}
+              </div>
+              {selectedTicket && (
+                <div className="border-t border-[var(--border-subtle)] pt-3 space-y-2">
+                  <div className="text-xs font-semibold">مکالمه تیکت #{toFa(selectedTicket)}</div>
+                  <div className="space-y-2 max-h-48 overflow-auto">
+                    {messages.map(message => (
+                      <div key={message.id} className="p-2 rounded bg-[var(--bg-elevated)] text-xs">
+                        <div className="text-[10px] text-[var(--text-secondary)] mb-1">{message.display_name}</div>
+                        {message.body}
+                      </div>
+                    ))}
+                  </div>
+                  <form onSubmit={replyTicket} className="flex gap-2">
+                    <input value={replyMessage} onChange={e => setReplyMessage(e.target.value)}
+                      required minLength={2} placeholder="پاسخ..."
+                      className="flex-1 min-w-0 p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                    <button disabled={busy} className="px-3 rounded bg-blue-600 text-white text-xs">ارسال</button>
+                  </form>
+                </div>
+              )}
+            </section>
+          </div>
+
+          <details className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+            <summary className="cursor-pointer text-xs font-semibold">تنظیم رمز عبور حساب</summary>
+            <form onSubmit={changePassword} className="flex flex-wrap gap-2 mt-3">
+              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                minLength={10} required placeholder="رمز عبور جدید"
+                className="flex-1 min-w-48 p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+              <button disabled={busy} className="px-4 py-2 rounded bg-blue-600 text-white text-xs">تغییر رمز</button>
+            </form>
+          </details>
+        </div>
+      );
+    }
+
+    // --- 7. Staff and super-admin console ---
+    function SiteAdminDashboardPage({ user }) {
+      const [overview, setOverview] = useState(null);
+      const [staff, setStaff] = useState([]);
+      const [tickets, setTickets] = useState([]);
+      const [username, setUsername] = useState('');
+      const [displayName, setDisplayName] = useState('');
+      const [temporaryPassword, setTemporaryPassword] = useState('');
+      const [role, setRole] = useState('support');
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+      const isSuperAdmin = user && user.role === 'super_admin';
+
+      const refresh = async () => {
+        const results = await Promise.all([
+          apiFetch('/api/v1/site-admin/overview'),
+          apiFetch('/api/v1/site-admin/staff'),
+          apiFetch('/api/v1/tickets'),
+        ]);
+        setOverview(results[0]);
+        setStaff(results[1].staff || []);
+        setTickets(results[2].tickets || []);
+      };
+
+      useEffect(() => {
+        refresh().catch(e => setError(e.message));
+      }, []);
+
+      const createStaff = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const result = await apiFetch('/api/v1/site-admin/staff', {
+            method: 'POST',
+            body: JSON.stringify({
+              username, display_name: displayName || username,
+              temporary_password: temporaryPassword, role,
+            }),
+          });
+          setNotice('حساب ' + result.staff.username + ' ساخته شد. رمز موقت را به‌صورت امن به فرد تحویل دهید؛ تغییر آن در اولین ورود اجباری است.');
+          setUsername(''); setDisplayName(''); setTemporaryPassword('');
+          await refresh();
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const changeRole = async (staffUser, nextRole) => {
+        setError(''); setNotice('');
+        try {
+          await apiFetch('/api/v1/site-admin/staff/' + staffUser.id, {
+            method: 'POST', body: JSON.stringify({ role: nextRole }),
+          });
+          setNotice('نقش کاربر به‌روزرسانی شد.');
+          await refresh();
+        } catch (e) { setError(e.message); }
+      };
+
+      const assignTicket = async (ticketId, assignedTo) => {
+        try {
+          await apiFetch('/api/v1/tickets/' + ticketId + '/assign', {
+            method: 'POST', body: JSON.stringify({ assigned_to: assignedTo }),
+          });
+          await refresh();
+        } catch (e) { setError(e.message); }
+      };
+
+      const updateTicketStatus = async (ticketId, status) => {
+        try {
+          await apiFetch('/api/v1/tickets/' + ticketId + '/status', {
+            method: 'POST', body: JSON.stringify({ status }),
+          });
+          await refresh();
+        } catch (e) { setError(e.message); }
+      };
+
+      return (
+        <div className="space-y-4">
+          <div>
+            <div className="text-[11px] text-blue-400">{isSuperAdmin ? 'کنترل کامل سامانه' : 'مدیریت تیم'}</div>
+            <h1 className="text-xl font-bold mt-1">{isSuperAdmin ? 'پنل سوپرادمین' : 'پنل مدیریت'}</h1>
+            <p className="text-xs text-[var(--text-secondary)] mt-1">مدیریت کاربران، ادمین‌ها، نیروهای پشتیبانی و ارجاع تیکت‌ها.</p>
+          </div>
+          <ErrorBox error={error} />
+          {notice && <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">{notice}</div>}
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {[
+              ['کاربران', overview && overview.users],
+              ['اشتراک‌های فعال', overview && overview.premium_users],
+              ['تیکت‌های باز', overview && overview.open_tickets],
+              ['پرداخت‌های موفق', overview && overview.paid_orders],
+            ].map(([label,value]) => (
+              <div key={label} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+                <div className="text-[11px] text-[var(--text-secondary)]">{label}</div>
+                <div className="text-xl font-bold num mt-1">{fmtNum(value || 0)}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="flex justify-between items-center gap-2">
+                <h2 className="font-bold text-sm">ادمین‌ها و پشتیبان‌ها</h2>
+                <span className="text-[10px] text-[var(--text-secondary)]">{fmtNum(staff.length)} نفر</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {staff.map(person => (
+                  <div key={person.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--bg-elevated)] p-2.5">
+                    <div>
+                      <div className="font-semibold text-xs">{person.display_name || person.username}</div>
+                      <div className="text-[10px] text-[var(--text-secondary)] num">{person.public_id} · {person.username}</div>
+                    </div>
+                    <select value={person.role} disabled={!isSuperAdmin || person.role === 'super_admin'}
+                      onChange={e => changeRole(person, e.target.value)}
+                      className="px-2 py-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-xs">
+                      <option value="support">پشتیبان</option>
+                      <option value="admin">ادمین</option>
+                      <option value="member">کاربر عادی</option>
+                      {person.role === 'super_admin' && <option value="super_admin">سوپرادمین</option>}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <h2 className="font-bold text-sm">افزودن نیروی جدید</h2>
+              {isSuperAdmin ? (
+                <form onSubmit={createStaff} className="space-y-2.5 mt-3">
+                  <label className="block text-xs">شناسه ورود
+                    <input value={username} onChange={e => setUsername(e.target.value)} required minLength={4}
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">نام نمایشی
+                    <input value={displayName} onChange={e => setDisplayName(e.target.value)}
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">رمز موقت (حداقل ۱۰ نویسه)
+                    <input type="password" value={temporaryPassword} onChange={e => setTemporaryPassword(e.target.value)}
+                      minLength={10} required
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">سطح دسترسی
+                    <select value={role} onChange={e => setRole(e.target.value)}
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
+                      <option value="support">پشتیبان</option>
+                      <option value="admin">ادمین</option>
+                    </select>
+                  </label>
+                  <button disabled={busy} className="w-full py-2.5 rounded bg-blue-600 text-white text-xs disabled:opacity-50">
+                    {busy ? 'در حال ساخت...' : 'ساخت حساب کارمند'}
+                  </button>
+                </form>
+              ) : (
+                <p className="text-xs text-[var(--text-secondary)] mt-3">ساخت ادمین یا پشتیبان فقط در اختیار سوپرادمین است.</p>
+              )}
+            </section>
+          </div>
+
+          <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h2 className="font-bold text-sm">صف تیکت‌ها</h2>
+              <span className="text-[10px] text-[var(--text-secondary)]">تخصیص بر اساس تیم پشتیبانی</span>
+            </div>
+            <div className="space-y-2">
+              {tickets.length === 0 ? (
+                <p className="text-xs text-[var(--text-secondary)]">تیکتی وجود ندارد.</p>
+              ) : tickets.map(ticket => (
+                <div key={ticket.id} className="grid grid-cols-1 lg:grid-cols-[1fr_180px_150px] gap-2 items-center rounded-lg border border-[var(--border-subtle)] p-2.5">
+                  <div>
+                    <div className="text-xs font-semibold">{ticket.subject}</div>
+                    <div className="text-[10px] text-[var(--text-secondary)]">{ticket.customer_name || ''} · #{toFa(ticket.id)} · {ticket.status}</div>
+                  </div>
+                  <select value={ticket.assigned_to || ''} onChange={e => assignTicket(ticket.id, e.target.value)}
+                    className="w-full p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs">
+                    <option value="">بدون مسئول</option>
+                    {staff.filter(person => person.role === 'support' || person.role === 'admin' || person.role === 'super_admin')
+                      .map(person => <option key={person.id} value={person.id}>{person.display_name || person.username}</option>)}
+                  </select>
+                  <select value={ticket.status} onChange={e => updateTicketStatus(ticket.id, e.target.value)}
+                    className="w-full p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs">
+                    <option value="open">باز</option>
+                    <option value="waiting_support">در انتظار پشتیبانی</option>
+                    <option value="waiting_customer">در انتظار کاربر</option>
+                    <option value="closed">بسته</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       );
     }
@@ -2261,127 +3399,118 @@
     }
 
     // --- 12. Root Shell ---
+    
     const NAV_PAGES = [
-      { id: 'market', label: 'نمای کلی بازار' },
-      { id: 'stock', label: 'صفحهٔ نماد' },
-      { id: 'shareholders', label: 'تحلیل سهام‌داران' },
-      { id: 'portfolio', label: 'پرتفوی سرمایه‌گذاران' },
-      { id: 'screener', label: 'فیلتر پیشرفته' },
-      { id: 'watchlist', label: 'دیده‌بان' },
-      { id: 'account', label: 'حساب و اشتراک' },
-      { id: 'admin', label: 'مدیریت داده' },
+      {id:'market',label:'نمای کلی بازار'},
+      {id:'stock',label:'صفحهٔ نماد'},
+      {id:'shareholders',label:'تحلیل سهام‌داران'},
+      {id:'portfolio',label:'پرتفوی سرمایه‌گذاران'},
+      {id:'screener',label:'فیلتر پیشرفته'},
+      {id:'watchlist',label:'دیده‌بان'},
     ];
-
     function App() {
-      const [page, setPage] = useState('market');
-      const [activeSymbol, setActiveSymbol] = useState('');
-      const [theme, setTheme] = useState('dark');
-      const [currency, setCurrency] = useState('IRR');
-      const [dateMode, setDateMode] = useState('jalali');
-      // Bump after the global flips so every fmtDate/fmtGregorianDate call
-      // re-renders with the new mode (the module-level DATE_MODE alone
-      // does not trigger a render, which left tab-4 text dates stale).
-      const [, setDateModeTick] = useState(0);
-      const [portfolioInvestor, setPortfolioInvestor] = useState('');
-      const openInvestor = (id) => { setPortfolioInvestor(id); setPage('portfolio'); };
-      const [plan, setPlan] = useState('premium');
-      const [quickSearch, setQuickSearch] = useState('');
-      const [searchResults, setSearchResults] = useState([]);
+      const [page,setPage]=useState('market');
+      const [activeSymbol,setActiveSymbol]=useState('');
+      const [theme,setTheme]=useState('dark');
+      const [currency,setCurrency]=useState('IRR');
+      const [portfolioInvestor,setPortfolioInvestor]=useState('');
+      const [user,setUser]=useState(null);
+      const [authLoading,setAuthLoading]=useState(true);
+      const [quickSearch,setQuickSearch]=useState('');
+      const [searchResults,setSearchResults]=useState([]);
+      const dateMode='jalali';
+      const openInvestor=(id)=>{setPortfolioInvestor(id);setPage('portfolio');};
 
-      useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
-      const toggleDateMode = () => setDateMode(m => {
-        const next = m === 'jalali' ? 'gregorian' : 'jalali';
-        setDateModeGlobal(next);
-        return next;
-      });
-
-      // Auto-select first imported stock so Tab 2 works even if شكبير3 was not in a pilot batch
-      useEffect(() => {
-        apiFetch('/api/v1/market/watch?limit=1')
-          .then(res => {
-            if (res.rows && res.rows.length > 0) {
-              setActiveSymbol(prev => prev || res.rows[0].symbol);
-            }
+      useEffect(()=>{
+        setDateModeGlobal('jalali');
+        apiFetch('/api/v1/auth/me')
+          .then(result=>{
+            const current=result.user||null;
+            setUser(current);window.__siteCsrf=current?(current.csrf_token||''):'';
           })
-          .catch(() => {});
-      }, []);
-
-      useEffect(() => {
-        if (!quickSearch.trim()) { setSearchResults([]); return; }
-        const t = setTimeout(() => {
-          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(quickSearch.trim())}`)
-            .then(res => setSearchResults(res.results || []))
-            .catch(() => setSearchResults([]));
-        }, 200);
-        return () => clearTimeout(t);
-      }, [quickSearch]);
-
-      const openStock = (sym) => {
-        setActiveSymbol(sym);
-        setPage('stock');
-        setQuickSearch('');
-        setSearchResults([]);
+          .catch(()=>{setUser(null);window.__siteCsrf='';})
+          .finally(()=>setAuthLoading(false));
+      },[]);
+      useEffect(()=>{
+        apiFetch('/api/v1/market/watch?limit=1&sort_by=market_value')
+          .then(res=>{if(res.rows&&res.rows.length>0)setActiveSymbol(prev=>prev||res.rows[0].symbol);})
+          .catch(()=>{});
+      },[]);
+      useEffect(()=>{
+        if(!quickSearch.trim()){setSearchResults([]);return;}
+        const timer=setTimeout(()=>{
+          apiFetch('/api/v1/stocks/search?q='+encodeURIComponent(quickSearch.trim()))
+            .then(res=>setSearchResults(res.results||[])).catch(()=>setSearchResults([]));
+        },220);
+        return ()=>clearTimeout(timer);
+      },[quickSearch]);
+      useEffect(()=>{
+        if(page==='admin'&&(!user||user.role!=='super_admin'))setPage('market');
+        if(page==='site-admin'&&(!user||!['admin','super_admin'].includes(user.role)))setPage('market');
+        if(page==='investor-affinity'&&(!user||!user.is_premium))setPage('market');
+      },[page,user]);
+      const openStock=(symbol)=>{
+        setActiveSymbol(symbol);setPage('stock');setQuickSearch('');setSearchResults([]);
       };
-
+      const openAdmin=()=>{if(user&&['admin','super_admin'].includes(user.role))setPage('site-admin');};
+      const availablePages=[
+        ...NAV_PAGES,
+        ...(user&&user.is_premium?[{id:'investor-affinity',label:'تحلیل گرایش صنایع'}]:[]),
+        ...(user&&['admin','super_admin'].includes(user.role)?[{id:'site-admin',label:'مدیریت کاربران و پشتیبانی'}]:[]),
+        ...(user&&user.role==='super_admin'?[{id:'admin',label:'مدیریت زیرساخت'}]:[]),
+      ];
       return (
-        <div className={`app-shell min-h-screen flex flex-col text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
+        <div className={'app-shell min-h-screen flex flex-col text-[var(--text-primary)] '+(theme==='light'?'theme-light':'')}>
           <header className="app-header">
             <div className="app-topbar-inner">
-              <button onClick={() => setPage('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
+              <button onClick={()=>setPage('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
                 <span className="app-brand-mark" aria-hidden="true">ر</span>
-                <span className="app-brand-copy"><strong>ره‌نگار بورس</strong><small>تحلیل بازار و مالکیت سهام</small></span>
+                <span className="app-brand-copy"><strong>ره‌نگار بورس</strong><small>تحلیل بازار، مالکیت و پرتفوی</small></span>
               </button>
               <div className="app-search" role="search">
                 <span className="app-search-glyph" aria-hidden="true">⌕</span>
-                <input value={quickSearch}
-                  onChange={e => setQuickSearch(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Escape') { setQuickSearch(''); setSearchResults([]); } }}
-                  placeholder="جستجوی نماد یا نام شرکت..."
-                  aria-label="جستجوی نماد یا نام شرکت"
-                  aria-expanded={searchResults.length > 0}
-                  className="app-search-input" />
-                {searchResults.length > 0 && (
-                  <div className="app-search-results text-xs" role="listbox" aria-label="نتایج جستجو">
-                    {searchResults.map(m => (
-                      <button key={m.symbol} type="button" onClick={() => openStock(m.symbol)} className="w-full text-right flex justify-between items-center gap-3">
-                        <span>{m.symbol}</span>
-                        <span className="text-[var(--text-secondary)] truncate">{m.company_name || m.market}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <input value={quickSearch} onChange={e=>setQuickSearch(e.target.value)}
+                  onKeyDown={e=>{if(e.key==='Escape'){setQuickSearch('');setSearchResults([]);}if(e.key==='Enter'&&searchResults[0])openStock(searchResults[0].symbol);}}
+                  placeholder="جستجوی نماد یا نام شرکت..." aria-label="جستجوی نماد یا نام شرکت"
+                  aria-expanded={searchResults.length>0} className="app-search-input" />
+                {searchResults.length>0&&<div className="app-search-results text-xs" role="listbox" aria-label="نتایج جستجو">
+                  {searchResults.slice(0,12).map(item=><button key={item.symbol} type="button" onClick={()=>openStock(item.symbol)}
+                    className="w-full text-right flex justify-between items-center gap-3">
+                    <span>{item.symbol}</span><span className="text-[var(--text-secondary)] truncate">{item.company_name||item.market}</span>
+                  </button>)}
+                </div>}
               </div>
               <div className="app-toolbar" role="group" aria-label="تنظیمات نمایش">
-                <button onClick={toggleDateMode} className="app-tool-button" title="تغییر تقویم همهٔ تاریخ‌ها">
-                  <span className="app-tool-label">تاریخ</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
+                <button onClick={()=>setCurrency(v=>v==='IRR'?'IRT':'IRR')} className="app-tool-button" title="تغییر واحد پول">
+                  <span className="app-tool-label">واحد</span><strong>{currency==='IRR'?'ریال':'تومان'}</strong>
                 </button>
-                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="app-tool-button" title="تغییر واحد پول">
-                  <span className="app-tool-label">واحد</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
+                <button onClick={()=>setTheme(v=>v==='dark'?'light':'dark')} className="app-tool-button" title="تغییر پوسته">
+                  <span className="app-tool-label">پوسته</span><strong>{theme==='dark'?'روشن':'تیره'}</strong>
                 </button>
-                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="app-tool-button" title="تغییر پوسته">
-                  <span className="app-tool-label">پوسته</span><strong>{theme === 'dark' ? 'روشن' : 'تیره'}</strong>
+                <button onClick={()=>setPage('account')} className="app-tool-button" title={user?'ورود به پروفایل کاربری':'ورود یا ساخت حساب'}>
+                  <span className="app-tool-label">پروفایل</span><strong>{user?(user.display_name||user.username):'ورود / ثبت‌نام'}</strong>
                 </button>
               </div>
             </div>
-            <div className="app-nav-wrap">
-              <nav className="app-nav" aria-label="بخش‌های سامانه">
-                {NAV_PAGES.map(n => (
-                  <button key={n.id} onClick={() => setPage(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
-                    {n.label}
-                  </button>
-                ))}
-              </nav>
-            </div>
+            <div className="app-nav-wrap"><nav className="app-nav" aria-label="بخش‌های سامانه">
+              {availablePages.map(item=><button key={item.id} onClick={()=>setPage(item.id)}
+                aria-current={page===item.id?'page':undefined}
+                className={'app-nav-item '+(page===item.id?'is-active':'')}>{item.label}</button>)}
+            </nav></div>
           </header>
           <main className="app-main flex-1">
-            {page === 'market' && <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode} />}
-            {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
-            {page === 'shareholders' && <ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode} />}
-            {page === 'portfolio' && <PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor} />}
-            {page === 'screener' && <ScreenerPage onOpenStock={openStock} />}
-            {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
-            {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} />}
-            {page === 'admin' && <AdminDashboardPage />}
+            {authLoading&&<div className="px-4 py-2 text-center text-[10px] text-[var(--text-muted)]">در حال بررسی نشست کاربری...</div>}
+            {page==='market'&&<><MarketSectorGroupsPanel currency={currency} user={user}/>
+              <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode}/></>}
+            {page==='stock'&&<StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor}/>}
+            {page==='shareholders'&&<ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode}/>}
+            {page==='portfolio'&&<PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor}/>}
+            {page==='screener'&&<ScreenerPage onOpenStock={openStock}/>}
+            {page==='watchlist'&&<WatchlistPage onOpenStock={openStock} currency={currency}/>}
+            {page==='account'&&<AccountAndPlansPage user={user} setUser={setUser} onOpenAdmin={openAdmin}/>}
+            {page==='investor-affinity'&&user&&user.is_premium&&<InvestorAffinityPage theme={theme} currency={currency}/>}
+            {page==='site-admin'&&user&&['admin','super_admin'].includes(user.role)&&<SiteAdminDashboardPage user={user}/>}
+            {page==='admin'&&user&&user.role==='super_admin'&&<AdminDashboardPage/>}
           </main>
         </div>
       );
