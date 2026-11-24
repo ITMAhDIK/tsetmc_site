@@ -3606,6 +3606,7 @@ class SiteApi:
                     row["id_scheme"], row["shareholder_id"])
         stream = self._holder_history_stream(
             live, ids, as_of_dashed=as_of_dashed, ins_code=ins_code)
+        previous_by_instrument = {}
         for _key, group in itertools.groupby(
                 stream, key=lambda row: (row["date"], row["ins_code"])):
             candidates = sorted(list(group), key=rank)
@@ -3621,6 +3622,39 @@ class SiteApi:
                 chosen["shares"] = None
                 chosen["shares_change"] = None
                 chosen["reference_price"] = None
+
+            # Older source databases may not store explicit previous-share
+            # fields or a change-calculation status. Derive these from the
+            # prior observation, but never bridge a missing-disclosure gap
+            # as if it were a consecutive observation.
+            ins_code_key = chosen["ins_code"]
+            prior = previous_by_instrument.get(ins_code_key)
+            if chosen.get("previous_shares") is None and prior:
+                chosen["previous_shares"] = prior.get("last_known_shares")
+            if chosen.get("previous_date") is None and prior:
+                chosen["previous_date"] = prior.get("last_known_date")
+            status = chosen.get("change_calculation_status")
+            if not status or status == "legacy_unclassified":
+                if prior is None:
+                    status = "first_observation_no_previous"
+                elif chosen.get("shares") is None:
+                    status = "not_disclosed_on_date"
+                elif prior.get("last_observation_shares") is None:
+                    status = "spans_gap"
+                else:
+                    status = "consecutive_observations"
+                    if chosen.get("shares_change") is None:
+                        chosen["shares_change"] = (
+                            int(chosen["shares"]) -
+                            int(prior["last_observation_shares"]))
+                chosen["change_calculation_status"] = status
+            if chosen.get("shares_change_percent") is None:
+                prev = chosen.get("previous_shares")
+                delta = chosen.get("shares_change")
+                if prev not in (None, 0) and delta is not None:
+                    chosen["shares_change_percent"] = round(
+                        100.0 * float(delta) / float(prev), 6)
+
             chosen["ownership_percent_calculated"] = ownership_percent_for_date(
                 chosen.get("shares"), chosen.get("total_company_shares"))
             shares, price = chosen.get("shares"), chosen.get("reference_price")
@@ -3628,6 +3662,12 @@ class SiteApi:
                 shares * price if shares is not None and price is not None and price > 0
                 else None)
             chosen["change_classification"] = classify_portfolio_change(chosen)
+            state = previous_by_instrument.setdefault(ins_code_key, {})
+            state["last_observation_date"] = chosen.get("date")
+            state["last_observation_shares"] = chosen.get("shares")
+            if chosen.get("shares") is not None and not conflict:
+                state["last_known_date"] = chosen.get("date")
+                state["last_known_shares"] = chosen.get("shares")
             yield chosen
 
     def portfolio_history(self, investor_id, params):
