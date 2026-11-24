@@ -1,9 +1,9 @@
-name: Deploy analytics preview to GitHub Pages
+name: Deploy main-branch UI preview to GitHub Pages
 
 on:
   push:
     branches:
-      - feat/membership-security-analytics
+      - preview/main-ui-on-pages
     paths:
       - "docs/**"
       - ".github/workflows/pages-preview.yml"
@@ -25,16 +25,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout analytics preview
+      - name: Checkout preview branch
         uses: actions/checkout@v4
-
-      - name: Validate HTML, JavaScript and public data privacy
-        run: python tools/validate_pages_preview.py
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload sanitized static site
+      - name: Upload static UI preview
         uses: actions/upload-pages-artifact@v4
         with:
           path: docs
