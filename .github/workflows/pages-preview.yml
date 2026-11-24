@@ -28,6 +28,9 @@ jobs:
       - name: Checkout analytics preview
         uses: actions/checkout@v4
 
+      - name: Validate HTML, JavaScript and public data privacy
+        run: python tools/validate_pages_preview.py
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
