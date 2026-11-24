@@ -9,6 +9,7 @@ on:
       - ".github/workflows/pages-investor-preview.yml"
       - "tools/inspect_pages_workbooks.py"
       - "tools/build_static_investor_demo.py"
+      - "tools/audit_manjiil_identity.py"
       - "sector_affinity.py"
       - "docs/investor-preview.html"
       - "docs/data/instrument_sectors.json"
@@ -41,6 +42,9 @@ jobs:
 
       - name: Inspect uploaded workbook schemas
         run: python tools/inspect_pages_workbooks.py
+
+      - name: Audit repeated Manjil shareholder IDs
+        run: python tools/audit_manjiil_identity.py
 
       - name: Build static investor history and affinity data
         run: python tools/build_static_investor_demo.py
