@@ -686,6 +686,8 @@
       const [overview, setOverview] = useState(null);
       const [watch, setWatch] = useState({ total: 0, rows: [] });
       const [groups, setGroups] = useState([]);
+      const [groupCoverage, setGroupCoverage] = useState(null);
+      const [registryAvailable, setRegistryAvailable] = useState(false);
       const [market, setMarket] = useState('ALL');
       const [query, setQuery] = useState('');
       const [loading, setLoading] = useState(true);
@@ -697,7 +699,11 @@
 
       const loadGroups = useCallback(() => {
         apiFetch('/api/v1/market/groups?market=' + encodeURIComponent(market))
-          .then(res => setGroups(res.groups || []))
+          .then(res => {
+            setGroups(res.groups || []);
+            setGroupCoverage(res.classification_coverage_pct);
+            setRegistryAvailable(!!res.registry_available);
+          })
           .catch(e => setError(e.message));
       }, [market]);
 
@@ -843,12 +849,10 @@
             <div className="px-3 pt-3 flex flex-wrap items-center gap-3 text-[10px]">
               <span className="text-[var(--text-secondary)]">
                 پوشش طبقه‌بندی بر اساس ارزش بازار:
-                <strong className="text-[var(--text-primary)] mr-1">{fmtPct((groups || []).reduce((sum,g)=>sum+(Number(g.market_value_rial)||0),0) > 0
-                  ? ((groups.filter(g=>!['سایر / طبقه‌بندی‌نشده'].includes(g.label))
-                    .reduce((sum,g)=>sum+(Number(g.market_value_rial)||0),0) /
-                    (groups || []).reduce((sum,g)=>sum+(Number(g.market_value_rial)||0),0))*100) : 0, 2)}</strong>
+                <strong className="text-[var(--text-primary)] mr-1">{fmtPct(groupCoverage, 2)}</strong>
               </span>
-              <span className="text-[var(--text-muted)]">گروه «سایر» شامل ابزارهای فاقد کد رسمی در رجیستری فعلی است.</span>
+              {!registryAvailable && <span className="text-amber-300">رجیستری رسمی گروه‌های نماد هنوز روی سرور نصب نشده است.</span>}
+              {registryAvailable && <span className="text-[var(--text-muted)]">گروه «سایر» شامل ابزارهای فاقد کد رسمی در رجیستری فعلی است.</span>}
             </div>
             <div className="p-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
               {groups.length === 0 ? (
