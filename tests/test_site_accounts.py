@@ -270,8 +270,8 @@ def test_premium_plan_catalog_and_welcome_promotion(service):
     assert plans["pro_365"]["duration_days"] == 365
     assert plans["pro_365"]["price_toman"] == 28_900_000
     assert catalog["promotions"] == [{
-        "code": "WELCOME10",
-        "discount_percent": 10,
+        "code": "WELCOME5",
+        "discount_percent": 5,
         "new_customer_only": True,
     }]
     assert catalog["referral_reward_toman"] == 100_000
