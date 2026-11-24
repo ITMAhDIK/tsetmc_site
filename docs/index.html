@@ -104,9 +104,15 @@ const DATA_URL="./data/analytics.json";
 const $=id=>document.getElementById(id);
 const nf=new Intl.NumberFormat("fa-IR");
 const n2=new Intl.NumberFormat("fa-IR",{minimumFractionDigits:2,maximumFractionDigits:2});
+const timeToIso=t=>{
+  if(typeof t==="string")return t.slice(0,10);
+  if(t&&typeof t==="object"&&t.year)return String(t.year).padStart(4,"0")+"-"+String(t.month).padStart(2,"0")+"-"+String(t.day).padStart(2,"0");
+  return "";
+};
 const faDate=iso=>{
   if(!iso)return "—";
-  const d=new Date(iso+"T00:00:00Z");
+  const d=new Date(String(iso).slice(0,10)+"T00:00:00Z");
+  if(Number.isNaN(d.getTime()))return "—";
   return new Intl.DateTimeFormat("fa-IR-u-ca-persian",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"UTC"}).format(d);
 };
 const pct=v=>v===null||v===undefined?"—":n2.format(v)+"٪";
@@ -186,9 +192,9 @@ function chartOptions(el){
     layout:{background:{type:"solid",color:"#131c2b"},textColor:"#91a1b8",fontFamily:"Tahoma, sans-serif",attributionLogo:true},
     grid:{vertLines:{color:"#233148"},horzLines:{color:"#233148"}},
     rightPriceScale:{borderColor:"#34445b",scaleMargins:{top:.12,bottom:.12}},
-    timeScale:{borderColor:"#34445b",timeVisible:false,tickMarkFormatter:t=>faDate(String(t).slice(0,10))},
+    timeScale:{borderColor:"#34445b",timeVisible:false,tickMarkFormatter:t=>faDate(timeToIso(t))},
     crosshair:{mode:1,vertLine:{color:"#647b9e",width:1,style:2},horzLine:{color:"#647b9e",width:1,style:2}},
-    localization:{locale:"fa-IR",timeFormatter:t=>faDate(String(t).slice(0,10)),priceFormatter:v=>metric==="pct"?n2.format(v)+"٪":nf.format(Math.round(v))}
+    localization:{locale:"fa-IR",timeFormatter:t=>faDate(timeToIso(t)),priceFormatter:v=>metric==="pct"?n2.format(v)+"٪":nf.format(Math.round(v))}
   };
 }
 function destroyChart(){
@@ -235,7 +241,7 @@ function renderAnalysisPicker(){
 }
 fetch(DATA_URL,{cache:"no-store"}).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(json=>{
   data=json;
-  $("builtAt").textContent="نسخهٔ داده: "+faDate(data.generated+"-01");
+  $("builtAt").textContent="نسخهٔ داده: "+faDate(data.generated);
   renderMetrics();renderWatchlist();renderComparison();renderTable();renderAnalysisPicker();setHeader(activeSymbol());renderChart();
 }).catch(e=>{
   $("metrics").innerHTML='<div class="notice">بارگذاری داده انجام نشد: '+String(e.message)+'</div>';
