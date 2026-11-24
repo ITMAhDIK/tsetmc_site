@@ -67,12 +67,17 @@
       : 'http://127.0.0.1:8000';
 
     async function apiFetch(path, options = {}) {
+      const { headers: requestHeaders = {}, ...requestOptions } = options;
       const csrfHeaders = window.__siteCsrf
         ? { 'X-CSRF-Token': window.__siteCsrf } : {};
       const res = await fetch(`${API_BASE}${path}`, {
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json', ...csrfHeaders, ...(options.headers || {}) },
-        ...options,
+        ...requestOptions,
+        credentials: requestOptions.credentials || 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          ...csrfHeaders,
+          ...requestHeaders,
+        },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
