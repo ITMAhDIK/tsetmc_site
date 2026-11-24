@@ -256,3 +256,22 @@ def test_temporary_staff_password_must_be_changed_before_private_endpoints(servi
         "identifier": "temp_staff_01",
         "password": "new-temporary-password-456",
     }) == user["id"]
+
+
+def test_premium_plan_catalog_and_welcome_promotion(service):
+    catalog = service.public_plans()
+    plans = {item["slug"]: item for item in catalog["plans"]}
+
+    assert plans["pro_30"]["price_toman"] == 2_790_000
+    assert plans["pro_90"]["duration_days"] == 90
+    assert plans["pro_90"]["price_toman"] == 7_990_000
+    assert plans["pro_180"]["duration_days"] == 180
+    assert plans["pro_180"]["price_toman"] == 15_490_000
+    assert plans["pro_365"]["duration_days"] == 365
+    assert plans["pro_365"]["price_toman"] == 28_900_000
+    assert catalog["promotions"] == [{
+        "code": "WELCOME10",
+        "discount_percent": 10,
+        "new_customer_only": True,
+    }]
+    assert catalog["referral_reward_toman"] == 100_000
