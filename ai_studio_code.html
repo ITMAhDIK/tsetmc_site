@@ -1965,13 +1965,8 @@
     // --- 12. Root Shell ---
     const NAV_PAGES = [
       { id: 'market', label: 'نمای کلی بازار' },
-      { id: 'stock', label: 'صفحهٔ نماد' },
-      { id: 'shareholders', label: 'تحلیل سهام‌داران' },
-      { id: 'portfolio', label: 'پرتفوی سرمایه‌گذاران' },
-      { id: 'screener', label: 'فیلتر پیشرفته' },
-      { id: 'watchlist', label: 'دیده‌بان' },
+      { id: 'stock', label: 'تحلیل نماد' },
       { id: 'account', label: 'حساب و اشتراک' },
-      { id: 'admin', label: 'مدیریت داده' },
     ];
 
     function App() {
@@ -1979,30 +1974,31 @@
       const [activeSymbol, setActiveSymbol] = useState('');
       const [theme, setTheme] = useState('dark');
       const [currency, setCurrency] = useState('IRR');
-      const [dateMode, setDateMode] = useState('jalali');
-      // Bump after the global flips so every fmtDate/fmtGregorianDate call
-      // re-renders with the new mode (the module-level DATE_MODE alone
-      // does not trigger a render, which left tab-4 text dates stale).
-      const [, setDateModeTick] = useState(0);
-      const [portfolioInvestor, setPortfolioInvestor] = useState('');
-      const openInvestor = (id) => { setPortfolioInvestor(id); setPage('portfolio'); };
-      const [plan, setPlan] = useState('premium');
+      const [user, setUser] = useState(null);
       const [quickSearch, setQuickSearch] = useState('');
       const [searchResults, setSearchResults] = useState([]);
+      const [authLoading, setAuthLoading] = useState(true);
 
-      useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
-      const toggleDateMode = () => setDateMode(m => {
-        const next = m === 'jalali' ? 'gregorian' : 'jalali';
-        setDateModeGlobal(next);
-        return next;
-      });
-
-      // Auto-select first imported stock so Tab 2 works even if شكبير3 was not in a pilot batch
       useEffect(() => {
-        apiFetch('/api/v1/market/watch?limit=1')
+        setDateModeGlobal('jalali');
+        apiFetch('/api/v1/auth/me')
+          .then(result => {
+            const current = result.user || null;
+            setUser(current);
+            window.__siteCsrf = current ? (current.csrf_token || '') : '';
+          })
+          .catch(() => {
+            setUser(null);
+            window.__siteCsrf = '';
+          })
+          .finally(() => setAuthLoading(false));
+      }, []);
+
+      useEffect(() => {
+        apiFetch('/api/v1/market/watch?limit=1&sort_by=market_value')
           .then(res => {
             if (res.rows && res.rows.length > 0) {
-              setActiveSymbol(prev => prev || res.rows[0].symbol);
+              setActiveSymbol(previous => previous || res.rows[0].symbol);
             }
           })
           .catch(() => {});
@@ -2010,80 +2006,121 @@
 
       useEffect(() => {
         if (!quickSearch.trim()) { setSearchResults([]); return; }
-        const t = setTimeout(() => {
-          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(quickSearch.trim())}`)
+        const timer = setTimeout(() => {
+          apiFetch('/api/v1/stocks/search?q=' + encodeURIComponent(quickSearch.trim()))
             .then(res => setSearchResults(res.results || []))
             .catch(() => setSearchResults([]));
-        }, 200);
-        return () => clearTimeout(t);
+        }, 220);
+        return () => clearTimeout(timer);
       }, [quickSearch]);
 
-      const openStock = (sym) => {
-        setActiveSymbol(sym);
+      useEffect(() => {
+        if (page === 'admin' && (!user || user.role !== 'super_admin')) setPage('market');
+        if (page === 'site-admin' && (!user || !['admin','super_admin'].includes(user.role))) setPage('market');
+      }, [page, user]);
+
+      const openStock = (symbol) => {
+        setActiveSymbol(symbol);
         setPage('stock');
         setQuickSearch('');
         setSearchResults([]);
       };
 
+      const availablePages = [
+        ...NAV_PAGES,
+        ...(user && ['admin','super_admin'].includes(user.role)
+          ? [{ id: 'site-admin', label: 'مدیریت کاربران و پشتیبانی' }] : []),
+        ...(user && user.role === 'super_admin'
+          ? [{ id: 'admin', label: 'مدیریت زیرساخت' }] : []),
+      ];
+
+      const openAdmin = () => {
+        if (user && ['admin','super_admin'].includes(user.role)) setPage('site-admin');
+      };
+
       return (
-        <div className={`app-shell min-h-screen flex flex-col text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
+        <div className={'app-shell min-h-screen flex flex-col text-[var(--text-primary)] ' +
+          (theme === 'light' ? 'theme-light' : '')}>
           <header className="app-header">
             <div className="app-topbar-inner">
               <button onClick={() => setPage('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
                 <span className="app-brand-mark" aria-hidden="true">ر</span>
-                <span className="app-brand-copy"><strong>ره‌نگار بورس</strong><small>تحلیل بازار و مالکیت سهام</small></span>
+                <span className="app-brand-copy">
+                  <strong>ره‌نگار بورس</strong>
+                  <small>تحلیل بازار و گروه‌های صنعتی</small>
+                </span>
               </button>
+
               <div className="app-search" role="search">
                 <span className="app-search-glyph" aria-hidden="true">⌕</span>
                 <input value={quickSearch}
-                  onChange={e => setQuickSearch(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Escape') { setQuickSearch(''); setSearchResults([]); } }}
+                  onChange={event => setQuickSearch(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Escape') { setQuickSearch(''); setSearchResults([]); }
+                    if (event.key === 'Enter' && searchResults[0]) openStock(searchResults[0].symbol);
+                  }}
                   placeholder="جستجوی نماد یا نام شرکت..."
                   aria-label="جستجوی نماد یا نام شرکت"
                   aria-expanded={searchResults.length > 0}
                   className="app-search-input" />
                 {searchResults.length > 0 && (
                   <div className="app-search-results text-xs" role="listbox" aria-label="نتایج جستجو">
-                    {searchResults.map(m => (
-                      <button key={m.symbol} type="button" onClick={() => openStock(m.symbol)} className="w-full text-right flex justify-between items-center gap-3">
-                        <span>{m.symbol}</span>
-                        <span className="text-[var(--text-secondary)] truncate">{m.company_name || m.market}</span>
+                    {searchResults.slice(0, 12).map(item => (
+                      <button key={item.symbol} type="button"
+                        onClick={() => openStock(item.symbol)}
+                        className="w-full text-right flex justify-between items-center gap-3">
+                        <span>{item.symbol}</span>
+                        <span className="text-[var(--text-secondary)] truncate">{item.company_name || item.market}</span>
                       </button>
                     ))}
                   </div>
                 )}
               </div>
+
               <div className="app-toolbar" role="group" aria-label="تنظیمات نمایش">
-                <button onClick={toggleDateMode} className="app-tool-button" title="تغییر تقویم همهٔ تاریخ‌ها">
-                  <span className="app-tool-label">تاریخ</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
+                <button onClick={() => setCurrency(value => value === 'IRR' ? 'IRT' : 'IRR')}
+                  className="app-tool-button" title="تغییر واحد پول">
+                  <span className="app-tool-label">واحد</span>
+                  <strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
                 </button>
-                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="app-tool-button" title="تغییر واحد پول">
-                  <span className="app-tool-label">واحد</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
+                <button onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')}
+                  className="app-tool-button" title="تغییر پوسته">
+                  <span className="app-tool-label">پوسته</span>
+                  <strong>{theme === 'dark' ? 'روشن' : 'تیره'}</strong>
                 </button>
-                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="app-tool-button" title="تغییر پوسته">
-                  <span className="app-tool-label">پوسته</span><strong>{theme === 'dark' ? 'روشن' : 'تیره'}</strong>
+                <button onClick={() => setPage('account')} className="app-tool-button">
+                  <span className="app-tool-label">حساب</span>
+                  <strong>{user ? (user.display_name || user.username) : 'ورود'}</strong>
                 </button>
               </div>
             </div>
             <div className="app-nav-wrap">
               <nav className="app-nav" aria-label="بخش‌های سامانه">
-                {NAV_PAGES.map(n => (
-                  <button key={n.id} onClick={() => setPage(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
-                    {n.label}
+                {availablePages.map(item => (
+                  <button key={item.id} onClick={() => setPage(item.id)}
+                    aria-current={page === item.id ? 'page' : undefined}
+                    className={'app-nav-item ' + (page === item.id ? 'is-active' : '')}>
+                    {item.label}
                   </button>
                 ))}
               </nav>
             </div>
           </header>
+
           <main className="app-main flex-1">
-            {page === 'market' && <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode} />}
-            {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
-            {page === 'shareholders' && <ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode} />}
-            {page === 'portfolio' && <PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor} />}
-            {page === 'screener' && <ScreenerPage onOpenStock={openStock} />}
-            {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
-            {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} />}
-            {page === 'admin' && <AdminDashboardPage />}
+            {authLoading && (
+              <div className="px-4 py-2 text-center text-[10px] text-[var(--text-muted)]">در حال بررسی نشست کاربری...</div>
+            )}
+            {page === 'market' &&
+              <MarketDashboardPage onOpenStock={openStock} currency={currency} dateMode="jalali" user={user} />}
+            {page === 'stock' &&
+              <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode="jalali" user={user} />}
+            {page === 'account' &&
+              <AccountAndPlansPage user={user} setUser={setUser} onOpenAdmin={openAdmin} />}
+            {page === 'site-admin' && user && ['admin','super_admin'].includes(user.role) &&
+              <SiteAdminDashboardPage user={user} />}
+            {page === 'admin' && user && user.role === 'super_admin' &&
+              <AdminDashboardPage />}
           </main>
         </div>
       );
