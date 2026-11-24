@@ -182,6 +182,7 @@
     let rows = (data?.investors || []).filter(person => {
       const searchable = [
         person.shareholder_name, person.id, person.shareholder_id,
+        ...(person.source_ids || []).map(x => x.shareholder_id),
         ...(person.symbols || []).map(x => x.symbol)
       ].join(" ").toLowerCase();
       const matchesQuery = !query || searchable.includes(query);
