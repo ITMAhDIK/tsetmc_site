@@ -93,7 +93,9 @@ def main():
             for date_key, row in dated.items():
                 if not date_key or row["shares"] is None:
                     continue
-                signature = (date_key, row["name"], row["type"], str(row["shares"]))
+                numeric_shares = float(row["shares"])
+                shares_key = str(int(numeric_shares)) if numeric_shares.is_integer() else format(numeric_shares, ".12g")
+                signature = (date_key, row["name"], row["type"], shares_key)
                 signature_pairs.setdefault(signature, set()).add(pair)
 
         parent = {pair: pair for pair in rows_by_pair}
@@ -157,6 +159,17 @@ def main():
             })
         output = {
             "workbook": path.name,
+            "matched_records": [
+                {
+                    "id_scheme": str(r.get("id_scheme") or ""),
+                    "shareholder_id": str(r.get("shareholder_id") or ""),
+                    "date": str(r.get("date_gregorian") or r.get("date") or ""),
+                    "shares": r.get("shares"),
+                    "name": str(r.get("shareholder_name") or ""),
+                    "type": str(r.get("shareholder_type") or ""),
+                }
+                for r in target_history
+            ],
             "target_name": NEEDLE,
             "history_rows_matched": len(target_history),
             "shareholders_rows_matched": len(target_shareholders),
