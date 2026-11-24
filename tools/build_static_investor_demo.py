@@ -309,9 +309,20 @@ def main() -> int:
             text_value(row.get("key")): row.get("value")
             for row in metadata_rows if text_value(row.get("key"))
         }
-        name_keys = ("company_name", "instrument_name", "lval30", "name", "full_name", "company")
+        normalized_metadata = {
+            re.sub(r"[^a-z0-9]", "", str(key).lower()): value
+            for key, value in metadata.items()
+        }
+        name_keys = (
+            "companyname", "instrumentname", "lval30", "lval18afc",
+            "lval18", "fullname", "insname", "name"
+        )
         company_name = next(
-            (text_value(metadata.get(key)) for key in name_keys if text_value(metadata.get(key))),
+            (
+                text_value(normalized_metadata.get(key))
+                for key in name_keys
+                if text_value(normalized_metadata.get(key))
+            ),
             None,
         )
 
@@ -674,11 +685,19 @@ def main() -> int:
                 prices.append({"date": price_date, "price_rial": None, "conflict": True})
         symbol = symbol_latest_label.get(ins_code) or symbol_from_name
         latest_date = latest.get("date")
+        holder_observations = [
+            (person, row)
+            for person in final_investors
+            for row in person.get("timeline", [])
+            if row.get("ins_code") == ins_code and row.get("shares") is not None
+        ]
+        shareholders_snapshot_date = max(
+            (row["date"] for _, row in holder_observations), default=None
+        )
         company_shareholders = []
-        if latest_date:
-            for person in final_investors:
-                for row in person.get("timeline", []):
-                    if row.get("ins_code") == ins_code and row.get("date") == latest_date and row.get("shares") is not None:
+        if shareholders_snapshot_date:
+            for person, row in holder_observations:
+                if row.get("date") == shareholders_snapshot_date:
                         company_shareholders.append({
                             "investor_id": person["id"],
                             "shareholder_name": person["shareholder_name"],
@@ -697,6 +716,7 @@ def main() -> int:
             "subgroup_code": registry.get(ins_code, {}).get("cSoSecVal"),
             "subgroup_label": registry.get(ins_code, {}).get("lSoSecVal"),
             "latest_snapshot": latest,
+            "shareholders_snapshot_date": shareholders_snapshot_date,
             "history": history,
             "price_series": prices,
             "shareholders": sorted(company_shareholders, key=lambda row: row.get("market_value_rial") or 0, reverse=True),
