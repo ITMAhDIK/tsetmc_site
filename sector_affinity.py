@@ -386,13 +386,20 @@ class SectorAffinityAccumulator:
                         / item["total_value"] * decay
                     )
 
-        cutoff = _date(latest_valued_date) - timedelta(days=self.rotation_lookback_days) if latest_valued_date else None
+        # Prefer the latest valued date as the rotation anchor. If no
+        # observation has a usable price, fall back to the last disclosure
+        # date so the data-quality panel still counts/explains excluded changes.
+        rotation_anchor = _date(latest_valued_date or latest_date)
+        cutoff = (
+            rotation_anchor - timedelta(days=self.rotation_lookback_days)
+            if rotation_anchor else None
+        )
         recent_rotation = {}
         recent_category_rotation = {}
         recent_candidates = recent_eligible = recent_excluded = 0
         for item in days:
             item_date = _date(item["date"])
-            if cutoff is None or item_date < cutoff or item_date > _date(latest_valued_date):
+            if cutoff is None or item_date < cutoff or item_date > rotation_anchor:
                 continue
             for code, value in item["rotation_values"].items():
                 recent_rotation[code] = recent_rotation.get(code, 0.0) + value
