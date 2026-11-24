@@ -240,17 +240,22 @@ class SectorAffinityAccumulator:
                 self._counts["cisin_alias_conflicts"] += 1
                 continue
             row = item["row"]
+            delta = _number(row.get("shares_change"))
+            status = row.get("change_calculation_status")
+            if delta is not None:
+                rotation_candidates += 1
+                self._counts["rotation_change_candidates"] += 1
             if row.get("identity_conflict"):
-                delta_candidate = _number(row.get("shares_change"))
-                if delta_candidate is not None:
-                    rotation_candidates += 1
+                if delta is not None:
                     rotation_excluded += 1
-                    self._counts["rotation_change_candidates"] += 1
                     self._counts["rotation_excluded"] += 1
                 continue
             shares = item["shares"]
             if shares is None or shares < 0:
                 self._counts["missing_quantity"] += 1
+                if delta is not None:
+                    rotation_excluded += 1
+                    self._counts["rotation_excluded"] += 1
                 continue
             if not item["price_ok"]:
                 price_date = _date(row.get("reference_price_date"))
@@ -260,6 +265,9 @@ class SectorAffinityAccumulator:
                     self._current_date - price_date
                 ).days > self.max_price_age_days:
                     self._counts["stale_or_future_price"] += 1
+                if delta is not None:
+                    rotation_excluded += 1
+                    self._counts["rotation_excluded"] += 1
                 continue
 
             value = float(item["value"] or 0.0)
@@ -292,11 +300,6 @@ class SectorAffinityAccumulator:
                     })
                     cat["value"] += value
 
-            delta = _number(row.get("shares_change"))
-            status = row.get("change_calculation_status")
-            if delta is not None:
-                rotation_candidates += 1
-                self._counts["rotation_change_candidates"] += 1
             eligible = (
                 delta is not None
                 and status == "consecutive_observations"

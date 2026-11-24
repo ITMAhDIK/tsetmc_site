@@ -112,14 +112,20 @@ class SectorAffinityTests(unittest.TestCase):
 
     def test_missing_stale_and_future_prices_are_not_valued(self):
         result = self.calculate([
-            _row("2026-01-01", "A", 100, None),
-            _row("2026-01-02", "B", 100, 10, reference_price_date="2025-10-01"),
+            _row("2026-01-01", "A", 100, None, shares_change=5,
+                 change_calculation_status="consecutive_observations"),
+            _row("2026-01-02", "B", 100, 10, reference_price_date="2025-10-01",
+                 shares_change=-5, change_calculation_status="consecutive_observations"),
         ])
         self.assertIsNone(result["current_portfolio_value_rial"])
         self.assertEqual(result["data_quality"]["missing_price"], 1)
         self.assertEqual(result["data_quality"]["stale_or_future_price"], 1)
+        self.assertEqual(result["data_quality"]["rotation_change_candidates"], 2)
+        self.assertEqual(result["data_quality"]["rotation_eligible"], 0)
+        self.assertEqual(result["data_quality"]["rotation_excluded"], 2)
         future = self.calculate([
-            _row("2026-01-01", "A", 100, 10, reference_price_date="2026-01-02"),
+            _row("2026-01-01", "A", 100, 10, reference_price_date="2026-01-02",
+                 shares_change=10, change_calculation_status="consecutive_observations"),
         ])
         self.assertIsNone(future["current_portfolio_value_rial"])
 
