@@ -151,7 +151,6 @@
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
     const v = Number(value);
     if (Math.abs(v) >= 1e13) return fa((v/1e13).toFixed(2)) + " همت";
-    if (Math.abs(v) >= 1e12) return fa((v/1e12).toFixed(2)) + " همر";
     if (Math.abs(v) >= 1e9) return fa((v/1e9).toFixed(2)) + " میلیارد ریال";
     return n(v) + " ریال";
   };
