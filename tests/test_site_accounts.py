@@ -300,16 +300,38 @@ def test_premium_plan_catalog_and_welcome_promotion(service):
     catalog = service.public_plans()
     plans = {item["slug"]: item for item in catalog["plans"]}
 
-    assert plans["pro_30"]["price_toman"] == 2_790_000
+    assert plans["pro_30"]["price_toman"] == 690_000
     assert plans["pro_90"]["duration_days"] == 90
-    assert plans["pro_90"]["price_toman"] == 7_990_000
+    assert plans["pro_90"]["price_toman"] == 1_890_000
     assert plans["pro_180"]["duration_days"] == 180
-    assert plans["pro_180"]["price_toman"] == 15_490_000
+    assert plans["pro_180"]["price_toman"] == 3_480_000
     assert plans["pro_365"]["duration_days"] == 365
-    assert plans["pro_365"]["price_toman"] == 28_900_000
+    assert plans["pro_365"]["price_toman"] == 6_600_000
     assert catalog["promotions"] == [{
-        "code": "WELCOME5",
-        "discount_percent": 5,
+        "code": "WELCOME15",
+        "discount_percent": 15,
         "new_customer_only": True,
     }]
     assert catalog["referral_reward_toman"] == 100_000
+
+
+def test_watchlists_and_saved_filters_are_isolated_per_account(service):
+    first_id = service.register({
+        "username": "watch_owner_01",
+        "password": "watch-owner-password-123",
+    })
+    second_id = service.register({
+        "username": "watch_owner_02",
+        "password": "watch-owner-password-123",
+    })
+
+    service.watchlist_add_symbol(first_id, "فملی")
+    service.saved_filter_create(first_id, {
+        "name": "مالکیت بالای ۵ درصد",
+        "filter_ast": {"logic": "AND", "conditions": [{"field": "ownership_percent_calculated", "op": ">=", "value": 5}]},
+    })
+
+    assert service.watchlist_symbols(first_id) == ["فملی"]
+    assert service.watchlist_symbols(second_id) == []
+    assert len(service.saved_filters_list(first_id)["filters"]) == 1
+    assert service.saved_filters_list(second_id)["filters"] == {"filters": []}
