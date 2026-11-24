@@ -42,6 +42,7 @@ class _RecordingHandler(server.Handler):
     ("/api/v1/portfolios/123/history", "GET"),
     ("/api/v1/stocks/ABC/shareholders", "GET"),
     ("/api/v1/stocks/ABC/ownership-series", "GET"),
+    ("/api/v1/stocks/ABC/ownership-series?shareholder_id=123&id_scheme=holder_id", "GET"),
     ("/api/v1/stocks/ABC/data-quality", "GET"),
     ("/api/v1/screener/query", "POST"),
     ("/api/v1/screener/export", "POST"),
