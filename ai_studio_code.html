@@ -1085,978 +1085,739 @@
       );
     }
 
-    // --- 6. Page 3: Cross-Company Shareholder Intelligence ---
-    // --- 6. Page 3: Cross-Company Shareholder Intelligence ---
-    // One row per PERSON (grouped by the pipeline's own identity links),
-    // not per (holder, symbol). Clicking a holder shows their whole
-    // portfolio: first the combined value chart (sum of all symbols),
-    // then one chart per company; clicking a company swaps the main
-    // chart to that company's series.
-    function ShareholderIntelligencePage({ currency, theme, onOpenStock, onOpenInvestor, dateMode }) {
-      const [q, setQ] = useState('');
-      const [symbolFilter, setSymbolFilter] = useState('');
-      const [typeFilter, setTypeFilter] = useState('ALL');
-      const [minPct, setMinPct] = useState('');
-      const [multiOnly, setMultiOnly] = useState(false);
-      const [rows, setRows] = useState([]);
-      const [selected, setSelected] = useState(null);
-      const [portfolio, setPortfolio] = useState(null);
-      const [histories, setHistories] = useState({});
-      const [mainChart, setMainChart] = useState('combined');
-      const [loading, setLoading] = useState(false);
-      const [offset, setOffset] = useState(0);
+    // --- 6. Account, subscription, wallet and support ---
+    function AccountAndPlansPage({ user, setUser, onOpenAdmin }) {
+      const [mode, setMode] = useState('login');
+      const [identifier, setIdentifier] = useState('');
+      const [password, setPassword] = useState('');
+      const [remember, setRemember] = useState(true);
+      const [username, setUsername] = useState('');
+      const [displayName, setDisplayName] = useState('');
+      const [email, setEmail] = useState('');
+      const [phone, setPhone] = useState('');
+      const [referralCode, setReferralCode] = useState(
+        new URLSearchParams(window.location.search).get('ref') || '');
+      const [otp, setOtp] = useState('');
+      const [otpSent, setOtpSent] = useState(false);
+      const [newPassword, setNewPassword] = useState('');
+      const [bootstrapKey, setBootstrapKey] = useState('');
+      const [plans, setPlans] = useState([]);
+      const [promo, setPromo] = useState('WELCOME20');
+      const [wallet, setWallet] = useState({ balance_toman: 0, transactions: [] });
+      const [tickets, setTickets] = useState([]);
+      const [selectedTicket, setSelectedTicket] = useState(null);
+      const [messages, setMessages] = useState([]);
+      const [ticketSubject, setTicketSubject] = useState('');
+      const [ticketMessage, setTicketMessage] = useState('');
+      const [replyMessage, setReplyMessage] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
 
-      useEffect(() => {
-        const timer = setTimeout(() => {
-          setLoading(true);
-          const qs = new URLSearchParams({
-            q, symbol: symbolFilter, shareholder_type: typeFilter,
-            multi_company_only: String(multiOnly), limit: '40', offset: String(offset),
-          });
-          if (minPct !== '') qs.set('min_ownership', minPct);
-          apiFetch(`/api/v1/shareholders/search?${qs.toString()}`)
-            .then(res => setRows(res.rows || []))
-            .finally(() => setLoading(false));
-        }, 250);
-        return () => clearTimeout(timer);
-      }, [q, symbolFilter, typeFilter, minPct, multiOnly, offset]);
+      const isStaff = !!(user && ['support','admin','super_admin'].includes(user.role));
 
-      const loadGroup = (group) => {
-        setSelected(group);
-        setPortfolio(null);
-        setHistories({});
-        setMainChart('combined');
-        apiFetch(`/api/v1/portfolios/${encodeURIComponent(group.group_id)}`)
-          .then(res => setPortfolio(res))
-          .catch(() => {});
-        // One % history per company, using that symbol's own (scheme, id).
-        (group.symbols || []).forEach(s => {
-          const qs = new URLSearchParams({
-            symbol: s.symbol, id_scheme: s.id_scheme,
-            shareholder_id: String(s.shareholder_id),
-          });
-          apiFetch(`/api/v1/shareholders/observation-history?${qs.toString()}`)
-            .then(res => setHistories(prev => ({ ...prev, [s.symbol]: res.history || [] })))
-            .catch(() => {});
-        });
+      const refreshPrivateData = async () => {
+        if (!user) return;
+        const results = await Promise.allSettled([
+          apiFetch('/api/v1/wallet'),
+          apiFetch('/api/v1/tickets'),
+        ]);
+        if (results[0].status === 'fulfilled') setWallet(results[0].value);
+        if (results[1].status === 'fulfilled') setTickets(results[1].value.tickets || []);
       };
 
-      const combinedSeries = useMemo(() => {
-        // Values in همر (1e12 Rial) in IRR mode, همت (1e12 Toman = 1e13 Rial)
-        // in IRT mode -- same divisor as the portfolio page.
-        const divisor = currency === 'IRT' ? 1e13 : 1e12;
-        return (portfolio?.history_series || []).map(p => ({
-          time: p.time,
-          value: (p.combined_value_rial || 0) / divisor,
-        }));
-      }, [portfolio, currency]);
-
-      const valuedPositions = portfolio
-        ? [...(portfolio.confirmed_positions || []), ...(portfolio.probable_positions || [])]
-        : [];
-      const totalValue = portfolio
-        ? ((portfolio.summary?.confirmed_combined_value_rial || 0)
-           + (portfolio.summary?.probable_combined_value_rial || 0))
-        : null;
-      const totalShares = valuedPositions.reduce((a, p) => a + (p.shares || 0), 0);
-
-      return (
-        <div className="space-y-3 text-xs">
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
-            <div>
-              <h1 className="text-sm font-bold">پایگاه جامع سهام‌داران در تمام شرکت‌های واردشده</h1>
-              <p className="text-[11px] text-[var(--text-secondary)]">هر سطر یک سهام‌دار است — با همهٔ شرکت‌هایی که در آن‌ها سهام دارد. جستجو بر اساس نام، شناسه TSETMC، نماد، حداقل درصد مالکیت و حضور هم‌زمان در چند شرکت</p>
-            </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <input value={q} onChange={e => { setQ(e.target.value); setOffset(0); }} placeholder="نام سهام‌دار یا شناسه..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-52" />
-              <input value={symbolFilter} onChange={e => { setSymbolFilter(e.target.value); setOffset(0); }} placeholder="نماد..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-24" />
-              <input type="number" value={minPct} onChange={e => { setMinPct(e.target.value); setOffset(0); }} placeholder="حداقل ٪" className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-24 num" />
-              <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setOffset(0); }} className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
-                <option value="ALL">همه</option>
-                <option value="individual">حقیقی</option>
-                <option value="legal">حقوقی</option>
-              </select>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={multiOnly} onChange={e => { setMultiOnly(e.target.checked); setOffset(0); }} />
-                <span>فقط سهام‌داران چندشرکتی</span>
-              </label>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-            <div className="lg:col-span-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
-              <table className="w-full text-right">
-                <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                  <tr><th className="p-2">نام سهام‌دار</th><th className="p-2">نمادها</th><th className="p-2">شناسه</th><th className="p-2">بیشترین مالکیت٪</th><th className="p-2">آخرین تغییر</th></tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {loading ? (
-                    <tr><td colSpan="5" className="p-6 text-center text-[var(--text-secondary)]">در حال جستجو...</td></tr>
-                  ) : rows.map((r, i) => (
-                    <tr key={r.group_id} onClick={() => loadGroup(r)} className="cursor-pointer hover:bg-[var(--bg-elevated)]">
-                      <td className="p-2 font-semibold">{r.shareholder_name}</td>
-                      <td className="p-2">
-                        <span className="font-bold text-blue-400">{toFa(r.n_companies)} شرکت</span>
-                        <span className="text-[10px] text-[var(--text-secondary)] block">{(r.symbols || []).slice(0, 3).map(s => s.symbol).join('، ')}{(r.symbols || []).length > 3 ? '…' : ''}</span>
-                      </td>
-                      <td className="p-2 num text-[10px]">{r.shareholder_id}</td>
-                      <td className="p-2 num font-semibold">{fmtPct(r.latest_ownership_pct)}</td>
-                      <td className={`p-2 num ${r.latest_shares_change > 0 ? 'text-[var(--up)]' : r.latest_shares_change < 0 ? 'text-[var(--down)]' : ''}`}>{fmtNum(r.latest_shares_change)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="p-2 border-t border-[var(--border-subtle)] flex justify-between">
-                <button disabled={offset === 0} onClick={() => setOffset(o => Math.max(0, o - 40))} className="px-2 py-1 rounded border border-[var(--border-subtle)] disabled:opacity-40">صفحه قبل</button>
-                <button disabled={rows.length < 40} onClick={() => setOffset(o => o + 40)} className="px-2 py-1 rounded border border-[var(--border-subtle)] disabled:opacity-40">صفحه بعد</button>
-              </div>
-            </div>
-
-            <div className="lg:col-span-5 p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2.5 lg:sticky lg:top-24 self-start">
-              {selected ? (
-                <>
-                  <div className="flex justify-between items-start gap-2">
-                    <div>
-                      <div className="font-bold text-sm">{selected.shareholder_name}</div>
-                      <div className="text-[11px] text-[var(--text-secondary)]">
-                        {selected.shareholder_type === 'legal' ? 'حقوقی' : selected.shareholder_type === 'individual' ? 'حقیقی' : ''} | بازه مشاهده: <span className="num">{fmtDate(selected.first_observed_date_jalali)} تا {fmtDate(selected.last_observed_date_jalali)}</span>
-                      </div>
-                      <div className="mt-1">
-                        ارزش سرمایه‌گذاری: <span className="font-bold num">{totalValue !== null ? fmtMoney(totalValue, currency) : '…'}</span>
-                        {' '} | تعداد سهام: <span className="font-bold num">{fmtNum(totalShares)}</span>
-                        {' '} | شرکت‌ها: <span className="font-bold num">{toFa(selected.n_companies)}</span>
-                      </div>
-                    </div>
-                    <button onClick={() => onOpenInvestor && onOpenInvestor(selected.group_id)} className="px-2 py-1 rounded border border-blue-500/40 text-blue-400 shrink-0">پرتفوی کامل در تب ۴</button>
-                  </div>
-                  <div>
-                    <div className="font-bold mb-1 flex justify-between items-center">
-                      <span>{mainChart === 'combined' ? `مجموع ارزش همهٔ نمادها (${currency === 'IRT' ? 'همت' : 'همر'})` : `روند مالکیت — ${mainChart}`}</span>
-                      {mainChart !== 'combined' && (
-                        <button onClick={() => setMainChart('combined')} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] text-[11px]">بازگشت به مجموع</button>
-                      )}
-                    </div>
-                    <LWChart data={mainChart === 'combined' ? combinedSeries : (histories[mainChart] || [])} height={220} theme={theme} color="#00c853" unitLabel={mainChart === 'combined' ? (currency === 'IRT' ? 'همت' : 'همر') : '٪'} dateMode={dateMode} />
-                  </div>
-                  {(selected.symbols || []).length > 0 && (
-                    <div className="space-y-2">
-                      <div className="font-bold">چارت هر شرکت</div>
-                      {selected.symbols.map(s => (
-                        <div key={s.symbol} onClick={() => setMainChart(s.symbol)} className={`p-2 rounded border cursor-pointer ${mainChart === s.symbol ? 'border-blue-500/60 bg-blue-500/5' : 'border-[var(--border-subtle)]'}`}>
-                          <div className="flex justify-between items-center mb-1">
-                            <button onClick={(e) => { e.stopPropagation(); onOpenStock(s.symbol); }} className="font-bold text-blue-400 underline">{s.symbol}</button>
-                            <span className="num text-[var(--text-secondary)]">{fmtPct(s.latest_ownership_pct)} | {fmtNum(s.shares)} سهم</span>
-                          </div>
-                          <LWChart data={histories[s.symbol] || []} height={120} theme={theme} color="#00c853" unitLabel="٪" dateMode={dateMode} />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="p-8 text-center text-[var(--text-secondary)]">یک سطر را برای مشاهده پرتفوی کامل سهام‌دار انتخاب کنید.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // --- 7. Page 4: Investor Portfolio Reconstruction ---
-    function PortfolioReconstructionPage({ currency, theme, onOpenStock, dateMode, initialInvestor = '' }) {
-      const [invQuery, setInvQuery] = useState('');
-      const [invSort, setInvSort] = useState('linked');
-      const [investors, setInvestors] = useState([]);
-      const [selectedId, setSelectedId] = useState('');
-      const [idInput, setIdInput] = useState('');
-      const [asOfDate, setAsOfDate] = useState('');
-      const [portfolio, setPortfolio] = useState(null);
-      const [loading, setLoading] = useState(false);
-      const [compQuery, setCompQuery] = useState('');
-      const [compResults, setCompResults] = useState([]);
-      const [compSymbol, setCompSymbol] = useState('');
-      const [compHolders, setCompHolders] = useState([]);
-      const [compLoading, setCompLoading] = useState(false);
-      // Historical observations are fetched only for the selected security,
-      // in bounded pages; the full investor ledger is never loaded at once.
-      const [historyInsCode, setHistoryInsCode] = useState('');
-      const [historyOffset, setHistoryOffset] = useState(0);
-      const [historyData, setHistoryData] = useState(null);
-      const [historyLoading, setHistoryLoading] = useState(false);
-      const HISTORY_PAGE_SIZE = 100;
-
-      // Open a specific investor (e.g. clicked on a holder on the
-      // dashboard): the dashboard passes "scheme:id".
-      useEffect(() => { if (initialInvestor) setSelectedId(initialInvestor); }, [initialInvestor]);
-
-      // Direct ID entry: "share_id:123456" / "ondate_share_id:123456",
-      // or a bare number (treated as share_id).
-      const applyIdInput = () => {
-        const v = idInput.trim();
-        if (!v) return;
-        setSelectedId(v.includes(':') ? v : `share_id:${v}`);
-      };
-
-      // Find an investor through a company: search the company, pick it,
-      // and its shareholders appear below -- click one to load them.
       useEffect(() => {
-        if (!compQuery.trim()) { setCompResults([]); return; }
-        const timer = setTimeout(() => {
-          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(compQuery.trim())}&limit=8`)
-            .then(res => setCompResults(res.results || []))
-            .catch(() => {});
-        }, 200);
-        return () => clearTimeout(timer);
-      }, [compQuery]);
-
-      useEffect(() => {
-        if (!compSymbol) { setCompHolders([]); return; }
-        setCompLoading(true);
-        apiFetch(`/api/v1/stocks/${encodeURIComponent(compSymbol)}/shareholders`)
-          .then(res => setCompHolders(res.rows || []))
-          .catch(() => setCompHolders([]))
-          .finally(() => setCompLoading(false));
-      }, [compSymbol]);
-
-      useEffect(() => {
-        const timer = setTimeout(() => {
-          apiFetch(`/api/v1/portfolios/investors?q=${encodeURIComponent(invQuery)}&limit=30&sort_by=${invSort}`)
-            .then(res => {
-              const list = res.investors || [];
-              setInvestors(list);
-              if (!selectedId && list.length > 0) setSelectedId(list[0].id);
-            });
-        }, 200);
-        return () => clearTimeout(timer);
-      }, [invQuery, invSort]);
-
-      useEffect(() => {
-        if (!selectedId) return;
-        setLoading(true);
-        const qs = asOfDate ? `?as_of_date=${encodeURIComponent(asOfDate)}` : '';
-        apiFetch(`/api/v1/portfolios/${encodeURIComponent(selectedId)}${qs}`)
-          .then(setPortfolio)
-          .finally(() => setLoading(false));
-      }, [selectedId, asOfDate]);
-
-      useEffect(() => {
-        setHistoryInsCode('');
-        setHistoryOffset(0);
-        setHistoryData(null);
-      }, [selectedId, asOfDate]);
-
-      useEffect(() => {
-        if (!selectedId || !historyInsCode) {
-          setHistoryData(null);
-          return;
-        }
-        let active = true;
-        setHistoryLoading(true);
-        const params = new URLSearchParams({
-          ins_code: historyInsCode,
-          limit: String(HISTORY_PAGE_SIZE),
-          offset: String(historyOffset),
-        });
-        if (asOfDate) params.set('as_of_date', asOfDate);
-        apiFetch(`/api/v1/portfolios/${encodeURIComponent(selectedId)}/history?${params.toString()}`)
-          .then(result => { if (active) setHistoryData(result); })
-          .catch(() => { if (active) setHistoryData({ rows: [], total: 0, error: true }); })
-          .finally(() => { if (active) setHistoryLoading(false); });
-        return () => { active = false; };
-      }, [selectedId, historyInsCode, historyOffset, asOfDate]);
-
-      const sum = portfolio?.summary || {};
-      const chartSeries = useMemo(() => {
-        // Values are plotted only for dates with at least one valid disclosed position.
-        const divisor = currency === 'IRT' ? 1e13 : 1e12;
-        return (portfolio?.history_series || [])
-          .filter(p => p.combined_value_rial !== null && p.combined_value_rial !== undefined)
-          .map(p => ({ time: p.time, value: p.combined_value_rial / divisor }));
-      }, [portfolio, currency]);
-
-      const historyChangeLabel = (row) => ({
-        first_observation: 'اولین مشاهده؛ سابقهٔ قبلی موجود نیست',
-        net_increase: 'افزایش خالص مشاهده‌شده',
-        net_decrease: 'کاهش خالص مشاهده‌شده؛ فروش قطعی نیست',
-        not_disclosed: 'در این تاریخ افشا نشده',
-        change_after_gap: 'تغییر پس از فاصلهٔ مشاهدات',
-        capital_action: 'رویداد سرمایه‌ای',
-        identity_conflict: 'تعارض شناسه؛ مقدار نامعتبر',
-        observation: 'مشاهدهٔ موجودی',
-      })[row.change_classification] || row.change_type || 'نامشخص';
-
-      const historyExitLabel = (item) => ({
-        assumed_sold: 'فروش فرضی؛ خروج از فهرست افشا',
-        currently_disclosed: 'در آخرین افشا مشاهده شده',
-        unknown: 'وضعیت خروج نامشخص',
-      })[item.exit_status] || 'وضعیت نامشخص';
-
-      return (
-        <div className="portfolio-page space-y-3 text-xs">
-          <section className="portfolio-heading">
-            <div className="portfolio-eyebrow">تحلیل مالکیت و سوابق سهام‌داری</div>
-            <h1>بازسازی پرتفوی سرمایه‌گذاران</h1>
-            <p>دارایی‌های مستقیم و پیوندهای هویتی محتمل را جداگانه ببینید، تغییرات هر نماد را در طول زمان بررسی کنید و تاریخ مبنای تحلیل را کنترل کنید.</p>
-          </section>
-          <section className="portfolio-control-panel">
-            <div className="portfolio-panel-heading">
-              <div><h2>انتخاب سرمایه‌گذار</h2><p>ابتدا نام یا شناسه را پیدا کنید؛ سپس پرتفوی و دفتر تاریخچه به‌صورت جداگانه نمایش داده می‌شود.</p></div>
-              <span className="portfolio-live-tag">هویت‌محور · بدون ادغام نامی</span>
-            </div>
-            <div className="portfolio-controls-grid">
-              <div className="portfolio-field">
-                <label htmlFor="portfolio-investor-search">جستجوی سرمایه‌گذار</label>
-                <input id="portfolio-investor-search" value={invQuery} onChange={e => setInvQuery(e.target.value)} placeholder="نام یا بخشی از شناسه..." />
-              </div>
-              <div className="portfolio-field">
-                <label htmlFor="portfolio-investor-sort">ترتیب نمایش نتایج</label>
-                <select id="portfolio-investor-sort" value={invSort} onChange={e => setInvSort(e.target.value)} title="مرتب‌سازی فهرست سرمایه‌گذاران">
-                  <option value="linked">بیشترین رکورد</option><option value="inferred">بیشترین لینک استنتاجی</option>
-                </select>
-              </div>
-              <div className="portfolio-field">
-                <label htmlFor="portfolio-investor-select">سرمایه‌گذار انتخاب‌شده</label>
-                <select id="portfolio-investor-select" value={selectedId} onChange={e => setSelectedId(e.target.value)}>
-                  {investors.map(inv => (
-                    <option key={inv.id} value={inv.id}>
-                      {inv.canonical_name} ({toFa(inv.verified_links_count)} تأیید / {toFa(inv.inferred_links_count || 0)} استنتاجی / {toFa(inv.linked_records_count)} کل)
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="portfolio-controls-secondary">
-              <div className="portfolio-field">
-                <label htmlFor="portfolio-direct-id">ورود مستقیم شناسهٔ منبع</label>
-                <input id="portfolio-direct-id" value={idInput} onChange={e => setIdInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyIdInput(); }} placeholder="مثلاً share_id:123456" className="num" title="شناسهٔ سرمایه‌گذار به شکل scheme:id — عدد خالی یعنی share_id" />
-              </div>
-              <button onClick={applyIdInput} className="portfolio-apply-button">اعمال شناسه</button>
-              <div className="portfolio-field">
-                <label htmlFor="portfolio-as-of-date">تاریخ مبنای تحلیل (اختیاری)</label>
-                <input id="portfolio-as-of-date" type="date" value={asOfDate} onChange={e => setAsOfDate(e.target.value)} className="num" title="تاریخ میلادی مبنا" />
-              </div>
-              {asOfDate && <span className="text-[11px] text-[var(--text-secondary)] num" aria-live="polite">{fmtGregorianDate(asOfDate)}</span>}
-            </div>
-            <p className="portfolio-control-help">توجه: شناسه‌های «تأییدشده» و «استنتاجی» در سامانه یک سطح اطمینان ندارند؛ مقادیر آن‌ها در خلاصهٔ پرتفوی تفکیک شده‌اند.</p>
-          </section>
-
-          <section className="portfolio-lookup-panel p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
-            <div className="font-bold">شروع از روی یک شرکت</div>
-            <p className="text-[11px] text-[var(--text-secondary)]">نماد را انتخاب کنید تا فهرست سهام‌داران عمدهٔ آن شرکت نمایش داده شود؛ با انتخاب هر فرد، پرتفوی او باز می‌شود.</p>
-            <div className="flex flex-wrap gap-2">
-              <input value={compQuery} onChange={e => { setCompQuery(e.target.value); setCompSymbol(''); }} placeholder="نام یا نماد شرکت را جستجو کنید..." className="portfolio-company-search-input px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-64" aria-label="جستجوی شرکت برای یافتن سهام‌داران" />
-              {compResults.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {compResults.map(r => (
-                    <button key={r.symbol} onClick={() => { setCompSymbol(r.symbol); setCompQuery(r.symbol); setCompResults([]); }} className={`px-2.5 py-1.5 rounded border border-[var(--border-subtle)] ${compSymbol === r.symbol ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>{r.symbol} — {r.company_name}</button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {compSymbol && (
-              <div className="space-y-1">
-                <div className="text-[var(--text-secondary)]">سهام‌داران عمدهٔ {compSymbol} — روی یک سهام‌دار کلیک کنید تا پرتفوی او باز شود:</div>
-                {compLoading ? (
-                  <div className="text-[var(--text-secondary)]">در حال واکشی سهام‌داران...</div>
-                ) : compHolders.length === 0 ? (
-                  <div className="text-[var(--text-secondary)]">سهام‌داری برای این نماد ثبت نشده است.</div>
-                ) : (
-                  <div className="max-h-56 overflow-y-auto divide-y divide-[var(--border-subtle)]">
-                    {compHolders.map(h => (
-                      <div key={`${h.id_scheme}:${h.shareholder_id}`} role="button" tabIndex={0} onClick={() => setSelectedId(`${h.id_scheme}:${h.shareholder_id}`)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedId(`${h.id_scheme}:${h.shareholder_id}`); } }} className="py-1.5 flex justify-between gap-2 cursor-pointer hover:text-blue-400">
-                        <span className="font-semibold">{h.shareholder_name} <span className="text-[10px] text-[var(--text-secondary)] num">{h.id_scheme}:{h.shareholder_id}</span></span>
-                        <span className="num">{fmtNum(h.shares)} سهم ({fmtPct(h.ownership_percent_calculated)})</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-
-          {loading ? (
-            <div className="p-8 text-center text-[var(--text-secondary)]">در حال بازسازی پرتفوی...</div>
-          ) : portfolio && (
-            <>
-              <div className="portfolio-kpis grid grid-cols-1 md:grid-cols-4 gap-2.5">
-                <div className="portfolio-kpi portfolio-kpi--primary p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-                  <div className="text-[var(--text-secondary)]">ارزش کل تأییدشده (ترکیبی)</div>
-                  <div className="text-base font-bold num text-emerald-400 mt-1">{fmtMoney(sum.confirmed_combined_value_rial, currency)}</div>
-                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">فاقد قیمت معتبر: {toFa(sum.positions_missing_price_count)} پوزیشن</div>
-                </div>
-                <div className="portfolio-kpi portfolio-kpi--probable p-3 rounded border border-blue-500/30 bg-blue-500/5">
-                  <div className="text-blue-300">ارزش محتمل (تطبیق دقیق استنتاجی)</div>
-                  <div className="text-base font-bold num text-blue-400 mt-1">{fmtMoney(sum.probable_combined_value_rial, currency)}</div>
-                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">شرکت‌های محتمل: {toFa(sum.probable_companies_count)}</div>
-                </div>
-                <div className="portfolio-kpi portfolio-kpi--uncertain p-3 rounded border border-amber-500/30 bg-amber-500/5">
-                  <div className="text-amber-300">کاندیداهای غیرقطعی (مستثنی)</div>
-                  <div className="text-base font-bold num mt-1">{toFa(sum.uncertain_candidates_count)}</div>
-                </div>
-                <div className="portfolio-kpi p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-                  <div className="text-[var(--text-secondary)]">وضعیت سرمایه‌گذار</div>
-                  <div className="mt-1"><IdentityBadge status={portfolio.investor.verification_status} /></div>
-                </div>
-              </div>
-
-              {portfolio.identity_evidence && (
-                <section className="portfolio-identity-panel p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
-                  <div className="font-bold">شواهد و سطح اطمینان هویت</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
-                    <div>وضعیت در رجیستری هویت: <IdentityBadge status={portfolio.identity_evidence.registry_identity_status} /></div>
-                    <div>نوع سهام‌دار: {portfolio.identity_evidence.shareholder_type === 'legal' ? 'حقوقی' : portfolio.identity_evidence.shareholder_type === 'individual' ? 'حقیقی' : '—'}</div>
-                    <div>اولین مشاهده: <span className="num">{fmtDate(portfolio.identity_evidence.first_seen_date_jalali)}</span> — آخرین مشاهده: <span className="num">{fmtDate(portfolio.identity_evidence.last_seen_date_jalali)}</span></div>
-                    <div>رکوردهای پیوندخورده: <span className="num">{toFa(portfolio.identity_evidence.linked_records_count)}</span> (تأییدشده: <span className="num">{toFa(portfolio.identity_evidence.verified_links_count)}</span>، استنتاجی: <span className="num">{toFa(portfolio.identity_evidence.inferred_links_count)}</span>)</div>
-                    <div>پوزیشن‌ها بر اساس سطح اطمینان — تأییدشده: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.confirmed || 0)}</span>، محتمل: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.probable || 0)}</span>، غیرقطعی: <span className="num">{toFa(portfolio.identity_evidence.positions_by_tier?.uncertain || 0)}</span></div>
-                  </div>
-                  <div className="text-[11px] text-[var(--text-secondary)]">
-                    «تأییدشده» یعنی پوزیشن رکورد مستقیم همین شناسه است (یا منبع خودش هر دو شناسه را در یک ردیف گذاشته است). «محتمل» یعنی پوزیشن زیر یک شناسهٔ دوقلوی استنتاجی است: در همهٔ تاریخ‌ها تاریخ + تعداد سهام + نام دقیقاً یکسان بوده، فقط یک کاندید وجود داشته، هیچ تناقضی در هیچ تاریخی نبوده، و برای اشخاص حقیقیِ بدون نام (شخص حقیقی) حداقل دو تاریخ مستقل هم‌خوانی داشته‌اند؛ نام فقط برای بررسی سازگاری استفاده شده، نه به‌تنهایی. بقیهٔ رکوردها «غیرقطعی» هستند و در هیچ جمعی نمی‌آیند.
-                  </div>
-                </section>
-              )}
-
-              {portfolio.sector_affinity && (
-                <section className="portfolio-sector-affinity rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
-                  <div className="p-3 border-b border-[var(--border-subtle)]">
-                    <h3 className="font-bold text-sm">گرایش و چرخش سرمایه در گروه‌های بورسی</h3>
-                    <p className="mt-1 text-[11px] text-[var(--text-secondary)]">تخصیص فعلی، گرایش تاریخی و تغییر خالص اخیر جداگانه محاسبه می‌شوند؛ این خروجی اثبات معامله نیست.</p>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
-                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">ارزش مشاهده‌شده</div><div className="font-bold num mt-1">{fmtMoney(portfolio.sector_affinity.current_portfolio_value_rial, currency)}</div></div>
-                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">اطمینان داده</div><div className="font-bold num mt-1">{fmtNum(portfolio.sector_affinity.data_quality?.confidence_score)} از ۱۰۰</div></div>
-                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">پوشش ارزش‌گذاری</div><div className="font-bold num mt-1">{fmtPct(portfolio.sector_affinity.data_quality?.valuation_coverage_pct, 1)}</div></div>
-                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">پوشش گروه رسمی</div><div className="font-bold num mt-1">{fmtPct(portfolio.sector_affinity.data_quality?.sector_classification_coverage_pct, 1)}</div></div>
-                    </div>
-                  </div>
-                  {portfolio.sector_affinity.status === 'registry_missing' ? (
-                    <div className="p-3 text-amber-300 text-[11px]">
-                      مرجع گروه‌های رسمی هنوز ساخته نشده است. ابزار tools/sync_instrument_sectors.py را مطابق docs/sector-affinity.md اجرا کنید. تا آن زمان سیستم گروهی را حدس نمی‌زند.
-                    </div>
-                  ) : portfolio.sector_affinity.status === 'no_valued_history' ? (
-                    <div className="p-3 text-[var(--text-secondary)]">در تاریخچه، ترکیب تعداد سهام و قیمت مرجع معتبر پیدا نشد.</div>
-                  ) : (
-                    <>
-                      <div className="p-3 border-b border-[var(--border-subtle)]">
-                        <div className="font-bold mb-2">گروه رسمی TSETMC</div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-right">
-                            <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                              <tr><th className="p-2">کد / گروه</th><th className="p-2">تخصیص فعلی</th><th className="p-2">گرایش تاریخی</th><th className="p-2">چرخش خالص ۹۰ روز</th><th className="p-2">امتیاز علاقه</th></tr>
-                            </thead>
-                            <tbody className="divide-y divide-[var(--border-subtle)]">
-                              {(portfolio.sector_affinity.official_groups || []).length === 0 ? (
-                                <tr><td colSpan="5" className="p-3 text-center text-[var(--text-secondary)]">گروه رسمی قابل‌محاسبه‌ای وجود ندارد.</td></tr>
-                              ) : portfolio.sector_affinity.official_groups.map(group => (
-                                <tr key={group.code}>
-                                  <td className="p-2"><div className="font-semibold">{group.label}</div><div className="text-[10px] text-[var(--text-secondary)] num">{group.code}</div></td>
-                                  <td className="p-2 num">{fmtPct(group.current_weight_pct, 2)}</td>
-                                  <td className="p-2 num">{fmtPct(group.historical_affinity_pct, 2)}</td>
-                                  <td className="p-2"><div className={group.rotation_direction === 'increasing' ? 'text-emerald-400' : group.rotation_direction === 'decreasing' ? 'text-rose-400' : 'text-[var(--text-secondary)]'}>{group.rotation_direction === 'increasing' ? 'افزایش خالص' : group.rotation_direction === 'decreasing' ? 'کاهش خالص' : 'خنثی'}</div><div className="num text-[10px]">{fmtMoney(group.recent_net_change_value_rial, currency)}</div></td>
-                                  <td className="p-2 num font-bold">{fmtNum(group.interest_score)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                      <div className="p-3 border-b border-[var(--border-subtle)]">
-                        <div className="font-bold mb-2">دسته‌بندی تجمیعی داشبورد</div>
-                        {(portfolio.sector_affinity.dashboard_categories || []).length === 0 ? (
-                          <p className="text-[11px] text-[var(--text-secondary)]">هنوز نگاشت صریحی بین کدهای رسمی و دسته‌های داشبورد تعریف نشده است. فایل dashboard_sector_categories.json را پس از بازبینی گروه‌ها تکمیل کنید.</p>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            {portfolio.sector_affinity.dashboard_categories.map(category => (
-                              <div key={category.code} className="rounded bg-[var(--bg-elevated)] p-2 min-w-36">
-                                <div className="font-semibold">{category.label}</div>
-                                <div className="num mt-1">{fmtPct(category.current_weight_pct, 2)}</div>
-                                <div className="text-[10px] text-[var(--text-secondary)]">گرایش تاریخی: {fmtPct(category.historical_affinity_pct, 2)}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <div className="p-3 text-[10px] text-[var(--text-secondary)] space-y-1">
-                        <div>تعداد موقعیت ارزش‌گذاری‌شده: {fmtNum(portfolio.sector_affinity.data_quality?.valued_positions)}؛ تعارض هویت: {fmtNum(portfolio.sector_affinity.data_quality?.identity_conflicts)}؛ تعارض CISIN: {fmtNum(portfolio.sector_affinity.data_quality?.cisin_alias_conflicts)}؛ تغییرات قابل‌استفاده برای چرخش: {fmtNum(portfolio.sector_affinity.data_quality?.rotation_eligible)}.</div>
-                        <div>وزن امتیاز: ۵۰٪ تخصیص فعلی، ۳۰٪ گرایش تاریخی با نیمه‌عمر شش‌ماهه و ۲۰٪ چرخش خالص ۹۰ روز اخیر. تغییر خالص تعداد سهام × قیمت مرجع است، نه قیمت اجرای معامله.</div>
-                        {(portfolio.sector_affinity.warnings || []).map(warning => <div key={warning} className="text-amber-300">{warning}</div>)}
-                      </div>
-                    </>
-                  )}
-                </section>
-              )}
-
-              {portfolio.historical_summary && (
-                <section className="portfolio-history-panel rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
-                  <div className="p-3 border-b border-[var(--border-subtle)]">
-                    <h3 className="font-bold text-sm">تاریخچهٔ تمام نمادهای مشاهده‌شده</h3>
-                    <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                      این فهرست شامل نمادهایی است که در گذشته برای این هویت ثبت شده‌اند، حتی اگر در آخرین فهرست سهام‌داران دیده نشوند.
-                    </p>
-                    <p className="portfolio-exit-note mt-2 text-[11px] text-amber-300">
-                      راهنمای خروج: اگر پس از آخرین مشاهدهٔ سهام‌دار، snapshot جدیدی از شرکت وجود داشته باشد ولی نام او در فهرست افشاشده نباشد، وضعیت «فروش فرضی» نمایش داده می‌شود. این فرض ممکن است اشتباه باشد؛ سهام‌دار شاید فقط به زیر آستانهٔ افشا رسیده باشد. داده‌های TSETMC به‌تنهایی معاملهٔ فروش را اثبات نمی‌کنند.
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3">
-                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">نمادهای تاریخی</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.symbols_count)}</div></div>
-                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">کل مشاهدات</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.observations_count)}</div></div>
-                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">افزایش/کاهش خالص</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.change_events_count)}</div></div>
-                    <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">تعارض هویت</div><div className="font-bold text-base num">{toFa(portfolio.historical_summary.identity_conflicts_count)}</div></div>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-right">
-                      <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                        <tr><th className="p-2">نماد</th><th className="p-2">اولین مشاهده</th><th className="p-2">آخرین مشاهده</th><th className="p-2">آخرین تعداد</th><th className="p-2">وضعیت خروج</th><th className="p-2">تعداد رکورد</th></tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--border-subtle)]">
-                        {(portfolio.historical_symbols || []).length === 0 ? (
-                          <tr><td colSpan="6" className="p-4 text-center text-[var(--text-secondary)]">تاریخچه‌ای برای شناسه‌های معتبر این سرمایه‌گذار پیدا نشد.</td></tr>
-                        ) : portfolio.historical_symbols.map(item => (
-                          <tr key={item.ins_code} className={historyInsCode === item.ins_code ? 'bg-blue-500/10' : 'hover:bg-[var(--bg-elevated)]'}>
-                            <td className="p-2 whitespace-nowrap">
-                              <button className="font-bold text-blue-400" onClick={() => { setHistoryInsCode(item.ins_code); setHistoryOffset(0); }}>{item.symbol}</button>
-                              <button className="mr-2 text-[10px] text-[var(--text-secondary)] underline" onClick={() => onOpenStock(item.symbol)}>جزئیات نماد</button>
-                            </td>
-                            <td className="p-2 num whitespace-nowrap">{fmtDate(item.first_observation_date_jalali)}</td>
-                            <td className="p-2 num whitespace-nowrap">{fmtDate(item.last_observation_date_jalali)}</td>
-                            <td className="p-2 num">{item.last_observation_shares === null ? 'افشا نشده' : fmtNum(item.last_observation_shares)}</td>
-                            <td className="p-2 whitespace-nowrap">{historyExitLabel(item)}</td>
-                            <td className="p-2 num">{toFa(item.observations_count)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {historyInsCode && (
-                    <div className="border-t border-[var(--border-subtle)]">
-                      <div className="p-3 flex flex-wrap justify-between items-center gap-2">
-                        <div>
-                          <h4 className="font-bold">دفتر تغییرات {portfolio.historical_symbols.find(x => x.ins_code === historyInsCode)?.symbol || ''}</h4>
-                          <p className="text-[10px] text-[var(--text-secondary)]">قیمت مرجع است و قیمت اجرای معامله محسوب نمی‌شود.</p>
-                        </div>
-                        <button className="px-2 py-1 rounded border border-[var(--border-subtle)]" onClick={() => { setHistoryInsCode(''); setHistoryData(null); }}>بستن دفتر</button>
-                      </div>
-                      {historyLoading ? (
-                        <div className="p-5 text-center text-[var(--text-secondary)]">در حال دریافت مشاهدات...</div>
-                      ) : historyData?.error ? (
-                        <div className="p-5 text-center text-rose-400">دریافت تاریخچه ممکن نشد. بازسازی Sidecar نسخهٔ ۱۰ پس از استقرار کد لازم است.</div>
-                      ) : (
-                        <>
-                          <div className="px-3 pb-2 text-[10px] text-[var(--text-secondary)]">{toFa(historyData?.total || 0)} مشاهده؛ نمایش {toFa(Math.min(historyOffset + 1, historyData?.total || 0))} تا {toFa(Math.min(historyOffset + HISTORY_PAGE_SIZE, historyData?.total || 0))}</div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-right">
-                              <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                                <tr><th className="p-2">تاریخ</th><th className="p-2">وضعیت</th><th className="p-2">تعداد قبلی</th><th className="p-2">تعداد مشاهده‌شده</th><th className="p-2">تغییر خالص</th><th className="p-2">قیمت مرجع</th><th className="p-2">ارزش تخمینی</th><th className="p-2">رویداد سرمایه‌ای</th></tr>
-                              </thead>
-                              <tbody className="divide-y divide-[var(--border-subtle)]">
-                                {(historyData?.rows || []).length === 0 ? (
-                                  <tr><td colSpan="8" className="p-4 text-center text-[var(--text-secondary)]">رکوردی پیدا نشد.</td></tr>
-                                ) : historyData.rows.map((row,index) => (
-                                  <tr key={`${row.date}-${index}`} className={row.identity_conflict ? 'bg-amber-500/10' : ''}>
-                                    <td className="p-2 num whitespace-nowrap">{fmtDate(row.date_jalali)}</td>
-                                    <td className="p-2 whitespace-nowrap">{historyChangeLabel(row)}</td>
-                                    <td className="p-2 num">{row.previous_shares === null ? '—' : fmtNum(row.previous_shares)}</td>
-                                    <td className="p-2 num">{row.shares === null ? 'افشا نشده/نامعتبر' : fmtNum(row.shares)}</td>
-                                    <td className="p-2 num">{row.shares_change === null ? '—' : fmtNum(row.shares_change)}</td>
-                                    <td className="p-2 num">{row.reference_price === null ? '—' : fmtNum(currency === 'IRT' ? row.reference_price / 10 : row.reference_price)}</td>
-                                    <td className="p-2 num">{row.estimated_holding_value_rial === null ? 'بدون قیمت معتبر' : fmtMoney(row.estimated_holding_value_rial,currency)}</td>
-                                    <td className="p-2">{row.corporate_action ? `${row.corporate_action}${row.corporate_action_ratio ? ' (' + row.corporate_action_ratio + ')' : ''}` : '—'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                          <div className="p-3 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2">
-                            <button className="px-3 py-1.5 rounded border border-[var(--border-subtle)] disabled:opacity-40" disabled={historyOffset <= 0 || historyLoading} onClick={() => setHistoryOffset(Math.max(0, historyOffset - HISTORY_PAGE_SIZE))}>صفحهٔ قبل</button>
-                            <span className="text-[10px] text-[var(--text-secondary)]">صفحهٔ {toFa(Math.floor(historyOffset / HISTORY_PAGE_SIZE) + 1)}</span>
-                            <button className="px-3 py-1.5 rounded border border-[var(--border-subtle)] disabled:opacity-40" disabled={historyOffset + HISTORY_PAGE_SIZE >= (historyData?.total || 0) || historyLoading} onClick={() => setHistoryOffset(historyOffset + HISTORY_PAGE_SIZE)}>صفحهٔ بعد</button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </section>
-              )}
-
-              <div className="portfolio-chart-panel p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-                <h3 className="font-bold mb-1">ارزش موقعیت‌های افشاشده در تاریخ‌های موجود ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
-                <p className="text-[10px] text-[var(--text-secondary)] mb-2">این نمودار فقط تعداد و قیمت معتبر همان تاریخ را جمع می‌کند؛ موجودی روزهای بدون افشا به صفر تبدیل نمی‌شود و از روزهای قبل هم به جلو منتقل نمی‌شود.</p>
-                <LWChart data={chartSeries} height={220} theme={theme} color="#2962ff" unitLabel={currency === 'IRT' ? 'همت' : 'همر'} dateMode={dateMode} />
-              </div>
-
-              <div className="portfolio-table-panel rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
-                <div className="portfolio-table-title p-2.5 border-b border-[var(--border-subtle)] font-bold">پوزیشن‌های مستقیم (رکورد همین شناسه)</div>
-                <table className="w-full text-right">
-                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {portfolio.confirmed_positions.length === 0 ? (
-                      <tr><td colSpan="6" className="p-4 text-center text-[var(--text-secondary)]">هیچ پوزیشن مستقیمی برای این شناسه ثبت نشده است.</td></tr>
-                    ) : portfolio.confirmed_positions.map(p => (
-                      <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
-                        <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
-                        <td className="p-2 num">{fmtDate(p.observation_date_jalali)}</td>
-                        <td className="p-2 num">{fmtNum(p.shares)}</td>
-                        <td className="p-2 num">{fmtPct(p.ownership_percent_calculated)}</td>
-                        <td className="p-2 num">{p.price ? fmtNum(currency === 'IRT' ? p.price / 10 : p.price) : '—'}</td>
-                        <td className="p-2 num font-semibold">{p.holding_value_rial !== null ? fmtMoney(p.holding_value_rial, currency) : 'بدون قیمت معتبر'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="portfolio-table-panel rounded border border-blue-500/30 bg-blue-500/5 overflow-x-auto">
-                <div className="portfolio-table-title p-2.5 border-b border-blue-500/30 font-bold text-blue-300">پوزیشن‌های محتمل (تطبیق دقیق استنتاجی — در جمع ارزش لحاظ شده‌اند)</div>
-                <table className="w-full text-right">
-                  <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                    <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th><th className="p-2">هویت</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {(portfolio.probable_positions || []).length === 0 ? (
-                      <tr><td colSpan="7" className="p-4 text-center text-[var(--text-secondary)]">پوزیشن «محتمل»ی برای این سرمایه‌گذار ثبت نشده است.</td></tr>
-                    ) : portfolio.probable_positions.map(p => (
-                      <tr key={`${p.symbol}-${p.id_scheme}-${p.shareholder_id}`}>
-                        <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(p.symbol)}>{p.symbol}</td>
-                        <td className="p-2 num">{fmtDate(p.observation_date_jalali)}</td>
-                        <td className="p-2 num">{fmtNum(p.shares)}</td>
-                        <td className="p-2 num">{fmtPct(p.ownership_percent_calculated)}</td>
-                        <td className="p-2 num">{p.price ? fmtNum(currency === 'IRT' ? p.price / 10 : p.price) : '—'}</td>
-                        <td className="p-2 num font-semibold">{p.holding_value_rial !== null ? fmtMoney(p.holding_value_rial, currency) : 'بدون قیمت معتبر'}</td>
-                        <td className="p-2"><IdentityBadge status={p.identity_status} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {portfolio.uncertain_candidates.length > 0 && (
-                <div className="portfolio-uncertain-panel rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
-                  <div className="font-bold text-amber-300">رکوردهای سهام‌داری غیرقطعی (محاسبه‌نشده در جمع کل)</div>
-                  {portfolio.uncertain_candidates.map((u, i) => (
-                    <div key={i} className="p-2 rounded bg-[var(--bg-panel)] border border-[var(--border-subtle)] flex justify-between">
-                      <span>نماد: <strong className="text-blue-400 cursor-pointer" onClick={() => onOpenStock(u.symbol)}>{u.symbol}</strong> ({u.id_scheme}: {u.shareholder_id})</span>
-                      <span className="num">سهام: {fmtNum(u.shares)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      );
-    }
-
-    // --- 8. Page 5: Multi-Stock Screener (All Supported Columns) ---
-    // Enum fields get a SELECT (op fixed to '='); dates get a date input;
-    // numbers get a number input. The real vocabularies come from the
-    // pipeline (identity_status, data_completeness, entry_status).
-    const SCREENER_ENUMS = {
-      shareholder_type: [['legal', 'حقوقی'], ['individual', 'حقیقی']],
-      market: [['TSE', 'بورس (TSE)'], ['IFB', 'فرابورس (IFB)'], ['UNKNOWN', 'تعیین‌نشده']],
-      change_type: [['new', 'جدید'], ['increase', 'افزایش'], ['decrease', 'کاهش'], ['unchanged', 'بدون تغییر'], ['unknown', 'نامشخص']],
-      entry_status: [['first_observed_unconfirmed', 'اولین مشاهده (تأییدنشده)'], ['reappeared_after_not_disclosed', 'بازگشت پس از عدم افشا']],
-      identity_status: [
-        ['verified_same_source_row', 'تأییدشده (هم‌ردیف منبع)'],
-        ['inferred_exact_match', 'تطبیق دقیق استنتاجی'],
-        ['unlinked_record_id', 'شناسه منفرد (تأییدنشده)'],
-        ['ambiguous_not_linked', 'مبهم / پیوند نشده'],
-        ['source_id', 'بدون اطلاعات پیوند (منبع)'],
-      ],
-      data_completeness: [
-        ['complete_by_reported_percent', 'کامل (بر اساس درصد گزارش‌شده)'],
-        ['partial_major_holders_only', 'فقط سهام‌داران عمده'],
-        ['inconsistent_sum_over_100_percent', 'جمع مالکیت بیش از ۱۰۰٪'],
-        ['no_holder_observations', 'بدون مشاهده سهام‌دار'],
-        ['holders_only_total_shares_unavailable', 'بدون کل سهام شرکت'],
-      ],
-    };
-    const SCREENER_FIELDS = [
-      ['ownership_percent_calculated', 'درصد مالکیت', 'number'],
-      ['disclosed_shareholder_count', 'تعداد سهام‌دار عمده', 'number'],
-      ['disclosed_ownership_percent_sum', 'تمرکز مالکیت عمده٪', 'number'],
-      ['shares_change', 'تغییر سهام', 'number'],
-      ['change_type', 'نوع تغییر', 'enum'],
-      ['entry_status', 'وضعیت ورود', 'enum'],
-      ['shareholder_type', 'نوع سهام‌دار', 'enum'],
-      ['identity_status', 'وضعیت احراز هویت', 'enum'],
-      ['data_completeness', 'تکمیل بودن داده', 'enum'],
-      ['market', 'بازار', 'enum'],
-      ['has_corporate_action', 'تعداد افزایش سرمایه', 'number'],
-      ['date_gregorian', 'تاریخ میلادی (YYYY-MM-DD)', 'date'],
-    ];
-    function ScreenerPage({ onOpenStock }) {
-      const [logic, setLogic] = useState('AND');
-      const [conds, setConds] = useState([
-        { field: 'ownership_percent_calculated', op: '>=', value: 5 },
-      ]);
-      const [sortBy, setSortBy] = useState('ownership_percent_calculated');
-      const [results, setResults] = useState([]);
-      const [saved, setSaved] = useState([]);
-      const [saveName, setSaveName] = useState('');
-      const [loading, setLoading] = useState(false);
-
-      const runQuery = useCallback(() => {
-        setLoading(true);
-        apiFetch('/api/v1/screener/query', {
-          method: 'POST',
-          body: JSON.stringify({ logic, conditions: conds, sort_by: sortBy, sort_dir: 'DESC', limit: 100 }),
-        })
-          .then(res => setResults(res.rows || []))
-          .finally(() => setLoading(false));
-      }, [logic, conds, sortBy]);
-
-      useEffect(() => {
-        runQuery();
-        apiFetch('/api/v1/screener/saved-filters').then(res => setSaved(res.filters || [])).catch(() => {});
+        apiFetch('/api/v1/public/plans')
+          .then(res => setPlans(res.plans || []))
+          .catch(e => setError(e.message));
       }, []);
 
-      const saveCurrent = () => {
-        if (!saveName.trim()) return;
-        apiFetch('/api/v1/screener/saved-filters', {
-          method: 'POST',
-          body: JSON.stringify({ name: saveName.trim(), filter_ast: { logic, conditions: conds, sort_by: sortBy, sort_dir: 'DESC' } }),
-        }).then(() => {
-          setSaveName('');
-          apiFetch('/api/v1/screener/saved-filters').then(res => setSaved(res.filters || []));
-        });
-      };
-
-      const exportCsv = () => {
-        fetch(`${API_BASE}/api/v1/screener/export`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ logic, conditions: conds, sort_by: sortBy, sort_dir: 'DESC' }),
-        })
-          .then(r => r.blob())
-          .then(blob => {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = 'tsetmc_screener.csv'; a.click();
-            URL.revokeObjectURL(url);
-          });
-      };
-
-      return (
-        <div className="space-y-3 text-xs">
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2.5">
-            <div className="flex flex-wrap justify-between items-center gap-2">
-              <h1 className="text-sm font-bold">فیلتر پیشرفته روی کل نمادها</h1>
-              <div className="flex flex-wrap gap-2">
-                <select value={logic} onChange={e => setLogic(e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-bold">
-                  <option value="AND">AND (همه شرط‌ها)</option>
-                  <option value="OR">OR (حداقل یک شرط)</option>
-                </select>
-                <button onClick={() => setConds(p => [...p, { field: 'shareholder_type', op: '=', value: 'legal' }])} className="px-2.5 py-1 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">+ شرط</button>
-                <button onClick={runQuery} className="px-3 py-1 rounded bg-blue-600 text-white font-semibold">اجرای فیلتر</button>
-                <button onClick={exportCsv} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">خروجی CSV</button>
-              </div>
-            </div>
-
-            {conds.map((c, idx) => {
-              const fieldMeta = SCREENER_FIELDS.find(f => f[0] === c.field) || SCREENER_FIELDS[0];
-              const kind = fieldMeta[2];
-              const enumOptions = SCREENER_ENUMS[c.field];
-              const setCond = (patch) => setConds(p => p.map((x, i) => i === idx ? { ...x, ...patch } : x));
-              return (
-              <div key={idx} className="flex flex-wrap gap-2 items-center p-2 rounded bg-[var(--bg-elevated)]">
-                <select value={c.field} onChange={e => {
-                  const nf = e.target.value;
-                  const nk = (SCREENER_FIELDS.find(f => f[0] === nf) || [])[2];
-                  if (nk === 'enum') setCond({ field: nf, op: '=', value: (SCREENER_ENUMS[nf] || [['', '']])[0][0] });
-                  else setCond({ field: nf, op: '>=', value: '' });
-                }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
-                  {SCREENER_FIELDS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-                </select>
-                {kind === 'enum' ? (
-                  <span className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">=</span>
-                ) : (
-                  <select value={c.op} onChange={e => setCond({ op: e.target.value })} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
-                    <option value=">=">&gt;=</option>
-                    <option value="<=">&lt;=</option>
-                    <option value="=">=</option>
-                    <option value=">">&gt;</option>
-                    <option value="<">&lt;</option>
-                  </select>
-                )}
-                {kind === 'enum' ? (
-                  <select value={c.value} onChange={e => setCond({ value: e.target.value })} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-64">
-                    {(enumOptions || []).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-                  </select>
-                ) : kind === 'date' ? (
-                  <input type="date" value={c.value || ''} onChange={e => setCond({ value: e.target.value })} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-40 num" />
-                ) : (
-                  <input type="number" value={c.value} onChange={e => {
-                    const v = e.target.value;
-                    setCond({ value: v === '' ? '' : Number(v) });
-                  }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-40 num" placeholder="عدد..." />
-                )}
-                <button onClick={() => setConds(p => p.filter((_, i) => i !== idx))} className="text-red-400">حذف</button>
-              </div>
-              );
-            })}
-
-            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border-subtle)]">
-              <input value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="نام فیلتر..." className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]" />
-              <button onClick={saveCurrent} className="px-2.5 py-1 rounded bg-emerald-600 text-white">ذخیره در دیتابیس</button>
-              {saved.map(sf => (
-                <button key={sf.id} onClick={() => {
-                  const ast = JSON.parse(sf.filter_ast_json);
-                  setLogic(ast.logic); setConds(ast.conditions);
-                }} className="px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">{sf.name}</button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
-            <table className="w-full text-right">
-              <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                <tr><th className="p-2">نماد</th><th className="p-2">بازار</th><th className="p-2">سهام‌دار</th><th className="p-2">درصد مالکیت</th><th className="p-2">تغییر سهام</th><th className="p-2">تمرکز شرکت٪</th></tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-subtle)]">
-                {loading ? <tr><td colSpan="6" className="p-6 text-center">در حال اجرای فیلتر...</td></tr> : results.map((r, i) => (
-                  <tr key={i} onClick={() => onOpenStock(r.symbol)} className="hover:bg-[var(--bg-elevated)] cursor-pointer">
-                    <td className="p-2 font-bold text-blue-400">{r.symbol}</td>
-                    <td className="p-2">{r.market}</td>
-                    <td className="p-2">{r.shareholder_name}</td>
-                    <td className="p-2 num font-semibold">{fmtPct(r.ownership_percent_calculated)}</td>
-                    <td className="p-2 num">{fmtNum(r.shares_change)}</td>
-                    <td className="p-2 num">{fmtPct(r.disclosed_ownership_percent_sum)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    }
-
-    // --- 9. Page 6: Persistent Watchlist with Autocomplete & Sorting ---
-    function WatchlistPage({ onOpenStock, currency }) {
-      const [items, setItems] = useState([]);
-      const [symInput, setSymInput] = useState('');
-      const [suggestions, setSuggestions] = useState([]);
-      const [sortCol, setSortCol] = useState('disclosed_ownership_percent_sum');
-      const [sortAsc, setSortAsc] = useState(false);
-      const [err, setErr] = useState('');
-      const [msg, setMsg] = useState('');
-
-      const load = () => apiFetch('/api/v1/watchlists/default').then(res => setItems(res.items || []));
-      useEffect(() => { load(); }, []);
+      useEffect(() => {
+        if (!user) {
+          setWallet({ balance_toman: 0, transactions: [] });
+          setTickets([]);
+          setSelectedTicket(null);
+          setMessages([]);
+          return;
+        }
+        refreshPrivateData().catch(e => setError(e.message));
+      }, [user && user.id]);
 
       useEffect(() => {
-        if (!symInput.trim()) { setSuggestions([]); return; }
-        const t = setTimeout(() => {
-          apiFetch(`/api/v1/stocks/search?q=${encodeURIComponent(symInput.trim())}&limit=8`)
-            .then(r => setSuggestions(r.results || []))
-            .catch(() => setSuggestions([]));
-        }, 200);
-        return () => clearTimeout(t);
-      }, [symInput]);
+        if (!selectedTicket || !user) { setMessages([]); return; }
+        apiFetch('/api/v1/tickets/' + selectedTicket + '/messages')
+          .then(res => setMessages(res.messages || []))
+          .catch(e => setError(e.message));
+      }, [selectedTicket, user && user.id]);
 
-      const addSym = (targetSym) => {
-        const sym = (targetSym || symInput).trim();
-        if (!sym) { setErr('نمادی وارد نشده است.'); setMsg(''); return; }
-        apiFetch('/api/v1/watchlists/default/symbols', { method: 'POST', body: JSON.stringify({ symbol: sym }) })
-          .then(() => { setSymInput(''); setSuggestions([]); setErr(''); setMsg(`نماد ${sym} به دیده‌بان اضافه شد.`); load(); })
-          .catch(e => { setErr(e.message); setMsg(''); });
+      const applyAuthResult = (result) => {
+        const nextUser = result.user || null;
+        window.__siteCsrf = nextUser ? (nextUser.csrf_token || '') : '';
+        setUser(nextUser);
+        setNotice(nextUser ? 'ورود با موفقیت انجام شد.' : '');
+        setError('');
       };
 
-      const removeSym = (sym) => {
-        apiFetch(`/api/v1/watchlists/default/symbols/${encodeURIComponent(sym)}`, { method: 'DELETE' }).then(load);
+      const submitLogin = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const res = await apiFetch('/api/v1/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ identifier, password, remember }),
+          });
+          applyAuthResult(res);
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
       };
 
-      const sortedItems = useMemo(() => {
-        return [...items].sort((a, b) => {
-          const va = a[sortCol] ?? 0, vb = b[sortCol] ?? 0;
-          if (typeof va === 'string') return sortAsc ? va.localeCompare(vb, 'fa') : vb.localeCompare(va, 'fa');
-          return sortAsc ? va - vb : vb - va;
-        });
-      }, [items, sortCol, sortAsc]);
-
-      const toggleSort = (col) => {
-        if (sortCol === col) setSortAsc(!sortAsc);
-        else { setSortCol(col); setSortAsc(false); }
+      const submitRegister = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const res = await apiFetch('/api/v1/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({
+              username, password, display_name: displayName || username,
+              email: email || null, phone: phone || null,
+              referral_code: referralCode || null, remember,
+            }),
+          });
+          applyAuthResult(res);
+          setNotice('حساب ساخته شد. برای استفاده از ورود پیامکی، شماره باید با کد یک‌بارمصرف تأیید شود.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
       };
 
-      return (
-        <div className="space-y-3 text-xs">
-          <ErrorBox error={err} />
-          {msg && <div className="p-2.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-xs">{msg}</div>}
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
-            <h1 className="text-sm font-bold">دیده‌بان شخصی (ذخیره‌شده در SQLite)</h1>
-            <div className="flex gap-2 relative">
-              <input value={symInput} onChange={e => { setSymInput(e.target.value); setMsg(''); }} onKeyDown={e => { if (e.key === 'Enter') addSym(); }} placeholder="جستجو و افزودن نماد... (Enter)" className="px-2.5 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-56" />
-              <button onClick={() => addSym()} className="px-3 py-1 rounded bg-blue-600 text-white">+ افزودن</button>
-              {suggestions.length > 0 && (
-                <div className="absolute right-0 top-9 w-64 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] shadow-xl z-40">
-                  {suggestions.map(s => (
-                    <button key={s.symbol} onClick={() => addSym(s.symbol)} className="w-full text-right p-2 hover:bg-[var(--bg-elevated)] flex justify-between">
-                      <span className="font-bold text-blue-400">{s.symbol}</span>
-                      <span className="text-[var(--text-secondary)] truncate">{s.company_name || s.market}</span>
+      const requestOtp = async () => {
+        setBusy(true); setError(''); setNotice('');
+        try {
+          await apiFetch('/api/v1/auth/otp/request', {
+            method: 'POST',
+            body: JSON.stringify({ phone, referral_code: referralCode || null }),
+          });
+          setOtpSent(true);
+          setNotice('کد یک‌بارمصرف ارسال شد؛ پنج دقیقه برای واردکردن آن فرصت دارید.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const verifyOtp = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          const res = await apiFetch('/api/v1/auth/otp/verify', {
+            method: 'POST',
+            body: JSON.stringify({ phone, code: otp, remember }),
+          });
+          applyAuthResult(res);
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const logout = async () => {
+        try { await apiFetch('/api/v1/auth/logout', { method: 'POST', body: '{}' }); }
+        catch (e) { /* The server may already have expired this session. */ }
+        window.__siteCsrf = '';
+        setUser(null);
+        setMode('login');
+        setNotice('از حساب خارج شدید.');
+      };
+
+      const buyPlan = async (plan) => {
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const result = await apiFetch('/api/v1/subscriptions/checkout', {
+            method: 'POST',
+            body: JSON.stringify({ plan_slug: plan.slug, promo_code: promo || null, use_wallet: true }),
+          });
+          if (result.checkout_url) {
+            window.location.assign(result.checkout_url);
+            return;
+          }
+          if (result.paid_with_wallet) {
+            setNotice('اشتراک با اعتبار کیف پول فعال شد.');
+            await refreshPrivateData();
+          }
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const createTicket = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/tickets', {
+            method: 'POST',
+            body: JSON.stringify({ subject: ticketSubject, message: ticketMessage }),
+          });
+          setTicketSubject(''); setTicketMessage('');
+          setNotice('تیکت شما ثبت شد.');
+          await refreshPrivateData();
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const replyTicket = async (event) => {
+        event.preventDefault();
+        if (!selectedTicket) return;
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/tickets/' + selectedTicket + '/messages', {
+            method: 'POST', body: JSON.stringify({ message: replyMessage }),
+          });
+          setReplyMessage('');
+          const res = await apiFetch('/api/v1/tickets/' + selectedTicket + '/messages');
+          setMessages(res.messages || []);
+          await refreshPrivateData();
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const changePassword = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/auth/change-password', {
+            method: 'POST', body: JSON.stringify({ new_password: newPassword }),
+          });
+          setNewPassword('');
+          const me = await apiFetch('/api/v1/auth/me');
+          applyAuthResult(me);
+          setNotice('رمز عبور تغییر کرد.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const bootstrapSuperAdmin = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError('');
+        try {
+          await apiFetch('/api/v1/auth/bootstrap-superadmin', {
+            method: 'POST', body: JSON.stringify({ bootstrap_key: bootstrapKey }),
+          });
+          setBootstrapKey('');
+          await apiFetch('/api/v1/auth/logout', { method: 'POST', body: '{}' }).catch(() => {});
+          window.__siteCsrf = '';
+          setUser(null);
+          setNotice('راه‌اندازی سوپرادمین انجام شد؛ دوباره با همین حساب وارد شوید.');
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const copyReferral = () => {
+        const link = window.location.origin + '/?ref=' + encodeURIComponent(user.referral_code);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).then(
+            () => setNotice('لینک دعوت کپی شد.'),
+            () => setError('کپی خودکار انجام نشد؛ کد دعوت را دستی کپی کنید.')
+          );
+        } else {
+          setNotice('کد دعوت شما: ' + user.referral_code);
+        }
+      };
+
+      if (!user) {
+        return (
+          <div className="max-w-3xl mx-auto space-y-4">
+            <div className="text-center py-4">
+              <div className="text-[11px] text-blue-400">ره‌نگار بورس</div>
+              <h1 className="text-2xl font-bold mt-1">حساب کاربری و اشتراک</h1>
+              <p className="text-xs text-[var(--text-secondary)] mt-2">برای ذخیره تنظیمات، خرید اشتراک و پشتیبانی وارد شوید.</p>
+            </div>
+            <ErrorBox error={error} />
+            {notice && <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">{notice}</div>}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ['login','ورود با شناسه/شماره'],
+                  ['register','ساخت حساب'],
+                  ['phone','ورود پیامکی'],
+                ].map(([id,label]) => (
+                  <button key={id} onClick={() => { setMode(id); setError(''); }}
+                    className={'px-3 py-2 rounded-lg text-xs border ' +
+                      (mode === id ? 'bg-blue-600 text-white border-blue-600' :
+                        'bg-[var(--bg-elevated)] border-[var(--border-subtle)]')}>
+                    {label}
+                  </button>
+                ))}
+                <a href="/api/v1/auth/google/start"
+                  className="mr-auto px-3 py-2 rounded-lg text-xs border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+                  ورود با حساب Google
+                </a>
+              </div>
+
+              {mode === 'login' && (
+                <form onSubmit={submitLogin} className="space-y-3">
+                  <label className="block text-xs">
+                    <span className="block mb-1.5 text-[var(--text-secondary)]">شناسه، کد کاربری، ایمیل یا شماره همراه</span>
+                    <input value={identifier} onChange={e => setIdentifier(e.target.value)}
+                      autoComplete="username" required
+                      className="w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="block mb-1.5 text-[var(--text-secondary)]">رمز عبور</span>
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                      autoComplete="current-password" required
+                      className="w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+                    ورود من را به خاطر بسپار
+                  </label>
+                  <button disabled={busy} className="w-full py-3 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-50">
+                    {busy ? 'در حال ورود...' : 'ورود به حساب'}
+                  </button>
+                </form>
+              )}
+
+              {mode === 'register' && (
+                <form onSubmit={submitRegister} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="text-xs">شناسه ورود
+                    <input value={username} onChange={e => setUsername(e.target.value)} required minLength={4}
+                      autoComplete="username" placeholder="مثلاً trader_01"
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="text-xs">نام نمایشی
+                    <input value={displayName} onChange={e => setDisplayName(e.target.value)}
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="text-xs">ایمیل (اختیاری)
+                    <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      autoComplete="email"
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="text-xs">شماره همراه (اختیاری)
+                    <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="0912..."
+                      autoComplete="tel"
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="text-xs">رمز عبور (حداقل ۱۰ نویسه)
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                      minLength={10} autoComplete="new-password" required
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="text-xs">کد دعوت (اختیاری)
+                    <input value={referralCode} onChange={e => setReferralCode(e.target.value)}
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <div className="md:col-span-2 flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                      <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+                      ورود من را به خاطر بسپار
+                    </label>
+                    <button disabled={busy} className="px-5 py-3 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+                      {busy ? 'در حال ساخت حساب...' : 'ساخت حساب'}
                     </button>
-                  ))}
+                  </div>
+                </form>
+              )}
+
+              {mode === 'phone' && (
+                <div className="space-y-3">
+                  <label className="block text-xs">شماره همراه
+                    <input value={phone} onChange={e => setPhone(e.target.value)}
+                      placeholder="0912..." autoComplete="tel"
+                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  {!otpSent ? (
+                    <button onClick={requestOtp} disabled={busy}
+                      className="w-full py-3 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">ارسال کد ورود</button>
+                  ) : (
+                    <form onSubmit={verifyOtp} className="space-y-3">
+                      <input value={otp} onChange={e => setOtp(e.target.value)} required maxLength={6}
+                        placeholder="کد شش‌رقمی پیامک‌شده"
+                        className="w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-center tracking-widest" />
+                      <button disabled={busy} className="w-full py-3 rounded-lg bg-emerald-600 text-white text-xs">تأیید کد و ورود</button>
+                      <button type="button" onClick={() => { setOtpSent(false); setOtp(''); }}
+                        className="w-full py-2 text-xs text-[var(--text-secondary)]">ارسال کد جدید</button>
+                    </form>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+                    ورود من را به خاطر بسپار
+                  </label>
                 </div>
               )}
             </div>
+            <div className="text-center text-[10px] text-[var(--text-muted)]">
+              ورود پیامکی، Google و پرداخت بعد از تنظیم کلیدهای سرویس روی سرور فعال می‌شوند.
+            </div>
           </div>
-          <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
-            <table className="w-full text-right">
-              <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                <tr>
-                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('symbol')}>نماد ⇅</th>
-                  <th className="p-2">نام شرکت</th>
-                  <th className="p-2">بازار</th>
-                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_shareholder_count')}>تعداد عمده ⇅</th>
-                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_ownership_percent_sum')}>مالکیت عمده٪ ⇅</th>
-                  <th className="p-2 cursor-pointer" onClick={() => toggleSort('market_value')}>ارزش بازار ⇅</th>
-                  <th className="p-2">حذف</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-subtle)]">
-                {sortedItems.map(s => (
-                  <tr key={s.symbol}>
-                    <td className="p-2 font-bold text-blue-400 cursor-pointer" onClick={() => onOpenStock(s.symbol)}>{s.symbol}</td>
-                    <td className="p-2">{s.company_name || '—'}</td>
-                    <td className="p-2">{s.market}</td>
-                    <td className="p-2 num">{toFa(s.resolved_shareholder_count)}{s.resolved_status === 'review' ? <span className="text-amber-400" title={s.resolved_status_note || 'رکوردهای تکراری حل‌نشده دارد'}> ⚠</span> : ''}</td>
-                    <td className="p-2 num" title={s.resolved_status === 'review' ? s.resolved_status_note : undefined}>{fmtPct(s.resolved_ownership_percent_sum)}</td>
-                    <td className="p-2 num">{s.market_value !== null && s.market_value !== undefined ? fmtMoney(s.market_value, currency) : '—'}</td>
-                    <td className="p-2"><button onClick={() => removeSym(s.symbol)} className="text-red-400">حذف</button></td>
-                  </tr>
+        );
+      }
+
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[11px] text-blue-400">حساب کاربری</div>
+              <h1 className="text-xl font-bold mt-1">سلام {user.display_name || user.username}</h1>
+              <p className="text-xs text-[var(--text-secondary)] mt-1">
+                شناسه: <span className="num">{user.public_id}</span> · نقش: {user.role}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {isStaff && <button onClick={onOpenAdmin} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs">پنل مدیریت / پشتیبانی</button>}
+              <button onClick={logout} className="px-3 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-xs">خروج از حساب</button>
+            </div>
+          </div>
+          <ErrorBox error={error} />
+          {notice && <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">{notice}</div>}
+
+          {user.must_change_password ? (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+              <h2 className="font-bold text-sm text-amber-300">تغییر رمز عبور الزامی است</h2>
+              <p className="text-xs text-[var(--text-secondary)] mt-1 mb-3">برای حساب‌های ساخته‌شده توسط مدیر، رمز موقت باید در اولین ورود تغییر کند.</p>
+              <form onSubmit={changePassword} className="flex flex-wrap gap-2">
+                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                  minLength={10} required placeholder="رمز عبور جدید"
+                  className="flex-1 min-w-52 p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                <button disabled={busy} className="px-4 py-2 rounded bg-amber-600 text-white text-xs">ثبت رمز جدید</button>
+              </form>
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="text-[11px] text-[var(--text-secondary)]">وضعیت اشتراک</div>
+              <div className="font-bold text-lg mt-1">{user.is_premium ? 'حرفه‌ای / فعال' : 'رایگان'}</div>
+              <div className="text-[11px] text-[var(--text-secondary)] mt-2">
+                {user.subscription && user.subscription.ends_at
+                  ? 'اعتبار تا ' + fmtGregorianDate(user.subscription.ends_at.slice(0,10))
+                  : 'برای فعال‌سازی امکانات حرفه‌ای، یک طرح انتخاب کنید.'}
+              </div>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="text-[11px] text-[var(--text-secondary)]">موجودی کیف پول</div>
+              <div className="font-bold text-lg num mt-1">{fmtNum(wallet.balance_toman || user.wallet_balance_toman || 0)} تومان</div>
+              <div className="text-[11px] text-[var(--text-secondary)] mt-2">اعتبار دعوت و بازپرداخت خریدهای ناموفق</div>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="text-[11px] text-[var(--text-secondary)]">کد دعوت اختصاصی</div>
+              <div className="font-bold text-xl num mt-1 tracking-wider">{user.referral_code}</div>
+              <div className="flex justify-between items-center gap-2 mt-2">
+                <span className="text-[10px] text-[var(--text-secondary)]">پاداش پس از اولین خرید دعوت‌شده: ۱۰۰٬۰۰۰ تومان</span>
+                <button onClick={copyReferral} className="text-[11px] text-blue-400">کپی لینک</button>
+              </div>
+            </div>
+          </div>
+
+          {user.role === 'member' && (
+            <details className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+              <summary className="cursor-pointer text-xs font-semibold">راه‌اندازی اولیه سوپرادمین (فقط یک بار)</summary>
+              <p className="text-[10px] text-[var(--text-secondary)] mt-2">
+                فقط اولین حساب فعال و فقط با کلید محرمانه‌ای که روی سرور تنظیم می‌شود می‌تواند سوپرادمین شود. کلید را در پیام یا کد عمومی وارد نکنید.
+              </p>
+              <form onSubmit={bootstrapSuperAdmin} className="flex flex-wrap gap-2 mt-2">
+                <input type="password" value={bootstrapKey} onChange={e => setBootstrapKey(e.target.value)}
+                  required placeholder="کلید راه‌اندازی محرمانه"
+                  className="flex-1 min-w-48 p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                <button disabled={busy} className="px-4 py-2 rounded bg-amber-600 text-white text-xs">فعال‌سازی سوپرادمین</button>
+              </form>
+            </details>
+          )}
+
+          <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <div>
+                <h2 className="font-bold text-sm">خرید اشتراک حرفه‌ای</h2>
+                <p className="text-[10px] text-[var(--text-secondary)] mt-1">تخفیف افتتاحیه ۲۰٪ برای خرید اول با کد WELCOME20</p>
+              </div>
+              <label className="text-xs flex items-center gap-2">
+                <span className="text-[var(--text-secondary)]">کد تخفیف</span>
+                <input value={promo} onChange={e => setPromo(e.target.value.toUpperCase())}
+                  className="w-36 p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] num" />
+              </label>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              {plans.map(plan => (
+                <div key={plan.slug} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 flex flex-col">
+                  <div className="text-xs text-[var(--text-secondary)]">{plan.name}</div>
+                  <div className="text-xl font-bold num mt-2">{fmtNum(plan.price_toman)} <span className="text-xs font-normal">تومان</span></div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-1">{fmtNum(plan.duration_days)} روز دسترسی</div>
+                  <div className="text-[10px] text-emerald-400 mt-2">با کد تخفیف، مبلغ کمتر می‌شود.</div>
+                  <button onClick={() => buyPlan(plan)} disabled={busy}
+                    className="mt-4 w-full py-2.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+                    انتخاب و پرداخت
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="text-[10px] text-[var(--text-muted)]">
+              پرداخت ریالی از طریق درگاه متصل انجام می‌شود؛ مبلغ‌ها به تومان نمایش داده می‌شوند.
+            </div>
+          </section>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+              <h2 className="font-bold text-sm">کیف پول و گردش اعتبار</h2>
+              <div className="text-2xl font-bold num">{fmtNum(wallet.balance_toman || 0)} تومان</div>
+              <div className="space-y-2 max-h-56 overflow-auto">
+                {(wallet.transactions || []).length === 0 ? (
+                  <p className="text-xs text-[var(--text-secondary)]">هنوز تراکنشی ثبت نشده است.</p>
+                ) : wallet.transactions.map((row, index) => (
+                  <div key={index} className="flex justify-between gap-3 border-b border-[var(--border-subtle)] pb-2 text-[11px]">
+                    <span className="text-[var(--text-secondary)]">{row.description}</span>
+                    <strong className={'num ' + (row.amount_toman >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                      {row.amount_toman > 0 ? '+' : ''}{fmtNum(row.amount_toman)} تومان
+                    </strong>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+              <h2 className="font-bold text-sm">{isStaff ? 'صندوق تیکت‌های پشتیبانی' : 'ثبت تیکت پشتیبانی'}</h2>
+              {!isStaff && (
+                <form onSubmit={createTicket} className="space-y-2">
+                  <input value={ticketSubject} onChange={e => setTicketSubject(e.target.value)}
+                    minLength={5} maxLength={120} required placeholder="موضوع تیکت"
+                    className="w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                  <textarea value={ticketMessage} onChange={e => setTicketMessage(e.target.value)}
+                    minLength={10} maxLength={5000} required rows={3} placeholder="شرح درخواست شما"
+                    className="w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                  <button disabled={busy} className="px-4 py-2 rounded bg-blue-600 text-white text-xs">ثبت تیکت</button>
+                </form>
+              )}
+              <div className="space-y-1.5 max-h-64 overflow-auto">
+                {(tickets || []).length === 0 ? (
+                  <div className="text-xs text-[var(--text-secondary)]">تیکتی ثبت نشده است.</div>
+                ) : tickets.map(ticket => (
+                  <button key={ticket.id} onClick={() => setSelectedTicket(ticket.id)}
+                    className={'w-full text-right p-2 rounded border text-xs ' +
+                      (selectedTicket === ticket.id ? 'border-blue-500 bg-blue-500/10' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]')}>
+                    <span className="font-semibold">{ticket.subject}</span>
+                    <span className="block text-[10px] text-[var(--text-secondary)] mt-1">{ticket.status} · #{toFa(ticket.id)}</span>
+                  </button>
+                ))}
+              </div>
+              {selectedTicket && (
+                <div className="border-t border-[var(--border-subtle)] pt-3 space-y-2">
+                  <div className="text-xs font-semibold">مکالمه تیکت #{toFa(selectedTicket)}</div>
+                  <div className="space-y-2 max-h-48 overflow-auto">
+                    {messages.map(message => (
+                      <div key={message.id} className="p-2 rounded bg-[var(--bg-elevated)] text-xs">
+                        <div className="text-[10px] text-[var(--text-secondary)] mb-1">{message.display_name}</div>
+                        {message.body}
+                      </div>
+                    ))}
+                  </div>
+                  <form onSubmit={replyTicket} className="flex gap-2">
+                    <input value={replyMessage} onChange={e => setReplyMessage(e.target.value)}
+                      required minLength={2} placeholder="پاسخ..."
+                      className="flex-1 min-w-0 p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+                    <button disabled={busy} className="px-3 rounded bg-blue-600 text-white text-xs">ارسال</button>
+                  </form>
+                </div>
+              )}
+            </section>
           </div>
+
+          <details className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+            <summary className="cursor-pointer text-xs font-semibold">تنظیم رمز عبور حساب</summary>
+            <form onSubmit={changePassword} className="flex flex-wrap gap-2 mt-3">
+              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                minLength={10} required placeholder="رمز عبور جدید"
+                className="flex-1 min-w-48 p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs" />
+              <button disabled={busy} className="px-4 py-2 rounded bg-blue-600 text-white text-xs">تغییر رمز</button>
+            </form>
+          </details>
         </div>
       );
     }
 
-    // --- 10. Page 7: Account & Plans (Local Placeholder) ---
-    function AccountAndPlansPage({ plan, setPlan }) {
+    // --- 7. Staff and super-admin console ---
+    function SiteAdminDashboardPage({ user }) {
+      const [overview, setOverview] = useState(null);
+      const [staff, setStaff] = useState([]);
+      const [tickets, setTickets] = useState([]);
+      const [username, setUsername] = useState('');
+      const [displayName, setDisplayName] = useState('');
+      const [temporaryPassword, setTemporaryPassword] = useState('');
+      const [role, setRole] = useState('support');
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+      const isSuperAdmin = user && user.role === 'super_admin';
+
+      const refresh = async () => {
+        const results = await Promise.all([
+          apiFetch('/api/v1/site-admin/overview'),
+          apiFetch('/api/v1/site-admin/staff'),
+          apiFetch('/api/v1/tickets'),
+        ]);
+        setOverview(results[0]);
+        setStaff(results[1].staff || []);
+        setTickets(results[2].tickets || []);
+      };
+
+      useEffect(() => {
+        refresh().catch(e => setError(e.message));
+      }, []);
+
+      const createStaff = async (event) => {
+        event.preventDefault();
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const result = await apiFetch('/api/v1/site-admin/staff', {
+            method: 'POST',
+            body: JSON.stringify({
+              username, display_name: displayName || username,
+              temporary_password: temporaryPassword, role,
+            }),
+          });
+          setNotice('حساب ' + result.staff.username + ' ساخته شد. رمز موقت را به‌صورت امن به فرد تحویل دهید؛ تغییر آن در اولین ورود اجباری است.');
+          setUsername(''); setDisplayName(''); setTemporaryPassword('');
+          await refresh();
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const changeRole = async (staffUser, nextRole) => {
+        setError(''); setNotice('');
+        try {
+          await apiFetch('/api/v1/site-admin/staff/' + staffUser.id, {
+            method: 'POST', body: JSON.stringify({ role: nextRole }),
+          });
+          setNotice('نقش کاربر به‌روزرسانی شد.');
+          await refresh();
+        } catch (e) { setError(e.message); }
+      };
+
+      const assignTicket = async (ticketId, assignedTo) => {
+        try {
+          await apiFetch('/api/v1/tickets/' + ticketId + '/assign', {
+            method: 'POST', body: JSON.stringify({ assigned_to: assignedTo }),
+          });
+          await refresh();
+        } catch (e) { setError(e.message); }
+      };
+
+      const updateTicketStatus = async (ticketId, status) => {
+        try {
+          await apiFetch('/api/v1/tickets/' + ticketId + '/status', {
+            method: 'POST', body: JSON.stringify({ status }),
+          });
+          await refresh();
+        } catch (e) { setError(e.message); }
+      };
+
       return (
-        <div className="space-y-3 text-xs">
-          <div className="p-3 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
-            حالت اجرای محلی: سیستم احراز هویت ابری (Supabase) در نسخه ویندوز محلی غیرفعال است و تغییر سطح دسترسی زیر صرفاً نمایشی است.
+        <div className="space-y-4">
+          <div>
+            <div className="text-[11px] text-blue-400">{isSuperAdmin ? 'کنترل کامل سامانه' : 'مدیریت تیم'}</div>
+            <h1 className="text-xl font-bold mt-1">{isSuperAdmin ? 'پنل سوپرادمین' : 'پنل مدیریت'}</h1>
+            <p className="text-xs text-[var(--text-secondary)] mt-1">مدیریت کاربران، ادمین‌ها، نیروهای پشتیبانی و ارجاع تیکت‌ها.</p>
           </div>
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex justify-between items-center">
-            <div>
-              <div className="font-bold text-sm">حساب کاربری محلی و سطح دسترسی</div>
-              <div className="text-[var(--text-secondary)]">در اجرای محلی، تمام امکانات تحلیلی بدون محدودیت در دسترس شماست.</div>
-            </div>
-            <button onClick={() => setPlan(p => p === 'free' ? 'premium' : 'free')} className="px-3 py-1.5 rounded bg-blue-600 text-white">
-              سطح نمایشی: {plan}
-            </button>
+          <ErrorBox error={error} />
+          {notice && <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">{notice}</div>}
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {[
+              ['کاربران', overview && overview.users],
+              ['اشتراک‌های فعال', overview && overview.premium_users],
+              ['تیکت‌های باز', overview && overview.open_tickets],
+              ['پرداخت‌های موفق', overview && overview.paid_orders],
+            ].map(([label,value]) => (
+              <div key={label} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+                <div className="text-[11px] text-[var(--text-secondary)]">{label}</div>
+                <div className="text-xl font-bold num mt-1">{fmtNum(value || 0)}</div>
+              </div>
+            ))}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="p-4 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
-              <h3 className="font-bold text-sm">طرح رایگان (Free)</h3>
-              <p className="text-[var(--text-secondary)]">نمای بازار، صفحات پایه نمادها، محدودیت تاریخچه سهام‌داری و ۱ دیده‌بان.</p>
-            </div>
-            <div className="p-4 rounded border border-emerald-500/40 bg-[var(--bg-panel)] space-y-1.5">
-              <h3 className="font-bold text-sm text-emerald-400">طرح حرفه‌ای (Premium)</h3>
-              <p className="text-[var(--text-secondary)]">تاریخچه کامل، بازسازی پرتفوی چندشرکتی، غربالگر پیشرفته و خروجی اکسل/CSV.</p>
-            </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <div className="flex justify-between items-center gap-2">
+                <h2 className="font-bold text-sm">ادمین‌ها و پشتیبان‌ها</h2>
+                <span className="text-[10px] text-[var(--text-secondary)]">{fmtNum(staff.length)} نفر</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {staff.map(person => (
+                  <div key={person.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--bg-elevated)] p-2.5">
+                    <div>
+                      <div className="font-semibold text-xs">{person.display_name || person.username}</div>
+                      <div className="text-[10px] text-[var(--text-secondary)] num">{person.public_id} · {person.username}</div>
+                    </div>
+                    <select value={person.role} disabled={!isSuperAdmin || person.role === 'super_admin'}
+                      onChange={e => changeRole(person, e.target.value)}
+                      className="px-2 py-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-xs">
+                      <option value="support">پشتیبان</option>
+                      <option value="admin">ادمین</option>
+                      <option value="member">کاربر عادی</option>
+                      {person.role === 'super_admin' && <option value="super_admin">سوپرادمین</option>}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+              <h2 className="font-bold text-sm">افزودن نیروی جدید</h2>
+              {isSuperAdmin ? (
+                <form onSubmit={createStaff} className="space-y-2.5 mt-3">
+                  <label className="block text-xs">شناسه ورود
+                    <input value={username} onChange={e => setUsername(e.target.value)} required minLength={4}
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">نام نمایشی
+                    <input value={displayName} onChange={e => setDisplayName(e.target.value)}
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">رمز موقت (حداقل ۱۰ نویسه)
+                    <input type="password" value={temporaryPassword} onChange={e => setTemporaryPassword(e.target.value)}
+                      minLength={10} required
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
+                  </label>
+                  <label className="block text-xs">سطح دسترسی
+                    <select value={role} onChange={e => setRole(e.target.value)}
+                      className="mt-1 w-full p-2.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
+                      <option value="support">پشتیبان</option>
+                      <option value="admin">ادمین</option>
+                    </select>
+                  </label>
+                  <button disabled={busy} className="w-full py-2.5 rounded bg-blue-600 text-white text-xs disabled:opacity-50">
+                    {busy ? 'در حال ساخت...' : 'ساخت حساب کارمند'}
+                  </button>
+                </form>
+              ) : (
+                <p className="text-xs text-[var(--text-secondary)] mt-3">ساخت ادمین یا پشتیبان فقط در اختیار سوپرادمین است.</p>
+              )}
+            </section>
           </div>
+
+          <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h2 className="font-bold text-sm">صف تیکت‌ها</h2>
+              <span className="text-[10px] text-[var(--text-secondary)]">تخصیص بر اساس تیم پشتیبانی</span>
+            </div>
+            <div className="space-y-2">
+              {tickets.length === 0 ? (
+                <p className="text-xs text-[var(--text-secondary)]">تیکتی وجود ندارد.</p>
+              ) : tickets.map(ticket => (
+                <div key={ticket.id} className="grid grid-cols-1 lg:grid-cols-[1fr_180px_150px] gap-2 items-center rounded-lg border border-[var(--border-subtle)] p-2.5">
+                  <div>
+                    <div className="text-xs font-semibold">{ticket.subject}</div>
+                    <div className="text-[10px] text-[var(--text-secondary)]">{ticket.customer_name || ''} · #{toFa(ticket.id)} · {ticket.status}</div>
+                  </div>
+                  <select value={ticket.assigned_to || ''} onChange={e => assignTicket(ticket.id, e.target.value)}
+                    className="w-full p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs">
+                    <option value="">بدون مسئول</option>
+                    {staff.filter(person => person.role === 'support' || person.role === 'admin' || person.role === 'super_admin')
+                      .map(person => <option key={person.id} value={person.id}>{person.display_name || person.username}</option>)}
+                  </select>
+                  <select value={ticket.status} onChange={e => updateTicketStatus(ticket.id, e.target.value)}
+                    className="w-full p-2 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs">
+                    <option value="open">باز</option>
+                    <option value="waiting_support">در انتظار پشتیبانی</option>
+                    <option value="waiting_customer">در انتظار کاربر</option>
+                    <option value="closed">بسته</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       );
     }
