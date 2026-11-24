@@ -332,7 +332,7 @@ def classify_portfolio_change(row):
     """
     if row.get("identity_conflict"):
         return "identity_conflict"
-    if row.get("corporate_action"):
+    if row.get("corporate_action") and row.get("shares") is not None:
         return "capital_action"
     status = row.get("change_calculation_status")
     if status == "not_disclosed_on_date":
@@ -1199,9 +1199,9 @@ def refresh_summaries(live, sidecar):
         + _history_col("gap_trading_days") + " AS gap_trading_days, "
         + _history_col("change_type") + " AS change_type, "
         + _history_col("change_calculation_status") + " AS change_calculation_status, "
-        + _history_col("corporate_action") + " AS corporate_action, "
-        + _history_col("corporate_action_date") + " AS corporate_action_date, "
-        + _history_col("corporate_action_ratio") + " AS corporate_action_ratio, "
+        + _history_col("corporate_action", "ca.action_type") + " AS corporate_action, "
+        + _history_col("corporate_action_date", "ca.event_date") + " AS corporate_action_date, "
+        + _history_col("corporate_action_ratio", "ca.ratio") + " AS corporate_action_ratio, "
         + _history_col("source_change_code") + " AS source_change_code, "
         + _history_col("source_change_amount") + " AS source_change_amount, "
         + _history_col("anomaly_flags") + " AS anomaly_flags, "
@@ -1217,6 +1217,10 @@ def refresh_summaries(live, sidecar):
         "FROM company_daily GROUP BY ins_code, date) cd "
         "ON cd.ins_code=h.ins_code AND cd.date=h.date "
         "LEFT JOIN companies c ON c.ins_code=h.ins_code "
+        "LEFT JOIN (SELECT ins_code, COALESCE(effective_date,date) AS event_date, "
+        "GROUP_CONCAT(action_type, '; ') AS action_type, MAX(ratio) AS ratio "
+        "FROM corporate_actions GROUP BY ins_code, COALESCE(effective_date,date)) ca "
+        "ON ca.ins_code=h.ins_code AND ca.event_date=h.date "
         "WHERE NOT EXISTS ("
         " SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
         " WHERE x.ins_code=h.ins_code AND x.date=h.date "
