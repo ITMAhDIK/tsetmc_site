@@ -2083,7 +2083,11 @@ class SiteApi:
     # -- 2. Market watch ---------------------------------------------------
     def market_watch_public(self, params):
         """Return only public market-level fields; never expose ownership rows."""
-        result = self.market_watch(params)
+        safe_params = dict(params)
+        requested_sort = (safe_params.get("sort_by") or [""])[0]
+        if requested_sort not in ("symbol", "market_value"):
+            safe_params["sort_by"] = ["market_value"]
+        result = self.market_watch(safe_params)
         allowed = (
             "symbol", "company_name", "market", "latest_price",
             "latest_price_date", "market_value", "data_completeness",
@@ -2944,6 +2948,23 @@ class SiteApi:
         finally:
             live.close()
         return {"data_gaps": gaps, "reconciliation": recs}
+
+    def stock_corporate_actions_public(self, symbol):
+        """Only disclose chart event markers, not the underlying share-count facts."""
+        raw = self.stock_corporate_actions(symbol)
+        events = []
+        for row in raw.get("corporate_actions", []):
+            event_type = str(row.get("action_type") or "")
+            normalized = event_type.casefold()
+            events.append({
+                "date": row.get("event_date_gregorian"),
+                "date_jalali": row.get("event_date_jalali"),
+                "event_type": event_type,
+                "is_capital_increase": any(
+                    token in normalized for token in
+                    ("capital", "increase", "افزایش", "سرمایه")),
+            })
+        return {"events": events}
 
     def stock_prices(self, symbol):
         """Daily OHLCV from the pipeline's trading_days (ClosingPrice
@@ -4697,7 +4718,8 @@ class Handler(BaseHTTPRequestHandler):
                          ["portfolios", "investors"])
                     or (len(rest) >= 2 and rest[0] == "portfolios")
                     or (len(rest) == 3 and rest[0] == "stocks"
-                        and rest[2] == "shareholders")
+                        and rest[2] in ("shareholders", "ownership-series",
+                                        "data-quality"))
                     or rest in (["screener", "query"], ["screener", "export"])):
                 raise ApiError(410, "نمایش داده‌های ردیفی و خام در سایت عمومی غیرفعال است؛ فقط خروجی تحلیلی ارائه می‌شود.")
 
@@ -4708,10 +4730,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(403, "این بخش فقط برای سوپرادمین قابل دسترسی است.")
 
             if rest and rest[0] in ("watchlists", "screener"):
-                if not user:
-                    raise ApiError(401, "برای استفاده از این قابلیت وارد حساب شوید.")
-                if not user.get("is_premium"):
-                    raise ApiError(402, "این قابلیت مخصوص اشتراک حرفه‌ای است.")
+                raise ApiError(410, "این بخش قدیمی هنوز به حساب‌های مستقل متصل نشده است و تا زمان تکمیل نسخه امن غیرفعال است.")
 
             if rest == ["stocks"] or (len(rest) == 2 and rest[0] == "stocks"
                                       and rest[1] in ("",)):
@@ -4779,7 +4798,7 @@ class Handler(BaseHTTPRequestHandler):
             if rest[2] == "ownership-series":
                 return api.stock_ownership_series(rest[1], params), 200, "json"
             if rest[2] == "corporate-actions":
-                return api.stock_corporate_actions(rest[1]), 200, "json"
+                return api.stock_corporate_actions_public(rest[1]), 200, "json"
             if rest[2] == "data-quality":
                 return api.stock_data_quality(rest[1]), 200, "json"
             if rest[2] == "prices":
