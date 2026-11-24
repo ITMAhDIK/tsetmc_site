@@ -25,10 +25,10 @@ REFERRAL_REWARD_TOMAN = 100_000
 PASSWORD_ITERATIONS = 600_000
 
 PLANS = (
-    ("pro_30", "اشتراک حرفه‌ای یک‌ماهه", 30, 690_000),
-    ("pro_90", "اشتراک حرفه‌ای سه‌ماهه", 90, 1_890_000),
-    ("pro_180", "اشتراک حرفه‌ای شش‌ماهه", 180, 3_490_000),
-    ("pro_365", "اشتراک حرفه‌ای یک‌ساله", 365, 6_490_000),
+    ("pro_30", "اشتراک حرفه‌ای یک‌ماهه", 30, 2_790_000),
+    ("pro_90", "اشتراک حرفه‌ای سه‌ماهه", 90, 7_990_000),
+    ("pro_180", "اشتراک حرفه‌ای شش‌ماهه", 180, 15_490_000),
+    ("pro_365", "اشتراک حرفه‌ای یک‌ساله", 365, 28_900_000),
 )
 
 SCHEMA = """
@@ -263,13 +263,18 @@ class AccountService:
             with con:
                 for slug, name, days, price in PLANS:
                     con.execute(
-                        "INSERT OR IGNORE INTO site_plans "
+                        "INSERT INTO site_plans "
                         "(slug,name,duration_days,price_toman,is_active) "
-                        "VALUES (?,?,?,?,1)", (slug, name, days, price))
+                        "VALUES (?,?,?,?,1) ON CONFLICT(slug) DO UPDATE SET "
+                        "name=excluded.name,duration_days=excluded.duration_days,"
+                        "price_toman=excluded.price_toman,is_active=1",
+                        (slug, name, days, price))
                 con.execute(
-                    "INSERT OR IGNORE INTO site_promo_codes "
+                    "INSERT INTO site_promo_codes "
                     "(code,discount_percent,max_uses,used_count,new_customer_only,is_active) "
-                    "VALUES ('WELCOME20',20,2000,0,1,1)")
+                    "VALUES ('WELCOME10',10,2000,0,1,1) "
+                    "ON CONFLICT(code) DO UPDATE SET discount_percent=10,"
+                    "max_uses=2000,new_customer_only=1,is_active=1")
         finally:
             con.close()
 
@@ -1464,7 +1469,7 @@ class AccountService:
             return {
                 "currency": "TOMAN",
                 "referral_reward_toman": REFERRAL_REWARD_TOMAN,
-                "promotions": [{"code": "WELCOME20", "discount_percent": 20,
+                "promotions": [{"code": "WELCOME10", "discount_percent": 10,
                                 "new_customer_only": True}],
                 "plans": [dict(r) for r in rows],
                 "features": {
