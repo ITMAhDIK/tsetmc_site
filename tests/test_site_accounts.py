@@ -238,7 +238,7 @@ def test_temporary_staff_password_must_be_changed_before_private_endpoints(servi
     try:
         row = con.execute("SELECT id FROM site_users WHERE username=?",
                           ("temp_staff_01",)).fetchone()
-        user = service._safe_user(con, row["id"])
+        user = service._safe_user(con, row["id"], csrf_token="test-csrf")
     finally:
         con.close()
 
@@ -248,6 +248,7 @@ def test_temporary_staff_password_must_be_changed_before_private_endpoints(servi
 
     service.dispatch("POST", "/api/v1/auth/change-password", {}, {
         "new_password": "new-temporary-password-456",
+        "_csrf": "test-csrf",
     }, user, "http://localhost")
     updated = active_user(service, user["id"])
     assert updated["must_change_password"] == 0
