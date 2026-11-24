@@ -577,6 +577,8 @@ class AccountService:
         token = os.environ.get("SITE_SMS_API_TOKEN", "").strip()
         if not url or not token:
             raise AccountError(503, "ورود پیامکی هنوز پیکربندی نشده است؛ کلید سرویس پیامک روی سرور لازم است.")
+        if not url.lower().startswith("https://"):
+            raise AccountError(503, "نشانی سرویس پیامک باید HTTPS باشد.")
         body = {
             "phone": phone,
             "code": code,
