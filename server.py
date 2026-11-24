@@ -4819,12 +4819,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, self.api.sector_affinity_public(params))
                 status = 200
                 return
-            # A holder-specific time series would disclose a private position.
-            if (len(rest) == 3 and rest[0] == "stocks"
-                    and rest[2] == "ownership-series"
-                    and (params.get("shareholder_id") or params.get("id_scheme"))):
-                raise ApiError(410, "نمودار اختصاصی سهام‌دار از رابط عمومی حذف شده است.")
-
             payload, status, ctype = self._dispatch(method, path, params, body, user)
             if ctype == "csv":
                 self._send_text(200, payload,
