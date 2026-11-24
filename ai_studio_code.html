@@ -286,29 +286,32 @@
       const [indicators, setIndicators] = useState({
         sma20: false, sma50: false, ema20: false, bollinger: false, volume: true,
       });
-      const [drawingsLoaded, setDrawingsLoaded] = useState(false);
+      const [loadedDrawingsKey, setLoadedDrawingsKey] = useState(null);
       const [, setDrawVersion] = useState(0);
 
       useEffect(() => {
-        setDrawingsLoaded(false);
-        if (!persistKey) { setDrawings([]); setDrawingsLoaded(true); return; }
-        try {
-          const saved = window.localStorage.getItem('rn-chart:' + persistKey);
-          const parsed = saved ? JSON.parse(saved) : [];
-          setDrawings(Array.isArray(parsed) ? parsed.slice(0, 250) : []);
-        } catch (e) {
-          setDrawings([]);
+        setLoadedDrawingsKey(null);
+        let loaded = [];
+        if (persistKey) {
+          try {
+            const saved = window.localStorage.getItem('rn-chart:' + persistKey);
+            const parsed = saved ? JSON.parse(saved) : [];
+            loaded = Array.isArray(parsed) ? parsed.slice(0, 250) : [];
+          } catch (e) {
+            loaded = [];
+          }
         }
-        setDrawingsLoaded(true);
+        setDrawings(loaded);
+        setLoadedDrawingsKey(persistKey || '__disabled__');
       }, [persistKey]);
 
       useEffect(() => {
-        if (!persistKey || !drawingsLoaded) return;
+        if (!persistKey || loadedDrawingsKey !== persistKey) return;
         try {
           window.localStorage.setItem('rn-chart:' + persistKey,
             JSON.stringify(drawings.slice(-250)));
         } catch (e) { /* local persistence is optional when storage is unavailable */ }
-      }, [drawings, drawingsLoaded, persistKey]);
+      }, [drawings, loadedDrawingsKey, persistKey]);
 
       const applyRange = (mode) => {
         setRangeMode(mode);
@@ -468,7 +471,7 @@
         chart.timeScale().fitContent();
         if (rangeMode !== 'all') {
           const sessions = { '1M': 22, '3M': 66, '6M': 132, '1Y': 264, '3Y': 792 };
-          const span = Math.min(cleanData.length, sessions[rangeMode] || cleanData.length);
+          const span = Math.min(cleanData.length, sessions[rangeMode.toUpperCase()] || cleanData.length);
           chart.timeScale().setVisibleLogicalRange({
             from: Math.max(0, cleanData.length - span), to: cleanData.length + 1,
           });
@@ -619,7 +622,7 @@
             <span className="text-[var(--text-muted)]">بازه</span>
             {['1M','3M','6M','1Y','3Y','ALL'].map(mode =>
               <button key={mode} onClick={() => applyRange(mode)}
-                className={`px-2 py-1 rounded border ${rangeMode === mode.toLowerCase() ? 'border-blue-500 bg-blue-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>{mode}</button>)}
+                className={`px-2 py-1 rounded border ${rangeMode.toUpperCase() === mode ? 'border-blue-500 bg-blue-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>{mode}</button>)}
             <span className="mx-1 text-[var(--text-muted)]">اندیکاتور</span>
             {[
               ['sma20','SMA 20'],['sma50','SMA 50'],['ema20','EMA 20'],
