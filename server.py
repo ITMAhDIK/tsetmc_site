@@ -4334,7 +4334,9 @@ class SiteApi:
         return buf.getvalue()
 
     # -- 7. Saved filters + watchlist (sidecar) ------------------------------
-    def saved_filters_list(self):
+    def saved_filters_list(self, user_id=None):
+        if user_id is not None:
+            return self.accounts.saved_filters_list(user_id)
         sc = self.sidecar()
         try:
             rows = sc.execute(
@@ -4344,7 +4346,9 @@ class SiteApi:
         finally:
             sc.close()
 
-    def saved_filters_create(self, body):
+    def saved_filters_create(self, body, user_id=None):
+        if user_id is not None:
+            return self.accounts.saved_filter_create(user_id, body)
         name = str(body.get("name", "")).strip()
         if not name:
             raise ApiError(400, "نام فیلتر لازم است.")
@@ -4361,7 +4365,36 @@ class SiteApi:
         finally:
             sc.close()
 
-    def watchlist_get(self):
+    def watchlist_get(self, user_id=None):
+        if user_id is not None:
+            symbols = self.accounts.watchlist_symbols(user_id)
+            if not symbols:
+                return {"items": []}
+            sc = self.sidecar()
+            try:
+                placeholders = ",".join("?" for _ in symbols)
+                rows = sc.execute(
+                    "SELECT w.symbol AS symbol, w.company_name AS company_name, "
+                    "w.market AS market, w.disclosed_shareholder_count AS disclosed_shareholder_count, "
+                    "w.resolved_shareholder_count AS resolved_shareholder_count, "
+                    "w.disclosed_ownership_percent_sum AS disclosed_ownership_percent_sum, "
+                    "w.resolved_ownership_percent_sum AS resolved_ownership_percent_sum, "
+                    "w.market_value AS market_value, w.latest_price AS latest_price "
+                    "FROM site_watch w WHERE w.symbol IN (" + placeholders + ")",
+                    symbols).fetchall()
+                by_symbol = {row["symbol"]: dict(row) for row in rows}
+                return {"items": [
+                    by_symbol.get(symbol, {
+                        "symbol": symbol, "company_name": None, "market": None,
+                        "disclosed_shareholder_count": None,
+                        "resolved_shareholder_count": None,
+                        "disclosed_ownership_percent_sum": None,
+                        "resolved_ownership_percent_sum": None,
+                        "market_value": None, "latest_price": None,
+                    }) for symbol in symbols
+                ]}
+            finally:
+                sc.close()
         sc = self.sidecar()
         try:
             # LEFT JOIN: a symbol added from the companies table may have
@@ -4383,7 +4416,7 @@ class SiteApi:
         finally:
             sc.close()
 
-    def watchlist_add(self, body):
+    def watchlist_add(self, body, user_id=None):
         symbol = str(body.get("symbol", "")).strip()
         if not symbol:
             raise ApiError(400, "نماد لازم است.")
@@ -4416,6 +4449,8 @@ class SiteApi:
                     live.close()
             else:
                 symbol = row["symbol"]
+            if user_id is not None:
+                return self.accounts.watchlist_add_symbol(user_id, symbol)
             with sc:
                 sc.execute(
                     "INSERT OR IGNORE INTO watchlist (symbol, added_at) VALUES (?,?)",
@@ -4424,7 +4459,9 @@ class SiteApi:
         finally:
             sc.close()
 
-    def watchlist_remove(self, symbol):
+    def watchlist_remove(self, symbol, user_id=None):
+        if user_id is not None:
+            return self.accounts.watchlist_remove_symbol(user_id, symbol)
         sc = self.sidecar()
         try:
             with sc:
@@ -4689,8 +4726,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            # Nothing else in the project directory is a public static asset:
-            # SQLite files, JSON registries, workbooks and source files stay private.
+            # Only explicitly allow-listed frontend assets are public. The
+            # market/ownership API is public by product design; DB/workbook files remain private.
             if not path.startswith("/api/v1/"):
                 raise ApiError(404, "منبع عمومی پیدا نشد.")
 
@@ -4722,18 +4759,41 @@ class Handler(BaseHTTPRequestHandler):
                 status = response_status
                 return
 
-            # Raw ownership records and per-holder endpoints are intentionally
-            # disabled. Hiding their tabs is not a security boundary.
-            rest = [part for part in path.split("/") if part][2:]
-            if (rest in (["shareholders", "search"],
-                         ["shareholders", "observation-history"],
-                         ["portfolios", "investors"])
-                    or (len(rest) >= 2 and rest[0] == "portfolios")
-                    or (len(rest) == 3 and rest[0] == "stocks"
-                        and rest[2] in ("shareholders", "ownership-series",
-                                        "data-quality"))
-                    or rest in (["screener", "query"], ["screener", "export"])):
-                raise ApiError(410, "نمایش داده‌های ردیفی و خام در سایت عمومی غیرفعال است؛ فقط خروجی تحلیلی ارائه می‌شود.")
+
+            if rest == ["watchlists", "default"] or rest == ["watchlists", "default", "symbols"] or (
+                    len(rest) == 4 and rest[:3] == ["watchlists", "default", "symbols"]):
+                if not user:
+                    raise ApiError(401, "برای استفاده از دیده‌بان وارد حساب شوید.")
+                if method in ("POST", "DELETE"):
+                    self.api.accounts.check_csrf(user, self.headers.get("X-CSRF-Token", ""))
+                if rest == ["watchlists", "default"] and method == "GET":
+                    self._send_json(200, self.api.watchlist_get(user["id"]))
+                    status = 200
+                    return
+                if rest == ["watchlists", "default", "symbols"] and method == "POST":
+                    self._send_json(200, self.api.watchlist_add(body, user["id"]))
+                    status = 200
+                    return
+                if len(rest) == 4 and rest[:3] == ["watchlists", "default", "symbols"] and method == "DELETE":
+                    self._send_json(200, self.api.watchlist_remove(rest[3], user["id"]))
+                    status = 200
+                    return
+                raise ApiError(405, "روش درخواست برای دیده‌بان مجاز نیست.")
+
+            if rest == ["screener", "saved-filters"]:
+                if not user:
+                    raise ApiError(401, "برای ذخیره فیلتر وارد حساب شوید.")
+                if method in ("POST", "PUT", "DELETE"):
+                    self.api.accounts.check_csrf(user, self.headers.get("X-CSRF-Token", ""))
+                if method == "GET":
+                    self._send_json(200, self.api.saved_filters_list(user["id"]))
+                    status = 200
+                    return
+                if method == "POST":
+                    self._send_json(201, self.api.saved_filters_create(body, user["id"]))
+                    status = 201
+                    return
+                raise ApiError(405, "روش درخواست برای فیلترهای ذخیره‌شده مجاز نیست.")
 
             if rest and rest[0] == "admin":
                 if not user:
@@ -4797,20 +4857,20 @@ class Handler(BaseHTTPRequestHandler):
         # seg: ['api','v1', ...]
         rest = seg[2:]
         if method == "GET" and rest == ["market", "overview"]:
-            return api.market_overview_public(), 200, "json"
+            return api.market_overview(), 200, "json"
         if method == "GET" and rest == ["market", "watch"]:
-            return api.market_watch_public(params), 200, "json"
+            return api.market_watch(params), 200, "json"
         if method == "GET" and rest == ["stocks", "search"]:
             return api.stocks_search(params), 200, "json"
         if method == "GET" and len(rest) == 2 and rest[0] == "stocks":
-            return api.stock_detail_public(rest[1]), 200, "json"
+            return api.stock_detail(rest[1]), 200, "json"
         if method == "GET" and len(rest) == 3 and rest[0] == "stocks":
             if rest[2] == "shareholders":
                 return api.stock_shareholders(rest[1], params), 200, "json"
             if rest[2] == "ownership-series":
                 return api.stock_ownership_series(rest[1], params), 200, "json"
             if rest[2] == "corporate-actions":
-                return api.stock_corporate_actions_public(rest[1]), 200, "json"
+                return api.stock_corporate_actions(rest[1]), 200, "json"
             if rest[2] == "data-quality":
                 return api.stock_data_quality(rest[1]), 200, "json"
             if rest[2] == "prices":
