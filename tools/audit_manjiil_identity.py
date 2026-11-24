@@ -13,7 +13,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "docs/data/workbooks/منجیل_19239905145688600.xlsx"
+WORKBOOK_DIR = ROOT / "docs/data/workbooks"
 NEEDLE = "شرکت مدیریت انرژی امیدتابان هور"
 
 
@@ -38,9 +38,11 @@ def rows(sheet):
 
 
 def main():
-    if not PATH.exists():
-        raise SystemExit(f"Missing workbook: {PATH}")
-    wb = load_workbook(PATH, read_only=True, data_only=True)
+    matches = list(WORKBOOK_DIR.glob("*19239905145688600.xlsx"))
+    if len(matches) != 1:
+        raise SystemExit(f"Expected exactly one Manjil workbook ending 19239905145688600.xlsx; found {len(matches)}")
+    path = matches[0]
+    wb = load_workbook(path, read_only=True, data_only=True)
     try:
         history = list(rows(wb["holdings_history"]))
         shareholders = list(rows(wb["shareholders"]))
@@ -92,7 +94,7 @@ def main():
                 "types": sorted(entry["types"]),
             })
         output = {
-            "workbook": PATH.name,
+            "workbook": path.name,
             "target_name": NEEDLE,
             "history_rows_matched": len(target_history),
             "shareholders_rows_matched": len(target_shareholders),
