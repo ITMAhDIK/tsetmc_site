@@ -129,11 +129,10 @@ The `WELCOME5` promotion gives 5% off the first successful purchase (limited to 
 
 ### Market positioning reference checked on 2026-11-24
 
-Publicly listed comparison prices observed during implementation:
+Public comparison prices checked on 2026-11-24:
 
-- NabzBours lists monthly tiers at 99,000, 199,000 and 299,000 Toman: https://nabzbours.ir/
-- A recent overview of Rahavard365 lists Silver at 430,000 and Gold at 570,000 Toman per month, and Platinum at 2,535,000 Toman: https://iranrebate.com/education/rahavard365/
-- BazaarBasheh lists a 2,000,000 Toman monthly professional plan: https://bazaarbasheh.ir/accounts/subscribe/
+- BazaarBasheh's own subscription page lists its Professional tier at 2,000,000 Toman per month and 18,000,000 Toman for one year: https://bazaarbasheh.ir/accounts/subscribe/
+- A recent third-party overview of Rahavard365 lists Silver at 430,000, Gold at 570,000 and Platinum at 2,535,000 Toman per month: https://iranrebate.com/education/rahavard365/
 
 The 2,790,000 Toman monthly price is deliberately positioned slightly above the cited 2,535,000 Toman Platinum monthly reference, and above the cited 2,000,000 Toman monthly professional plan. After the 5% first-purchase discount, the 30-day price remains about 2,650,500 Toman, just above the 2,535,000 Toman monthly Platinum reference. The annual price also sits above the cited 18,000,000 Toman annual professional package. This is a high-end positioning decision, not evidence that the product already matches every competitor's feature breadth. Review willingness to pay and feature parity before charging real customers.
 
