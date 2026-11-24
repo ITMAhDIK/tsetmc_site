@@ -619,6 +619,21 @@ def main() -> int:
     if not all_dates:
         raise SystemExit("No usable Gregorian observation dates found in workbook histories.")
 
+    target_identity_checks = [
+        {
+            "canonical_id": item["id"],
+            "shareholder_name": item["shareholder_name"],
+            "source_id_count": len(item.get("source_ids", [])),
+            "source_ids": item.get("source_ids", []),
+            "symbols": [position["symbol"] for position in item.get("symbols", [])],
+            "n_companies": item["n_companies"],
+            "timeline_rows_after_deduplication": len(item.get("timeline", [])),
+            "first_observation_date": min((row["date"] for row in item.get("timeline", [])), default=None),
+            "last_observation_date": max((row["date"] for row in item.get("timeline", [])), default=None),
+        }
+        for item in final_investors
+        if "امیدتابان هور" in normalized_identity_name(item.get("shareholder_name"))
+    ]
     summary = {
         "workbook_count": len(files),
         "symbol_count": len({workbook_identity(path)[1] for path in files}),
@@ -627,6 +642,7 @@ def main() -> int:
         "history_rows_without_composite_id": skipped_no_identity,
         "investor_count": len(final_investors),
         "identity_alias_resolution": alias_stats,
+        "target_identity_checks": target_identity_checks,
         "earliest_observation_date": min(all_dates),
         "latest_observation_date": max(all_dates),
         "sector_registry": registry_meta,
