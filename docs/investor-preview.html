@@ -412,6 +412,8 @@
         <div class="profile-line">
           <div><div class="profile-name">${safe(person.shareholder_name)}</div>
             <div class="profile-id num">${safe(person.id)} · ${safe(person.id_scheme)} · ${typeLabel(person.shareholder_type)}</div>
+            ${person.identity_link_evidence && Object.keys(person.identity_link_evidence).length ? '<div class="hint">این هویت با پیوند تداوم تاریخچه ساخته شده است؛ ادغام استنباطی است و شناسه‌های خام حفظ شده‌اند.</div>' : ""}
+            ${person.source_ids?.length ? '<details class="hint" style="margin-top:7px"><summary>شناسه‌های منبعی ('+fa(person.source_ids.length)+')</summary><div class="num" style="line-height:2;direction:ltr;text-align:left;max-height:110px;overflow:auto">'+person.source_ids.map(x=>safe(x.id_scheme+":"+x.shareholder_id)).join("<br>")+'</div></details>' : ""}
             ${person.name_variants?.length ? '<div class="hint">نام‌های متفاوت در فایل‌ها: '+person.name_variants.map(safe).join("، ")+'</div>' : ""}
           </div>
           <span class="tag">${safe(person.identity_verification_status || "شناسهٔ منبعی")}</span>
