@@ -60,7 +60,8 @@ def test_missing_disclosure_is_not_a_zero_balance_or_a_sell_event():
 
 def test_exit_convention_requires_a_later_company_snapshot():
     assert classify_historical_exit("2024-01-02", "2024-01-03") == "assumed_sold"
-    assert classify_historical_exit("2024-01-03", "2024-01-03") == "currently_disclosed"
+    assert classify_historical_exit("2024-01-03", "2024-01-03", 250) == "currently_disclosed"
+    assert classify_historical_exit("2024-01-03", "2024-01-03", None) == "unknown"
     assert classify_historical_exit("2024-01-03", None) == "unknown"
     assert classify_historical_exit(None, "2024-01-03") == "unknown"
 
