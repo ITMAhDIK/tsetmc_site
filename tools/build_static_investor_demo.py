@@ -11,6 +11,7 @@ import json
 import math
 import re
 import sys
+import unicodedata
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -114,12 +115,170 @@ def to_json_safe(value: Any) -> Any:
     return value
 
 
+
+def normalized_identity_name(value: Any) -> str:
+    """Normalize only Unicode/spaces/punctuation; never use fuzzy name matching."""
+    raw = text_value(value) or ""
+    raw = unicodedata.normalize("NFKC", raw)
+    raw = raw.replace("ي", "ی").replace("ك", "ک").replace("ۀ", "ه")
+    raw = raw.replace("\u200c", " ")
+    raw = re.sub(r"\\s+", " ", raw).strip()
+    raw = re.sub(r"[‐‑‒–—-]+", "-", raw)
+    return raw
+
+
+def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tuple[str, str]], dict[tuple[str, str], dict[str, Any]]]:
+    """Build conservative aliases for date-scoped IDs using source crosswalks and unique overlap.
+
+    A continuity edge requires one security/date, exact normalized name and type,
+    exactly two source IDs, and exactly one not-disclosed placeholder paired with
+    one observed quantity. Any conflicting non-null quantities block the edge.
+    A multi-ID component is merged only if it has exactly one stable non-ondate
+    anchor (e.g. share_id); otherwise its source IDs remain separate.
+    """
+    parent: dict[tuple[str, str], tuple[str, str]] = {}
+    pair_dates: dict[tuple[str, str], dict[tuple[str, str], list[float | None]]] = defaultdict(lambda: defaultdict(list))
+    presence: dict[tuple[str, str, str, str], dict[tuple[str, str], list[float | None]]] = defaultdict(lambda: defaultdict(list))
+    explicit_edges: list[tuple[tuple[str, str], tuple[str, str]]] = []
+    continuity_edges: list[tuple[tuple[str, str], tuple[str, str], str]] = []
+
+    def ensure(pair):
+        parent.setdefault(pair, pair)
+
+    def find(pair):
+        ensure(pair)
+        while parent[pair] != pair:
+            parent[pair] = parent[parent[pair]]
+            pair = parent[pair]
+        return pair
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for path in files:
+        _, ins_code = workbook_identity(path)
+        holders = read_sheet(path, "shareholders")
+        history = read_sheet(path, "holdings_history")
+
+        for holder in holders:
+            scheme = text_value(holder.get("id_scheme"))
+            holder_id = id_value(holder.get("shareholder_id"))
+            if not scheme or not holder_id:
+                continue
+            pair = (scheme, holder_id)
+            ensure(pair)
+            raw_ids = str(holder.get("raw_source_id") or "")
+            for token in re.split(r"[,;|]", raw_ids):
+                match = re.fullmatch(r"\\s*([A-Za-z_]+)\\s*:\\s*([0-9]+)\\s*", token)
+                if not match:
+                    continue
+                source_pair = (match.group(1), match.group(2))
+                ensure(source_pair)
+                if source_pair != pair:
+                    explicit_edges.append((pair, source_pair))
+
+        for row in history:
+            scheme = text_value(row.get("id_scheme"))
+            holder_id = id_value(row.get("shareholder_id"))
+            observed = iso_date(row.get("date_gregorian")) or iso_date(row.get("date"))
+            name = normalized_identity_name(row.get("shareholder_name"))
+            holder_type = text_value(row.get("shareholder_type")) or ""
+            if not scheme or not holder_id or not observed or not name:
+                continue
+            pair = (scheme, holder_id)
+            ensure(pair)
+            shares = number(row.get("shares"))
+            pair_dates[pair][(ins_code, observed)].append(shares)
+            presence[(ins_code, observed, name, holder_type)][pair].append(shares)
+
+    # Explicit source crosswalks are the strongest available link evidence.
+    for a, b in explicit_edges:
+        if a in parent and b in parent:
+            union(a, b)
+
+    # Date-scoped IDs can be linked only when the same security/date has exactly
+    # two source IDs for the exact legal name/type and one is a null placeholder.
+    for signature, by_pair in presence.items():
+        if len(by_pair) != 2:
+            continue
+        (a, vals_a), (b, vals_b) = list(by_pair.items())
+        a_nonnull = [v for v in vals_a if v is not None]
+        b_nonnull = [v for v in vals_b if v is not None]
+        if bool(a_nonnull) == bool(b_nonnull):
+            continue
+        shared_keys = set(pair_dates[a]) & set(pair_dates[b])
+        conflict = False
+        for key in shared_keys:
+            av = {v for v in pair_dates[a][key] if v is not None}
+            bv = {v for v in pair_dates[b][key] if v is not None}
+            if av and bv and av != bv:
+                conflict = True
+                break
+        if conflict:
+            continue
+        union(a, b)
+        continuity_edges.append((a, b, signature[1]))
+
+    components: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+    for pair in parent:
+        components[find(pair)].append(pair)
+
+    aliases: dict[tuple[str, str], tuple[str, str]] = {}
+    evidence: dict[tuple[str, str], dict[str, Any]] = {}
+    merged_components = 0
+    merged_alias_count = 0
+    for members in components.values():
+        stable = [p for p in members if p[0] != "ondate_share_id"]
+        # A component with multiple stable anchors is not safe to collapse.
+        if len(members) > 1 and len(stable) == 1:
+            canonical = stable[0]
+            merged_components += 1
+            for pair in members:
+                aliases[pair] = canonical
+                if pair != canonical:
+                    merged_alias_count += 1
+                    evidence[pair] = {
+                        "kind": "inferred_exact_continuity",
+                        "canonical_id": f"{canonical[0]}:{canonical[1]}",
+                        "evidence": "explicit source crosswalk or unique same-security/date/name/type overlap with one not-disclosed placeholder",
+                    }
+        else:
+            for pair in members:
+                aliases[pair] = pair
+                evidence[pair] = {
+                    "kind": "source_identity",
+                    "canonical_id": f"{pair[0]}:{pair[1]}",
+                    "evidence": "no unique stable identity anchor; left separate",
+                }
+
+    stats = {
+        "source_identity_pair_count": len(parent),
+        "merged_component_count": merged_components,
+        "merged_alias_count": merged_alias_count,
+        "explicit_crosswalk_edge_count": len(explicit_edges),
+        "continuity_edge_count": len(continuity_edges),
+        "continuity_edges": [
+            {
+                "left": f"{a[0]}:{a[1]}",
+                "right": f"{b[0]}:{b[1]}",
+                "date": date_key,
+                "basis": "same security/date + exact normalized name/type + exactly two IDs + one null and one observed quantity",
+            }
+            for a, b, date_key in continuity_edges
+        ],
+    }
+    return aliases, evidence, stats
+
+
 def main() -> int:
     files = sorted(WORKBOOK_DIR.glob("*.xlsx"))
     if not files:
         raise SystemExit(f"No workbooks found in {WORKBOOK_DIR}")
 
     registry, categories, registry_meta = load_sector_reference(ROOT / "docs")
+    alias_map, alias_evidence, alias_stats = build_identity_aliases(files)
     investors: dict[str, dict[str, Any]] = {}
     symbol_latest_date: dict[str, str] = {}
     symbol_latest_label: dict[str, str] = {}
@@ -171,7 +330,10 @@ def main() -> int:
                 skipped_no_identity += 1
                 continue
 
-            pair_key = f"{scheme}:{holder_id}"
+            source_pair = (scheme, holder_id)
+            canonical_pair = alias_map.get(source_pair, source_pair)
+            source_pair_key = f"{source_pair[0]}:{source_pair[1]}"
+            pair_key = f"{canonical_pair[0]}:{canonical_pair[1]}"
             observed_date = (
                 iso_date(source_row.get("date_gregorian"))
                 or iso_date(source_row.get("date"))
@@ -197,8 +359,16 @@ def main() -> int:
                 "identity_verification_status": None,
                 "symbols": {},
                 "timeline": [],
+                "source_ids": {},
+                "identity_link_evidence": {},
             })
-            holder_meta = metadata_by_pair.get(pair_key, {})
+            holder_meta = metadata_by_pair.get(source_pair_key, {})
+            investor["source_ids"][source_pair_key] = {
+                "id_scheme": source_pair[0],
+                "shareholder_id": source_pair[1],
+            }
+            if source_pair != canonical_pair:
+                investor["identity_link_evidence"][source_pair_key] = alias_evidence.get(source_pair, {})
             candidate_name = (
                 text_value(source_row.get("shareholder_name"))
                 or holder_meta.get("shareholder_name")
@@ -237,7 +407,13 @@ def main() -> int:
                 "price_date": iso_date(source_row.get("price_date")) or observed_date,
                 "price_field": text_value(source_row.get("price_field")),
                 "valuation_status": text_value(source_row.get("valuation_status")),
-                "identity_status": text_value(source_row.get("identity_status")),
+                "identity_status": (
+                    "inferred_exact_match" if source_pair != canonical_pair
+                    else text_value(source_row.get("identity_status"))
+                ),
+                "source_id_scheme": source_pair[0],
+                "source_shareholder_id": source_pair[1],
+                "data_availability_status": text_value(source_row.get("data_availability_status")),
                 "anomaly_flags": text_value(source_row.get("anomaly_flags")),
                 "source": text_value(source_row.get("source")),
             }
@@ -248,7 +424,7 @@ def main() -> int:
                 "observations": [],
             })["observations"].append(row)
 
-    # Finalize each investor using only its strict (scheme, ID) namespace pair.
+    # Finalize investors after conservative source-ID alias resolution.
     final_investors = []
     aggregate_stats = {
         "positions_in_latest_valued_snapshots": 0,
@@ -260,14 +436,47 @@ def main() -> int:
     }
 
     for investor in investors.values():
-        timeline = sorted(investor["timeline"], key=lambda r: (r["date"], r["ins_code"]))
+        raw_timeline = sorted(investor["timeline"], key=lambda r: (r["date"], r["ins_code"]))
+        # Collapse duplicate date/security rows created by ondate IDs. Prefer an
+        # observed quantity over a not-disclosed placeholder. Conflicting observed
+        # quantities are kept as an explicit conflict, never summed.
+        grouped_rows = defaultdict(list)
+        for item in raw_timeline:
+            grouped_rows[(item["date"], item["ins_code"])].append(item)
+        timeline = []
+        for key, candidates in sorted(grouped_rows.items()):
+            observed = [item for item in candidates if item.get("shares") is not None]
+            if observed:
+                distinct_shares = {item.get("shares") for item in observed}
+                if len(distinct_shares) > 1:
+                    chosen = dict(observed[0])
+                    chosen["shares"] = None
+                    chosen["market_value_rial"] = None
+                    chosen["identity_status"] = "identity_conflict"
+                    chosen["data_availability_status"] = "identity_conflict"
+                else:
+                    chosen = sorted(
+                        observed,
+                        key=lambda item: (
+                            item.get("source_id_scheme") == investor["id_scheme"]
+                            and item.get("source_shareholder_id") == investor["shareholder_id"],
+                            item.get("market_value_rial") is not None,
+                        ),
+                        reverse=True,
+                    )[0]
+            else:
+                chosen = candidates[0]
+            timeline.append(chosen)
         investor["timeline"] = timeline
 
         symbol_items = []
         current_value_rial = 0.0
         current_value_known = False
         for ins_code, symbol_info in investor["symbols"].items():
-            records = sorted(symbol_info["observations"], key=lambda r: r["date"])
+            records = sorted(
+                (r for r in symbol_info["observations"] if r.get("shares") is not None),
+                key=lambda r: r["date"],
+            )
             if not records:
                 continue
             first = records[0]
@@ -311,8 +520,8 @@ def main() -> int:
             status_text = (row.get("identity_status") or "").lower()
             identity_conflict = "conflict" in status_text
             engine_rows.append({
-                "id_scheme": investor["id_scheme"],
-                "shareholder_id": investor["shareholder_id"],
+                "id_scheme": row.get("source_id_scheme") or investor["id_scheme"],
+                "shareholder_id": row.get("source_shareholder_id") or investor["shareholder_id"],
                 "date": row["date"],
                 "ins_code": row["ins_code"],
                 "shares": row.get("shares"),
@@ -357,6 +566,9 @@ def main() -> int:
                 "price_date": row.get("price_date"),
                 "valuation_status": row.get("valuation_status"),
                 "identity_status": row.get("identity_status"),
+                "data_availability_status": row.get("data_availability_status"),
+                "source_id_scheme": row.get("source_id_scheme"),
+                "source_shareholder_id": row.get("source_shareholder_id"),
             })
 
         symbol_items.sort(key=lambda x: (x["symbol"] or "", x["ins_code"]))
@@ -375,7 +587,12 @@ def main() -> int:
             "shareholder_name": investor.get("shareholder_name") or "نام افشا نشده",
             "name_variants": sorted(investor.get("name_variants", set())),
             "shareholder_type": investor.get("shareholder_type") or "unknown",
-            "identity_verification_status": investor.get("identity_verification_status"),
+            "identity_verification_status": (
+                "inferred_exact_continuity" if investor.get("identity_link_evidence")
+                else investor.get("identity_verification_status")
+            ),
+            "source_ids": sorted(investor.get("source_ids", {}).values(), key=lambda x: (x["id_scheme"], x["shareholder_id"])),
+            "identity_link_evidence": investor.get("identity_link_evidence", {}),
             "n_companies": len(symbol_items),
             "latest_observation_date": max((r["date"] for r in timeline), default=None),
             "current_portfolio_value_rial": engine_value,
@@ -409,6 +626,7 @@ def main() -> int:
         "history_rows_with_composite_id_and_date": valid_history_rows,
         "history_rows_without_composite_id": skipped_no_identity,
         "investor_count": len(final_investors),
+        "identity_alias_resolution": alias_stats,
         "earliest_observation_date": min(all_dates),
         "latest_observation_date": max(all_dates),
         "sector_registry": registry_meta,
@@ -420,12 +638,12 @@ def main() -> int:
         "generated_from": "14 uploaded per-symbol Excel workbooks",
         "scope_note": (
             "This is a sample derived only from the 14 supplied workbooks. "
-            "Identity is grouped by exact (id_scheme, shareholder_id); names are never merge keys. "
+            "Identity uses stable source IDs plus conservative ondate continuity links; exact name/type alone never merges records. "
             "An assumed exit means absence from a later disclosed snapshot, not proof of a sale."
         ),
         "methodology": {
-            "identity_key": "id_scheme + ':' + shareholder_id",
-            "name_matching": False,
+            "identity_key": "canonical stable ID with conservative ondate continuity aliases",
+            "name_matching": "exact normalized name/type is used only with same-security/date unique overlap and a null-vs-observed placeholder; never as a standalone merge key",
             "affinity_engine": "SectorAffinityAccumulator from sector_affinity.py",
             "affinity_weights": {
                 "current_allocation": 0.50,
