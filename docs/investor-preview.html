@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>پیش‌نمایش تاریخچه و علاقه‌مندی سرمایه‌گذار | TSETMC</title>
+  <link rel="stylesheet" href="./ui-refresh.css" />
+  <style>
+    :root{color-scheme:dark;--bg:#0b0e14;--panel:#131722;--raised:#1a202c;--line:#273247;--muted:#96a2b7;--text:#e6eaf2;--blue:#5b8cff;--yellow:#ffc107;--green:#21c78a;--red:#ff6b6b}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:Tahoma,"Vazirmatn",sans-serif;direction:rtl}
+    button,input,select{font:inherit}
+    a{color:#8fb1ff;text-decoration:none}
+    .wrap{max-width:1500px;margin:0 auto;padding:22px}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}
+    .eyebrow{font-size:11px;color:#90a5c9;letter-spacing:.2px}
+    h1{font-size:23px;margin:7px 0 8px}
+    .sub{color:var(--muted);font-size:12px;line-height:1.9;max-width:850px}
+    .top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .btn{display:inline-flex;align-items:center;justify-content:center;padding:9px 13px;border:1px solid var(--line);border-radius:9px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
+    .btn:hover{border-color:#5079c9}
+    .scope{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+    .pill{font-size:10px;color:#b8c4d8;background:#182132;border:1px solid #2b3952;border-radius:99px;padding:6px 9px}
+    .layout{display:grid;grid-template-columns:340px minmax(0,1fr);gap:14px;align-items:start}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden}
+    .panel-head{padding:14px 15px;border-bottom:1px solid var(--line)}
+    .panel-title{font-size:14px;font-weight:700}
+    .panel-sub{font-size:10px;color:var(--muted);margin-top:6px;line-height:1.7}
+    .filters{padding:12px;display:grid;gap:8px;border-bottom:1px solid var(--line)}
+    .field{width:100%;background:#0d121d;color:var(--text);border:1px solid #2b3952;border-radius:8px;padding:10px 11px;font-size:12px;outline:none}
+    .field:focus{border-color:var(--blue)}
+    .list{max-height:calc(100vh - 310px);min-height:280px;overflow:auto}
+    .person{padding:12px 13px;border-bottom:1px solid #202a3b;cursor:pointer;transition:background .12s}
+    .person:hover{background:#192235}
+    .person.active{background:#17243b;box-shadow:inset -3px 0 #6091ff}
+    .person-name{font-size:12px;font-weight:700;display:flex;justify-content:space-between;gap:8px}
+    .person-meta{font-size:10px;color:var(--muted);margin-top:7px;display:flex;justify-content:space-between;gap:8px}
+    .num{font-variant-numeric:tabular-nums;direction:ltr;display:inline-block}
+    .detail{display:grid;gap:14px}
+    .empty{padding:60px 20px;text-align:center;color:var(--muted);line-height:2}
+    .profile{padding:16px}
+    .profile-line{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+    .profile-name{font-size:18px;font-weight:700}
+    .profile-id{font-size:11px;color:#9fb4dc;margin-top:7px}
+    .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:15px}
+    .stat{background:var(--raised);border:1px solid #253149;border-radius:10px;padding:12px}
+    .stat-label{font-size:10px;color:var(--muted)}
+    .stat-value{font-size:16px;font-weight:700;margin-top:7px}
+    .section{padding:15px}
+    .section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+    h2{font-size:14px;margin:0}
+    .hint{font-size:10px;color:var(--muted);line-height:1.8;margin-top:5px}
+    .chart-wrap{background:#0d121d;border:1px solid #263249;border-radius:10px;padding:8px;overflow:hidden}
+    svg.chart{display:block;width:100%;height:220px}
+    .chart-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:10px;padding:0 8px 4px}
+    .heatmap{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:9px}
+    .heat{min-height:112px;border-radius:10px;border:1px solid #80691c;padding:12px;display:flex;flex-direction:column;justify-content:space-between}
+    .heat-title{font-size:11px;font-weight:700}
+    .heat-score{font-size:21px;font-weight:800;direction:ltr;text-align:left}
+    .heat-meta{font-size:9px;color:#c9c8b9;line-height:1.8}
+    .heat-footer{font-size:9px;color:#b7c0d2;margin-top:8px}
+    .table-wrap{overflow:auto;border:1px solid #263249;border-radius:9px}
+    table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:11px}
+    th{background:#1a202c;color:#aebbd0;text-align:right;font-weight:600}
+    td,th{padding:10px 11px;border-bottom:1px solid #263044}
+    tbody tr:hover{background:#182135}
+    .symbol-btn{color:#8fb1ff;background:none;border:0;cursor:pointer;font-weight:700;padding:0}
+    .tag{display:inline-block;font-size:9px;border:1px solid #33415a;border-radius:6px;padding:4px 6px;color:#b9c8de}
+    .tag.green{color:#7fe0b8;border-color:#246c56;background:#10251f}
+    .tag.yellow{color:#f8d66d;border-color:#796324;background:#2b2410}
+    .tag.red{color:#ffaaaa;border-color:#763c42;background:#2a171a}
+    .note{font-size:10px;line-height:1.9;color:#aab5c7;background:#181f2c;border:1px solid #303b50;border-radius:9px;padding:11px}
+    .loading{padding:24px;color:var(--muted);font-size:12px}
+    .status{font-size:10px;color:var(--muted);padding:10px 13px;border-top:1px solid var(--line)}
+    .small-muted{font-size:9px;color:var(--muted)}
+    @media(max-width:980px){.layout{grid-template-columns:1fr}.list{max-height:340px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:560px){.wrap{padding:12px}.top{align-items:flex-start;flex-direction:column}h1{font-size:20px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.heatmap{grid-template-columns:repeat(2,minmax(0,1fr))}.stat-value{font-size:14px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <div class="eyebrow">TSETMC · نسخه آزمایشی داده‌محور</div>
+        <h1>تاریخچه و گرایش سرمایه‌گذار</h1>
+        <div class="sub">این صفحه خروجی واقعی پردازش ۱۴ فایل اکسلِ بارگذاری‌شده را نمایش می‌دهد: جستجوی شناسه، شرکت‌های مشاهده‌شده، دفتر تغییرات مالکیت و نقشهٔ حرارتی علاقه‌مندی در گروه‌های بورسی.</div>
+        <div class="scope" id="scopePills"><span class="pill">در حال بارگذاری اطلاعات…</span></div>
+      </div>
+      <div class="top-actions">
+        <a class="btn" href="./index.html">بازگشت به داشبورد اصلی</a>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="panel">
+        <div class="panel-head">
+          <div class="panel-title">جستجوی سرمایه‌گذار</div>
+          <div class="panel-sub">شناسه‌ها با کلید ترکیبی «نوع شناسه + مقدار شناسه» گروه‌بندی شده‌اند؛ نام به‌تنهایی مبنای ادغام نیست.</div>
+        </div>
+        <div class="filters">
+          <input id="search" class="field" type="search" placeholder="نام، شناسه یا نماد را وارد کنید…" />
+          <select id="typeFilter" class="field">
+            <option value="">همه انواع</option>
+            <option value="individual">شخص حقیقی</option>
+            <option value="legal">شخص حقوقی</option>
+          </select>
+          <select id="sortFilter" class="field">
+            <option value="portfolio">مرتب‌سازی: ارزش پرتفوی مشاهده‌شده</option>
+            <option value="companies">مرتب‌سازی: تعداد شرکت‌ها</option>
+            <option value="name">مرتب‌سازی: نام</option>
+            <option value="date">مرتب‌سازی: آخرین تاریخ</option>
+          </select>
+        </div>
+        <div id="investorList" class="list"><div class="loading">در حال خواندن داده‌ها…</div></div>
+        <div class="status" id="listStatus">—</div>
+      </aside>
+
+      <main class="detail" id="detail">
+        <section class="panel empty">یک سرمایه‌گذار را از فهرست سمت راست انتخاب کنید تا تاریخچه و ماتریس علاقه‌مندی او نمایش داده شود.</section>
+      </main>
+    </div>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+  const fa = value => value === null || value === undefined ? "—" : String(value).replace(/\d/g, d => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+  const n = value => value === null || value === undefined || !Number.isFinite(Number(value)) ? "—" : new Intl.NumberFormat("en-US", {maximumFractionDigits:0}).format(Number(value));
+  const pct = value => value === null || value === undefined || !Number.isFinite(Number(value)) ? "—" : fa(Number(value).toFixed(2)) + "٪";
+  const money = value => {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+    const v = Number(value);
+    if (Math.abs(v) >= 1e12) return fa((v/1e12).toFixed(2)) + " همت";
+    if (Math.abs(v) >= 1e9) return fa((v/1e9).toFixed(2)) + " میلیارد ریال";
+    return n(v) + " ریال";
+  };
+  const safe = value => String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+  const typeLabel = value => {
+    const v = String(value || "").toLowerCase();
+    if (v.includes("individual") || v.includes("حقیقی")) return "حقیقی";
+    if (v.includes("legal") || v.includes("حقوقی")) return "حقوقی";
+    return value || "نامشخص";
+  };
+  const exitLabel = status => status === "currently_disclosed"
+    ? '<span class="tag green">در آخرین افشا دیده شده</span>'
+    : status === "assumed_sold"
+      ? '<span class="tag yellow">خروج فرضی از افشا</span>'
+      : '<span class="tag">نامشخص</span>';
+
+  let data = null;
+  let selectedId = null;
+  let symbolFilter = "";
+
+  const $ = id => document.getElementById(id);
+
+  function getFiltered() {
+    const query = $("search").value.trim().toLowerCase();
+    const type = $("typeFilter").value;
+    const sort = $("sortFilter").value;
+    let rows = (data?.investors || []).filter(person => {
+      const searchable = [
+        person.shareholder_name, person.id, person.shareholder_id,
+        ...(person.symbols || []).map(x => x.symbol)
+      ].join(" ").toLowerCase();
+      const matchesQuery = !query || searchable.includes(query);
+      const ptype = String(person.shareholder_type || "").toLowerCase();
+      const matchesType = !type || ptype.includes(type);
+      return matchesQuery && matchesType;
+    });
+    rows.sort((a,b) => {
+      if (sort === "name") return String(a.shareholder_name).localeCompare(String(b.shareholder_name), "fa");
+      if (sort === "companies") return (b.n_companies-a.n_companies) || String(a.shareholder_name).localeCompare(String(b.shareholder_name),"fa");
+      if (sort === "date") return String(b.latest_observation_date || "").localeCompare(String(a.latest_observation_date || ""));
+      return (Number(b.current_portfolio_value_rial)||0)-(Number(a.current_portfolio_value_rial)||0);
+    });
+    return rows;
+  }
+
+  function renderList() {
+    const rows = getFiltered();
+    $("investorList").innerHTML = rows.length ? rows.map(p => {
+      const active = p.id === selectedId ? " active" : "";
+      const symbols = (p.symbols || []).slice(0,4).map(x => safe(x.symbol)).join("، ");
+      return `<div class="person${active}" data-id="${safe(p.id)}">
+        <div class="person-name"><span>${safe(p.shareholder_name)}</span><span class="tag">${typeLabel(p.shareholder_type)}</span></div>
+        <div class="person-meta"><span class="num">${safe(p.id)}</span><span>${fa(p.n_companies)} شرکت</span></div>
+        <div class="person-meta"><span>${symbols || "—"}</span><strong class="num">${money(p.current_portfolio_value_rial)}</strong></div>
+      </div>`;
+    }).join("") : '<div class="loading">موردی مطابق جستجو پیدا نشد.</div>';
+    $("listStatus").textContent = `${fa(rows.length)} از ${fa(data?.investors?.length || 0)} شناسه`;
+    $("investorList").querySelectorAll("[data-id]").forEach(node => {
+      node.addEventListener("click", () => {
+        selectedId = node.getAttribute("data-id");
+        symbolFilter = "";
+        renderList();
+        renderDetail();
+      });
+    });
+  }
+
+  function renderChart(person) {
+    const history = (person.sector_affinity?.history || [])
+      .filter(row => row.total_value_rial !== null && row.total_value_rial !== undefined);
+    if (history.length < 2) {
+      return '<div class="note">برای رسم نمودار ارزش پرتفوی، حداقل دو تاریخ دارای ارزش‌گذاری لازم است. جدول دفتر تغییرات همچنان قابل استفاده است.</div>';
+    }
+    const width = 900, height = 210, padL = 12, padR = 12, padT = 18, padB = 24;
+    const vals = history.map(x => Number(x.total_value_rial));
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const spread = max-min || 1;
+    const points = history.map((row,i) => {
+      const x = padL + (i/(history.length-1))*(width-padL-padR);
+      const y = padT + (1-(Number(row.total_value_rial)-min)/spread)*(height-padT-padB);
+      return {x,y,row};
+    });
+    const line = points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+    const area = `${padL},${height-padB} ${line} ${width-padR},${height-padB}`;
+    const circles = points.filter((p,i)=>i===0 || i===points.length-1 || i%Math.max(1,Math.floor(points.length/9))===0)
+      .map(p=>`<circle cx="${p.x}" cy="${p.y}" r="3" fill="#75a0ff"><title>${safe(p.row.date)} · ${money(p.row.total_value_rial)}</title></circle>`).join("");
+    return `<div class="chart-wrap">
+      <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="نمودار ارزش پرتفوی">
+        <defs><linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#5c8eff" stop-opacity=".32"/><stop offset="100%" stop-color="#5c8eff" stop-opacity="0"/></linearGradient></defs>
+        <path d="M ${area.replace(/ /g," L ")} Z" fill="url(#areaGradient)"></path>
+        <polyline points="${line}" fill="none" stroke="#75a0ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        ${circles}
+      </svg>
+      <div class="chart-labels"><span>${safe(history[0].date)}</span><span>${safe(history[history.length-1].date)}</span></div>
+    </div>
+    <div class="hint">نقاط نمودار از رکوردهای تاریخ‌دارِ ارزش‌گذاری‌شده در موتور گرایش ساخته شده‌اند؛ قیمت مرجع، قیمت اجرای معامله نیست.</div>`;
+  }
+
+  function renderHeatmap(person) {
+    const affinity = person.sector_affinity || {};
+    const groups = (affinity.dashboard_categories || []).length ? affinity.dashboard_categories : (affinity.official_groups || []);
+    if (!groups.length) return '<div class="note">برای این شناسه دادهٔ ارزش‌گذاری‌شده یا نگاشت گروه بورسی کافی برای تشکیل ماتریس وجود ندارد.</div>';
+    return `<div class="heatmap">${groups.map(g => {
+      const score = Math.max(0,Math.min(100,Number(g.interest_score)||0));
+      const alpha = .025 + score/100*.68;
+      const rotation = g.rotation_direction === "increasing" ? "ورود خالص" : g.rotation_direction === "decreasing" ? "کاهش خالص" : "خنثی";
+      return `<div class="heat" style="background:rgba(255,193,7,${alpha.toFixed(3)});border-color:rgba(234,179,8,${Math.min(.9,alpha+.16).toFixed(3)})">
+        <div><div class="heat-title">${safe(g.label)}</div><div class="small-muted num">${safe(g.code)}</div></div>
+        <div class="heat-score">${fa(score.toFixed(1))}</div>
+        <div class="heat-meta">تخصیص فعلی: ${pct(g.current_weight_pct)}<br>گرایش تاریخی: ${pct(g.historical_affinity_pct)}<br>چرخش ۹۰روزه: ${rotation}</div>
+      </div>`;
+    }).join("")}</div>
+    <div class="heat-footer">امتیاز: ۵۰٪ تخصیص فعلی + ۳۰٪ گرایش تاریخی (نیمه‌عمر ۶ ماه) + ۲۰٪ چرخش خالص ۹۰ روزه. زرد پررنگ‌تر یعنی امتیاز بیشتر.</div>`;
+  }
+
+  function renderDetail() {
+    const person = (data?.investors || []).find(p => p.id === selectedId);
+    if (!person) {
+      $("detail").innerHTML = '<section class="panel empty">یک سرمایه‌گذار را از فهرست انتخاب کنید.</section>';
+      return;
+    }
+    const affinity = person.sector_affinity || {};
+    const quality = affinity.data_quality || {};
+    const symbols = person.symbols || [];
+    const timeline = (person.timeline || []).filter(row => !symbolFilter || row.symbol === symbolFilter);
+    const rows = timeline.slice(-120).reverse();
+    const symbolRows = symbols.map(item => `<tr>
+      <td><button class="symbol-btn" data-symbol="${safe(item.symbol)}">${safe(item.symbol)}</button></td>
+      <td class="num">${safe(item.first_observation_date)}</td>
+      <td class="num">${safe(item.last_observation_date)}</td>
+      <td class="num">${n(item.last_observation_shares)}</td>
+      <td class="num">${pct(item.last_observation_ownership_pct)}</td>
+      <td class="num">${money(item.last_observation_market_value_rial)}</td>
+      <td>${exitLabel(item.exit_status)}</td>
+      <td class="num">${fa(item.observations_count)}</td>
+    </tr>`).join("");
+    const eventRows = rows.map(row => `<tr>
+      <td class="num">${safe(row.date)}</td><td>${safe(row.symbol)}</td>
+      <td class="num">${n(row.shares)}</td><td class="num">${pct(row.ownership_pct)}</td>
+      <td class="num">${money(row.market_value_rial)}</td>
+      <td class="num">${row.shares_change===null?"—":n(row.shares_change)}</td>
+      <td>${safe(row.change_calculation_status || row.change_type || "—")}</td>
+      <td>${row.corporate_action ? '<span class="tag yellow">'+safe(row.corporate_action)+'</span>' : "—"}</td>
+    </tr>`).join("");
+
+    $("detail").innerHTML = `
+      <section class="panel profile">
+        <div class="profile-line">
+          <div><div class="profile-name">${safe(person.shareholder_name)}</div>
+            <div class="profile-id num">${safe(person.id)} · ${safe(person.id_scheme)} · ${typeLabel(person.shareholder_type)}</div>
+            ${person.name_variants?.length ? '<div class="hint">نام‌های متفاوت در فایل‌ها: '+person.name_variants.map(safe).join("، ")+'</div>' : ""}
+          </div>
+          <span class="tag">${safe(person.identity_verification_status || "شناسهٔ منبعی")}</span>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="stat-label">شرکت‌های مشاهده‌شده</div><div class="stat-value">${fa(person.n_companies)}</div></div>
+          <div class="stat"><div class="stat-label">آخرین تاریخ مشاهده</div><div class="stat-value num">${safe(person.latest_observation_date || "—")}</div></div>
+          <div class="stat"><div class="stat-label">ارزش پوزیشن‌های حاضر در آخرین افشا</div><div class="stat-value">${money(person.current_portfolio_value_rial)}</div></div>
+          <div class="stat"><div class="stat-label">بیشترین درصد مالکیت مشاهده‌شده</div><div class="stat-value">${pct(person.max_ownership_pct)}</div></div>
+        </div>
+      </section>
+
+      <section class="panel section">
+        <div class="section-head"><div><h2>روند ارزش پرتفوی مشاهده‌شده</h2><div class="hint">ارزش‌ها از تاریخچهٔ قیمت و تعداد سهام موجود در اکسل‌ها می‌آیند؛ این نمودار بر اساس تاریخ‌های ثبت‌شده است.</div></div><span class="tag">${fa(affinity.history?.length || 0)} نقطهٔ ارزش‌گذاری</span></div>
+        ${renderChart(person)}
+      </section>
+
+      <section class="panel section">
+        <div class="section-head"><div><h2>نقشهٔ حرارتی علاقه‌مندی سرمایه‌گذار</h2><div class="hint">هر خانه یک گروه رسمی بورسی است. شدت زرد بر اساس امتیاز محاسبه‌شدهٔ موتور اصلی پروژه است.</div></div><span class="tag">${safe(affinity.status || "no_valued_history")}</span></div>
+        ${renderHeatmap(person)}
+        <div class="hint">پوزیشن ارزش‌گذاری‌شده: ${fa(quality.valued_positions ?? 0)} · پوشش ارزش‌گذاری: ${pct(quality.valuation_coverage_pct)} · پوشش گروه: ${pct(quality.sector_classification_coverage_pct)} · تغییرات واجدشرایط چرخش: ${fa(quality.rotation_eligible ?? 0)}</div>
+      </section>
+
+      <section class="panel section">
+        <div class="section-head"><div><h2>تمام نمادهای مشاهده‌شده</h2><div class="hint">نمادهایی که در گذشته برای شناسه ثبت شده‌اند؛ حتی اگر در آخرین افشای آن شرکت حضور نداشته باشند. برای فیلتر تاریخچه روی نماد کلیک کنید.</div></div><button class="btn" id="clearSymbol">نمایش همه نمادها</button></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>نماد</th><th>اولین مشاهده</th><th>آخرین مشاهده</th><th>آخرین تعداد سهم</th><th>مالکیت</th><th>ارزش آخرین رکورد</th><th>وضعیت</th><th>تعداد رکورد</th></tr></thead>
+          <tbody>${symbolRows || '<tr><td colspan="8">داده‌ای وجود ندارد.</td></tr>'}</tbody>
+        </table></div>
+        <div class="note" style="margin-top:10px">«خروج فرضی از افشا» به معنی اثبات فروش نیست. ممکن است دارایی به زیر آستانهٔ افشا رسیده باشد یا در بازهٔ بعدی داده‌ای ثبت نشده باشد.</div>
+      </section>
+
+      <section class="panel section">
+        <div class="section-head"><div><h2>دفتر تغییرات مالکیت ${symbolFilter ? "— "+safe(symbolFilter) : ""}</h2><div class="hint">حداکثر ۱۲۰ رکورد آخر نمایش داده می‌شود. قیمت و ارزش، مرجع ارزش‌گذاری هستند نه تأیید معامله.</div></div><span class="tag">${fa(timeline.length)} رکورد</span></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>تاریخ</th><th>نماد</th><th>تعداد سهم</th><th>مالکیت</th><th>ارزش مرجع</th><th>تغییر تعداد</th><th>وضعیت محاسبه</th><th>رویداد سرمایه‌ای</th></tr></thead>
+          <tbody>${eventRows || '<tr><td colspan="8">برای این شناسه سابقه‌ای وجود ندارد.</td></tr>'}</tbody>
+        </table></div>
+      </section>
+      <div class="note">روش هویت: فقط برابری دقیق زوج (id_scheme, shareholder_id). هیچ دو شناسه‌ای صرفاً به دلیل نام مشابه ادغام نشده‌اند. ماتریس از موتور SectorAffinityAccumulator پروژه با وزن‌های ۵۰/۳۰/۲۰، نیمه‌عمر تاریخی ۶ ماه و پنجرهٔ چرخش ۹۰ روزه استفاده می‌کند.</div>
+    `;
+    $("detail").querySelectorAll("[data-symbol]").forEach(btn => {
+      btn.addEventListener("click", () => {symbolFilter=btn.getAttribute("data-symbol");renderDetail();});
+    });
+    $("clearSymbol")?.addEventListener("click",()=>{symbolFilter="";renderDetail();});
+  }
+
+  async function init() {
+    try {
+      const response = await fetch("./data/investor_demo.json", {cache:"no-store"});
+      if (!response.ok) throw new Error("HTTP "+response.status);
+      data = await response.json();
+      const m = data.summary || {};
+      $("scopePills").innerHTML = [
+        `<span class="pill">${fa(m.workbook_count)} فایل اکسل</span>`,
+        `<span class="pill">${fa(m.symbol_count)} نماد</span>`,
+        `<span class="pill">${fa(m.investor_count)} شناسهٔ ترکیبی</span>`,
+        `<span class="pill">${fa(m.history_rows_with_composite_id_and_date)} رکورد تاریخچه</span>`,
+        `<span class="pill">${safe(m.earliest_observation_date)} تا ${safe(m.latest_observation_date)}</span>`
+      ].join("");
+      $("search").addEventListener("input",()=>{renderList();});
+      $("typeFilter").addEventListener("change",renderList);
+      $("sortFilter").addEventListener("change",renderList);
+      renderList();
+      const initial = getFiltered()[0];
+      if (initial) {selectedId=initial.id;renderList();renderDetail();}
+    } catch(error) {
+      $("scopePills").innerHTML='<span class="pill">خطا در دریافت دادهٔ آزمایشی</span>';
+      $("investorList").innerHTML='<div class="loading">فایل دادهٔ ایستا بارگذاری نشد: '+safe(error.message)+'</div>';
+      $("detail").innerHTML='<section class="panel empty">خروجی داده در دسترس نیست. وضعیت انتشار GitHub Actions را بررسی کنید.</section>';
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>
