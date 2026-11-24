@@ -130,7 +130,8 @@
   const money = value => {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
     const v = Number(value);
-    if (Math.abs(v) >= 1e12) return fa((v/1e12).toFixed(2)) + " همت";
+    if (Math.abs(v) >= 1e13) return fa((v/1e13).toFixed(2)) + " همت";
+    if (Math.abs(v) >= 1e12) return fa((v/1e12).toFixed(2)) + " همر";
     if (Math.abs(v) >= 1e9) return fa((v/1e9).toFixed(2)) + " میلیارد ریال";
     return n(v) + " ریال";
   };
@@ -184,7 +185,7 @@
       return `<div class="person${active}" data-id="${safe(p.id)}">
         <div class="person-name"><span>${safe(p.shareholder_name)}</span><span class="tag">${typeLabel(p.shareholder_type)}</span></div>
         <div class="person-meta"><span class="num">${safe(p.id)}</span><span>${fa(p.n_companies)} شرکت</span></div>
-        <div class="person-meta"><span>${symbols || "—"}</span><strong class="num">${money(p.current_portfolio_value_rial)}</strong></div>
+        <div class="person-meta"><span>${symbols || "—"}<br><span class="small-muted">ارزش تا ${safe(p.portfolio_value_date || "بدون ارزش‌گذاری")}</span></span><strong class="num">${money(p.current_portfolio_value_rial)}</strong></div>
       </div>`;
     }).join("") : '<div class="loading">موردی مطابق جستجو پیدا نشد.</div>';
     $("listStatus").textContent = `${fa(rows.length)} از ${fa(data?.investors?.length || 0)} شناسه`;
@@ -288,7 +289,7 @@
         <div class="stats">
           <div class="stat"><div class="stat-label">شرکت‌های مشاهده‌شده</div><div class="stat-value">${fa(person.n_companies)}</div></div>
           <div class="stat"><div class="stat-label">آخرین تاریخ مشاهده</div><div class="stat-value num">${safe(person.latest_observation_date || "—")}</div></div>
-          <div class="stat"><div class="stat-label">ارزش پوزیشن‌های حاضر در آخرین افشا</div><div class="stat-value">${money(person.current_portfolio_value_rial)}</div></div>
+          <div class="stat"><div class="stat-label">ارزش آخرین snapshot ارزش‌گذاری‌شده</div><div class="stat-value">${money(person.current_portfolio_value_rial)}</div><div class="small-muted" style="margin-top:6px">${safe(person.portfolio_value_date || "ارزش‌گذاری نشده")}</div></div>
           <div class="stat"><div class="stat-label">بیشترین درصد مالکیت مشاهده‌شده</div><div class="stat-value">${pct(person.max_ownership_pct)}</div></div>
         </div>
       </section>
