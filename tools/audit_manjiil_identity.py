@@ -89,9 +89,14 @@ def main():
         # same shareholder type, same share quantity, and exactly two IDs on
         # that signature. Any ambiguous/mismatching overlap is not auto-linked.
         signature_pairs = {}
+        presence_pairs = {}
         for pair, dated in rows_by_pair.items():
             for date_key, row in dated.items():
-                if not date_key or row["shares"] is None:
+                if not date_key:
+                    continue
+                presence = (date_key, row["name"], row["type"])
+                presence_pairs.setdefault(presence, {})[pair] = row
+                if row["shares"] is None:
                     continue
                 numeric_shares = float(row["shares"])
                 shares_key = str(int(numeric_shares)) if numeric_shares.is_integer() else format(numeric_shares, ".12g")
@@ -105,7 +110,9 @@ def main():
                 pair = parent[pair]
             return pair
         exact_edges = []
+        presence_edges = []
         ambiguous_signatures = []
+        ambiguous_presence = []
         for signature, pairs in signature_pairs.items():
             if len(pairs) == 2:
                 a, b = tuple(pairs)
@@ -130,6 +137,42 @@ def main():
             elif len(pairs) > 2:
                 ambiguous_signatures.append({
                     "date": signature[0], "shares": signature[3],
+                    "identity_pairs": sorted(f"{p[0]}:{p[1]}" for p in pairs)
+                })
+
+        # A second, carefully constrained continuity signal handles the
+        # source's not-disclosed placeholder rows: on the same security/date,
+        # exact normalized legal name and type, exactly two IDs must be present,
+        # and exactly one must have a non-null quantity. Shared non-null values
+        # may never conflict. This is an inferred continuity edge, not a source ID.
+        for signature, rows_for_date in presence_pairs.items():
+            pairs = set(rows_for_date)
+            if len(pairs) == 2:
+                a, b = tuple(pairs)
+                ra, rb = rows_for_date[a], rows_for_date[b]
+                if (ra["shares"] is None) != (rb["shares"] is None):
+                    shared_dates = set(rows_by_pair[a]) & set(rows_by_pair[b])
+                    conflict = any(
+                        rows_by_pair[a][d]["shares"] is not None
+                        and rows_by_pair[b][d]["shares"] is not None
+                        and rows_by_pair[a][d]["shares"] != rows_by_pair[b][d]["shares"]
+                        for d in shared_dates
+                    )
+                    if not conflict:
+                        root_a, root_b = find(a), find(b)
+                        if root_a != root_b:
+                            parent[root_b] = root_a
+                        presence_edges.append({
+                            "date": signature[0],
+                            "left": f"{a[0]}:{a[1]}",
+                            "right": f"{b[0]}:{b[1]}",
+                            "left_shares": ra["shares"],
+                            "right_shares": rb["shares"],
+                            "basis": "same date + exact name/type + unique pair + one not-disclosed quantity",
+                        })
+            elif len(pairs) > 2:
+                ambiguous_presence.append({
+                    "date": signature[0],
                     "identity_pairs": sorted(f"{p[0]}:{p[1]}" for p in pairs)
                 })
 
@@ -167,6 +210,10 @@ def main():
                     "shares": r.get("shares"),
                     "name": str(r.get("shareholder_name") or ""),
                     "type": str(r.get("shareholder_type") or ""),
+                    "data_availability_status": str(r.get("data_availability_status") or ""),
+                    "entry_status": str(r.get("entry_status") or ""),
+                    "valuation_status": str(r.get("valuation_status") or ""),
+                    "identity_status": str(r.get("identity_status") or ""),
                 }
                 for r in target_history
             ],
@@ -176,6 +223,10 @@ def main():
             "distinct_identity_pairs": len(output_ids),
             "exact_overlap_edges": exact_edges,
             "exact_overlap_edge_count": len(exact_edges),
+            "presence_continuity_edges": presence_edges,
+            "presence_continuity_edge_count": len(presence_edges),
+            "ambiguous_presence_date_count": len(ambiguous_presence),
+            "ambiguous_presence_dates": ambiguous_presence,
             "ambiguous_same_signature_count": len(ambiguous_signatures),
             "ambiguous_same_signatures": ambiguous_signatures,
             "identity_components_after_exact_overlap_only": component_list,
