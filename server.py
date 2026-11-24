@@ -335,10 +335,10 @@ def classify_portfolio_change(row):
     if row.get("corporate_action"):
         return "capital_action"
     status = row.get("change_calculation_status")
-    if status == "first_observation_no_previous":
-        return "first_observation"
     if status == "not_disclosed_on_date":
         return "not_disclosed"
+    if status == "first_observation_no_previous":
+        return "first_observation"
     if status == "spans_gap":
         return "change_after_gap"
     delta = row.get("shares_change")
@@ -1158,6 +1158,7 @@ def refresh_summaries(live, sidecar):
     with sidecar:
         sidecar.execute("DROP TABLE IF EXISTS site_holder_history")
         sidecar.execute("""CREATE TABLE site_holder_history (
+            id INTEGER PRIMARY KEY,
             id_scheme TEXT NOT NULL, shareholder_id INTEGER NOT NULL,
             ins_code TEXT NOT NULL, symbol TEXT NOT NULL, identity_status TEXT,
             date TEXT NOT NULL, jalali_date TEXT, shares INTEGER,
@@ -1169,9 +1170,8 @@ def refresh_summaries(live, sidecar):
             corporate_action_date TEXT, corporate_action_ratio REAL,
             source_change_code INTEGER, source_change_amount REAL, anomaly_flags TEXT,
             data_available INTEGER, note TEXT, entry_status TEXT, source_endpoint TEXT,
-            prev_close_price REAL, prev_close_date TEXT, cisin TEXT,
-            PRIMARY KEY (id_scheme, shareholder_id, date, ins_code)
-        ) WITHOUT ROWID""")
+            prev_close_price REAL, prev_close_date TEXT, cisin TEXT
+        )""")
     history_source_columns = {r[1] for r in cur.execute(
         "PRAGMA table_info(shareholder_holdings)").fetchall()}
     def _history_col(column, fallback="NULL"):
@@ -1213,7 +1213,9 @@ def refresh_summaries(live, sidecar):
         + _history_col("prev_close_date") + " AS prev_close_date, "
         "c.cisin AS cisin "
         "FROM shareholder_holdings h "
-        "LEFT JOIN company_daily cd ON cd.ins_code=h.ins_code AND cd.date=h.date "
+        "LEFT JOIN (SELECT ins_code, date, MAX(total_company_shares) AS total_company_shares "
+        "FROM company_daily GROUP BY ins_code, date) cd "
+        "ON cd.ins_code=h.ins_code AND cd.date=h.date "
         "LEFT JOIN companies c ON c.ins_code=h.ins_code "
         "WHERE NOT EXISTS ("
         " SELECT 1 FROM sidecar_data.site_excluded_holder_rows x "
@@ -1250,10 +1252,13 @@ def refresh_summaries(live, sidecar):
             r["source_endpoint"], r["prev_close_price"],
             _norm_date(r["prev_close_date"]) if r["prev_close_date"] else None,
             r["cisin"])
-    n_hist, dt_hist = _stream_insert(
-        cur, sidecar, history_select, history_insert, _history_transform,
-        "site_holder_history")
     with sidecar:
+        n_hist, dt_hist = _stream_insert(
+            cur, sidecar, history_select, history_insert, _history_transform,
+            "site_holder_history")
+        sidecar.execute(
+            "CREATE INDEX IF NOT EXISTS idx_site_holder_history_identity_date "
+            "ON site_holder_history(id_scheme, shareholder_id, date, ins_code)")
         sidecar.execute(
             "CREATE INDEX IF NOT EXISTS idx_site_holder_history_symbol "
             "ON site_holder_history(id_scheme, shareholder_id, ins_code, date)")
@@ -3580,7 +3585,7 @@ class SiteApi:
                 "WHERE t.ins_code=h.ins_code AND t.date<=h.date "
                 "AND t.p_closing IS NOT NULL AND t.p_closing>0) "
                 "WHERE " + where +
-                " ORDER BY h.date, h.ins_code, h.id_scheme, h.shareholder_id")
+                " ORDER BY h.date, h.ins_code, h.id_scheme, h.shareholder_id, h.id")
             cursor = live.execute(sql, args)
             def _rows(c=cursor):
                 while True:
@@ -3635,10 +3640,10 @@ class SiteApi:
                 chosen["previous_date"] = prior.get("last_known_date")
             status = chosen.get("change_calculation_status")
             if not status or status == "legacy_unclassified":
-                if prior is None:
-                    status = "first_observation_no_previous"
-                elif chosen.get("shares") is None:
+                if chosen.get("shares") is None:
                     status = "not_disclosed_on_date"
+                elif prior is None:
+                    status = "first_observation_no_previous"
                 elif prior.get("last_observation_shares") is None:
                     status = "spans_gap"
                 else:
