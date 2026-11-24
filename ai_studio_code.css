@@ -1,3 +1,10 @@
+/*
+ * Styling reference for the TSETMC dashboard.
+ * NOTE: the current HTML embeds a matching inline style block and does not link this file.
+ * Keep this copy synchronised only if the stylesheet is intentionally wired into the page.
+ */
+
+/* Dark-theme design tokens shared by dashboard panels and controls. */
 :root {
   --bg-canvas: #0b0e14;
   --bg-panel: #131722;
@@ -11,6 +18,7 @@
   --accent: #2962ff;
 }
 
+/* Light-theme overrides applied when the root dashboard theme changes. */
 .theme-light {
   --bg-canvas: #f1f5f9;
   --bg-panel: #ffffff;
@@ -21,6 +29,7 @@
   --text-muted: #64748b;
 }
 
+/* Global document typography and canvas colours. */
 body {
   font-family: 'Vazirmatn', Tahoma, sans-serif;
   background-color: var(--bg-canvas);
@@ -28,6 +37,7 @@ body {
   margin: 0;
 }
 
+/* Numeric content stays left-to-right and uses tabular digits inside the RTL interface. */
 .num {
   font-variant-numeric: tabular-nums;
   direction: ltr;
@@ -38,10 +48,12 @@ body {
    inline-block stops behaving as a table cell, so its content drifts
    away from its column header. Table cells keep table-cell; inline
    spans keep inline-block. */
+/* Keep numeric table cells in the table layout model; inline .num spans remain inline-block. */
 td.num, th.num {
   display: table-cell;
 }
 
+/* Compact WebKit scrollbar styling for scrollable dashboard panels. */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
