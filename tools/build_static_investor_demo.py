@@ -127,7 +127,7 @@ def normalized_identity_name(value: Any) -> str:
     return raw
 
 
-def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tuple[str, str]], dict[tuple[str, str], dict[str, Any]]]:
+def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tuple[str, str]], dict[tuple[str, str], dict[str, Any]], dict[str, Any]]:
     """Build conservative aliases for date-scoped IDs using source crosswalks and unique overlap.
 
     A continuity edge requires one security/date, exact normalized name and type,
@@ -474,7 +474,7 @@ def main() -> int:
         current_value_known = False
         for ins_code, symbol_info in investor["symbols"].items():
             records = sorted(
-                (r for r in symbol_info["observations"] if r.get("shares") is not None),
+                (r for r in timeline if r["ins_code"] == ins_code and r.get("shares") is not None),
                 key=lambda r: r["date"],
             )
             if not records:
