@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS site_oauth_states (
     state_hash TEXT PRIMARY KEY,
     nonce TEXT NOT NULL,
     code_verifier TEXT NOT NULL,
+    referral_code TEXT,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -245,13 +246,20 @@ class AccountService:
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("PRAGMA busy_timeout=30000")
-        con.execute("PRAGMA journal_mode=WAL")
         return con
 
     def _init_db(self):
         con = self._connect()
         try:
             con.executescript(SCHEMA)
+            # Safe additive migration for pre-existing OAuth state databases.
+            oauth_columns = {
+                row["name"] for row in
+                con.execute("PRAGMA table_info(site_oauth_states)").fetchall()
+            }
+            if "referral_code" not in oauth_columns:
+                con.execute("ALTER TABLE site_oauth_states ADD COLUMN referral_code TEXT")
+            con.execute("PRAGMA journal_mode=WAL")
             with con:
                 for slug, name, days, price in PLANS:
                     con.execute(
@@ -645,7 +653,7 @@ class AccountService:
         finally:
             con.close()
 
-    def google_start(self, base_url: str):
+    def google_start(self, base_url: str, referral_code: str | None = None):
         client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
         callback = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
         if not client_id or not callback:
@@ -660,9 +668,10 @@ class AccountService:
         try:
             with con:
                 con.execute(
-                    "INSERT INTO site_oauth_states(state_hash,nonce,code_verifier,expires_at,created_at) "
-                    "VALUES (?,?,?,?,?)",
+                    "INSERT INTO site_oauth_states(state_hash,nonce,code_verifier,referral_code,expires_at,created_at) "
+                    "VALUES (?,?,?,?,?,?)",
                     (self._token_hash(state), nonce, verifier,
+                     (str(referral_code or "").strip().upper() or None),
                      (now + timedelta(minutes=10)).isoformat(timespec="seconds"),
                      now.isoformat(timespec="seconds")))
                 con.execute("DELETE FROM site_oauth_states WHERE expires_at<?",
@@ -770,7 +779,8 @@ class AccountService:
                         username = (base or "google") + "_" + secrets.token_hex(3)
                         user_id = self._create_user(
                             con, username, display_name=claims.get("name") or base,
-                            email=email, email_verified=True)
+                            email=email, email_verified=True,
+                            referral_code=state_row["referral_code"])
                         self._grant_trial(con, user_id)
                     con.execute(
                         "INSERT INTO site_external_identities(provider,subject,user_id,created_at) "
@@ -1327,7 +1337,9 @@ class AccountService:
             user_id = self.verify_otp(body)
             return self._session_result(user_id, bool(body.get("remember", True)), secure)
         if path == "/api/v1/auth/google/start" and method == "GET":
-            return {"status": 302, "redirect": self.google_start(base_url)}
+            referral = (params.get("ref") or [""])[0]
+            return {"status": 302,
+                    "redirect": self.google_start(base_url, referral)}
         if path == "/api/v1/auth/google/callback" and method == "GET":
             user_id = self.google_callback(params)
             result = self._session_result(user_id, True, secure)
