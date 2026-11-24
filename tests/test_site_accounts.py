@@ -180,13 +180,14 @@ def test_superadmin_is_the_only_role_that_can_create_staff(service):
     normal = active_user(service, normal_user)
 
     with pytest.raises(AccountError) as exc:
-        service.create_staff({
-            "username": "new_admin_01",
-            "temporary_password": "admin-temp-password-123",
-            "role": "admin",
-        })
-        # Creation is normally reached only after the superadmin check in dispatch.
-    assert exc.value.status == 400
+        service.dispatch(
+            "POST", "/api/v1/site-admin/staff", {}, {
+                "username": "new_admin_01",
+                "temporary_password": "admin-temp-password-123",
+                "role": "admin",
+            }, normal, "http://localhost:8000",
+        )
+    assert exc.value.status == 403
 
 
 def test_account_route_matcher_is_scoped():
