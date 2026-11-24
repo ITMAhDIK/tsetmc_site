@@ -762,6 +762,13 @@ def main() -> int:
         "history_rows_without_composite_id": skipped_no_identity,
         "investor_count": len(final_investors),
         "identity_alias_resolution": alias_stats,
+        "company_detail_coverage": {
+            "companies_with_workbooks": len(companies),
+            "official_universe_instruments": len(universe),
+            "companies_with_names": sum(1 for item in companies.values() if item.get("company_name")),
+            "companies_with_price_points": sum(1 for item in companies.values() if len(item.get("price_series", [])) >= 2),
+            "companies_with_shareholder_rows": sum(1 for item in companies.values() if item.get("shareholders")),
+        },
         "target_identity_checks": target_identity_checks,
         "earliest_observation_date": min(all_dates),
         "latest_observation_date": max(all_dates),
