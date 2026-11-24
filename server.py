@@ -1966,7 +1966,10 @@ class SiteApi:
                     ownership_schema = self.meta(sc, "ownership_resolver_schema")
                     n_watch = sc.execute(
                         "SELECT COUNT(*) FROM site_watch").fetchone()[0]
-                    if have == fingerprint and n_watch > 0 and \
+                    history_ready = sc.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='site_holder_history'").fetchone() is not None
+                    if have == fingerprint and n_watch > 0 and history_ready and \
                             version == str(SIDECAR_VERSION) and \
                             ownership_schema == "resolved-v1-source-exclusions":
                         print("[refresh] live DB unchanged since last build; "
