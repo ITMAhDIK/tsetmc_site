@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Build a static, read-only investor demo from the 14 uploaded workbooks.
 
-Identity is grouped only by the source namespace pair (id_scheme, shareholder_id).
-Names are display metadata only and are never used to merge investors.
+Identity starts from the source namespace pair (id_scheme, shareholder_id).
+Conservative source crosswalks and uniquely evidenced continuity across snapshots
+may link date-scoped IDs to one stable non-date-scoped identity. Names alone never
+merge records; continuity requires exact name/type, same security/date evidence,
+and/or unchanged shares on consecutive snapshots.
 The sector affinity calculations reuse the repository's SectorAffinityAccumulator.
 """
 from __future__ import annotations
