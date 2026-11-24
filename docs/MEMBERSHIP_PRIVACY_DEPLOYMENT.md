@@ -118,12 +118,12 @@ Prices are in Toman:
 
 | Plan | Duration | Price |
 | --- | ---: | ---: |
-| Professional Monthly | 30 days | 690,000 |
-| Professional Quarterly | 90 days | 1,890,000 |
-| Professional Semiannual | 180 days | 3,490,000 |
-| Professional Annual | 365 days | 6,490,000 |
+| Professional Monthly | 30 days | 2,790,000 |
+| Professional Quarterly | 90 days | 7,990,000 |
+| Professional Semiannual | 180 days | 15,490,000 |
+| Professional Annual | 365 days | 28,900,000 |
 
-The `WELCOME20` promotion gives 20% off the first successful purchase (limited to 2,000 redemptions). The subscription is extended from the current expiry date rather than overwriting unused paid time.
+The `WELCOME10` promotion gives 10% off the first successful purchase (limited to 2,000 redemptions). The subscription is extended from the current expiry date rather than overwriting unused paid time.
 
 ### Market positioning reference checked on 2026-11-24
 
@@ -133,7 +133,7 @@ Publicly listed comparison prices observed during implementation:
 - A recent overview of Rahavard365 lists Silver at 430,000 and Gold at 570,000 Toman per month, and Platinum at 2,535,000 Toman: https://iranrebate.com/education/rahavard365/
 - BazaarBasheh lists a 2,000,000 Toman monthly professional plan: https://bazaarbasheh.ir/accounts/subscribe/
 
-The 690,000 Toman monthly price is intentionally above the cited mainstream 299,000–570,000 Toman tiers, but it is not the highest price in the market. Review actual feature parity and customer demand before public launch; these services bundle different capabilities.
+The 2,790,000 Toman monthly price is deliberately positioned slightly above the cited 2,535,000 Toman Platinum monthly reference, and above the cited 2,000,000 Toman monthly professional plan. The annual price also sits above the cited 18,000,000 Toman annual professional package. This is a high-end positioning decision, not evidence that the product already matches every competitor's feature breadth. Review willingness to pay and feature parity before charging real customers.
 
 ## Referral reward
 
