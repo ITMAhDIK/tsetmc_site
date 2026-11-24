@@ -1158,7 +1158,7 @@ class AccountService:
         con = self._connect()
         try:
             rows = con.execute(
-                "SELECT public_id,username,display_name,role,is_active,created_at "
+                "SELECT id,public_id,username,display_name,role,is_active,created_at "
                 "FROM site_users WHERE role IN ('support','admin','super_admin') "
                 "ORDER BY role,created_at").fetchall()
             return {"staff": [dict(r) for r in rows]}
