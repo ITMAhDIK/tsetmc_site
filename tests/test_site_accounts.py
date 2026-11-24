@@ -161,10 +161,10 @@ def test_only_premium_users_can_customize_sector_mapping(service):
     assert exc.value.status == 402
 
     premium = dict(user, is_premium=True)
-    result = service.save_sector_mapping(premium, {
+    result = service.save_sector_mapping(premium, {"mapping": {
         "12": "بانک‌ها",
         "13": "سرمایه‌گذاری",
-    })
+    }})
     assert result["saved"] is True
     assert service.get_sector_mapping(user_id)["mapping"] == {
         "12": "بانک‌ها",
