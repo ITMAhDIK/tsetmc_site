@@ -3,9 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
-import subprocess
-import tempfile
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -19,9 +16,11 @@ class DocumentCheck(HTMLParser):
         super().__init__()
         self.title_seen = False
         self.html_seen = False
+
     def handle_starttag(self, tag, attrs):
         if tag == "html":
             self.html_seen = True
+
     def handle_data(self, data):
         if "ره‌نگار بورس" in data:
             self.title_seen = True
@@ -33,8 +32,9 @@ def main() -> int:
     parser.feed(html)
     if not parser.html_seen or not parser.title_seen:
         raise SystemExit("Static HTML structure/title check failed.")
+
     scripts = re.findall(
-        r"<script(?![^>]*\\bsrc\\s*=)[^>]*>(.*?)</script\\s*>",
+        r"<script(?![^>]*\bsrc\s*=)[^>]*>(.*?)</script\s*>",
         html, flags=re.IGNORECASE | re.DOTALL,
     )
     if len(scripts) != 1:
@@ -45,29 +45,28 @@ def main() -> int:
         raise SystemExit("The full UI stylesheet is missing from the Pages artifact.")
     if "http://127.0.0.1:8000" in html:
         raise SystemExit("The Pages preview must not call a developer's localhost.")
-    if re.search(r"(?:api[_-]?key|client[_-]?secret|merchant[_-]?id)\\s*[:=]\\s*['\"][^'\"]{8,}", html, re.I):
+    if re.search(
+        r"(?:api[_-]?key|client[_-]?secret|merchant[_-]?id)\s*[:=]\s*['\"][^'\"]{8,}",
+        html, re.I,
+    ):
         raise SystemExit("A possible secret was found in the static HTML.")
-    node = shutil.which("node")
-    if not node:
-        raise SystemExit("Node.js is required for static script validation.")
-    # The source is JSX; Node cannot parse JSX directly. Validate its Babel
-    # entrypoint here; browser-side Babel compiles it before React execution.
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".js", encoding="utf-8", delete=False) as temp:
-        temp.write("const babelReactPreset = " + json.dumps("react") + ";\\n")
-        temp_path = temp.name
-    try:
-        subprocess.run([node, "--check", temp_path], check=True)
-    finally:
-        Path(temp_path).unlink(missing_ok=True)
+
+    # The full app is JSX and is compiled in-browser by the pinned Babel
+    # standalone script. Verify that the React/Babel entrypoint is present.
+    if "babel.min.js" not in html or "react.production.min.js" not in html:
+        raise SystemExit("React/Babel runtime dependencies are missing.")
+
     symbols = data.get("symbols") or []
     if len(symbols) != 6 or data.get("summary", {}).get("observations") != 180:
         raise SystemExit("Unexpected public analytics dataset dimensions.")
+
     forbidden = {
         "shareholder_id", "shareholder_name", "raw_source_id", "id_scheme",
         "holder_id", "share_id", "ondate_share_id", "canonical_name",
         "confirmed_positions", "probable_positions", "uncertain_candidates",
         "holding_value_rial", "shares_change", "identity_evidence",
     }
+
     def keys(value):
         if isinstance(value, dict):
             for key, child in value.items():
@@ -76,12 +75,14 @@ def main() -> int:
         elif isinstance(value, list):
             for child in value:
                 yield from keys(child)
+
     leaked = forbidden.intersection(keys(data))
     if leaked:
         raise SystemExit("Private/raw data fields found: " + ", ".join(sorted(leaked)))
     if any(path.suffix.lower() == ".xlsx" for path in DOCS.rglob("*")):
         raise SystemExit("An Excel workbook must never be included in the public Pages folder.")
-    print("Pages preview valid: full UI structure, Babel entrypoint, static data privacy.")
+
+    print("Pages preview valid: full UI structure, React/Babel runtime and public-data privacy.")
     return 0
 
 if __name__ == "__main__":
