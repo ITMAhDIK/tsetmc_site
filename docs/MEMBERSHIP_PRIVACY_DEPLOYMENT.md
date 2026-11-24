@@ -89,6 +89,8 @@ Never set the Super Admin role manually in a public registration request. The se
 
 The last active Super Admin cannot be demoted through the staff role endpoint.
 
+Standard password registration creates a username-based account only. Gmail is linked through verified Google OAuth, and phone ownership is established through SMS OTP. The server rejects unverified email/phone claims in the registration API; a phone or email is accepted as a password-login identifier only after it has been verified.
+
 ## Authentication and session behaviour
 
 - Password login accepts username, public user ID, email or phone.
