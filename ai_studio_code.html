@@ -261,7 +261,7 @@
     // tools (trend line / rectangle / horizontal line) as an SVG overlay.
     // Markers + ohlc are memoized by the parent (JSON key) so the chart
     // is not rebuilt on every render.
-    function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = false, allowFullscreen = true, onHover = null, persistKey = null }) {
+    function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = true, allowFullscreen = true, onHover = null, persistKey = null }) {
       const ref = useRef(null);
       const generatedChartId = React.useId();
       const drawingStorageKey = persistKey || ('chart-' + generatedChartId);
@@ -2452,7 +2452,7 @@
                 </div>
                 <div className="p-2">
                   <LWChart data={historySeries} type="area" height={360}
-                    theme={theme} unitLabel="ریال" enableDrawing={false}
+                    theme={theme} unitLabel="ریال" enableDrawing={true}
                     persistKey={'investor-affinity-' + scheme + '-' + rawId} />
                 </div>
               </section>
