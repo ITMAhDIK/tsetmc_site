@@ -142,6 +142,7 @@ def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tup
     presence: dict[tuple[str, str, str, str], dict[tuple[str, str], list[float | None]]] = defaultdict(lambda: defaultdict(list))
     explicit_edges: list[tuple[tuple[str, str], tuple[str, str]]] = []
     continuity_edges: list[tuple[tuple[str, str], tuple[str, str], str]] = []
+    dated_legal_positions: dict[tuple[str, str, str], dict[str, dict[tuple[str, str], list[float | None]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     def ensure(pair):
         parent.setdefault(pair, pair)
@@ -193,6 +194,8 @@ def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tup
             shares = number(row.get("shares"))
             pair_dates[pair][(ins_code, observed)].append(shares)
             presence[(ins_code, observed, name, holder_type)][pair].append(shares)
+            if scheme == "ondate_share_id" and holder_type.lower() == "legal":
+                dated_legal_positions[(ins_code, name, holder_type)][observed][pair].append(shares)
 
     # Explicit source crosswalks are the strongest available link evidence.
     for a, b in explicit_edges:
@@ -222,6 +225,39 @@ def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tup
         union(a, b)
         continuity_edges.append((a, b, signature[1]))
 
+    # Link successive date-scoped IDs when the same exact legal holder has
+    # the same observed share quantity in the same security on adjacent trading
+    # snapshots. This is deliberately stricter than matching names alone.
+    # A stable share_id anchor is still required before the component is merged.
+    for (ins_code, name, holder_type), by_date in dated_legal_positions.items():
+        dates = sorted(by_date)
+        for previous_date, current_date in zip(dates, dates[1:]):
+            gap_days = (date.fromisoformat(current_date) - date.fromisoformat(previous_date)).days
+            if gap_days > 4:
+                continue
+            previous_ids = {
+                pair: {value for value in values if value is not None}
+                for pair, values in by_date[previous_date].items()
+            }
+            current_ids = {
+                pair: {value for value in values if value is not None}
+                for pair, values in by_date[current_date].items()
+            }
+            previous_ids = {pair: values for pair, values in previous_ids.items() if values}
+            current_ids = {pair: values for pair, values in current_ids.items() if values}
+            if len(previous_ids) != 1 or len(current_ids) != 1:
+                continue
+            previous_pair, previous_values = next(iter(previous_ids.items()))
+            current_pair, current_values = next(iter(current_ids.items()))
+            if previous_pair == current_pair:
+                continue
+            if len(previous_values) != 1 or len(current_values) != 1:
+                continue
+            if previous_values != current_values:
+                continue
+            union(previous_pair, current_pair)
+            continuity_edges.append((previous_pair, current_pair, current_date))
+
     components: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
     for pair in parent:
         components[find(pair)].append(pair)
@@ -243,7 +279,7 @@ def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tup
                     evidence[pair] = {
                         "kind": "inferred_exact_continuity",
                         "canonical_id": f"{canonical[0]}:{canonical[1]}",
-                        "evidence": "explicit source crosswalk or unique same-security/date/name/type overlap with one not-disclosed placeholder",
+                        "evidence": "explicit source crosswalk, unique same-security/date/name/type overlap, or consecutive-date exact legal-name/type with unchanged shares",
                     }
         else:
             for pair in members:
@@ -265,7 +301,7 @@ def build_identity_aliases(files: list[Path]) -> tuple[dict[tuple[str, str], tup
                 "left": f"{a[0]}:{a[1]}",
                 "right": f"{b[0]}:{b[1]}",
                 "date": date_key,
-                "basis": "same security/date + exact normalized name/type + exactly two IDs + one null and one observed quantity",
+                "basis": "explicit crosswalk, same-date placeholder continuity, or consecutive dates + same security + exact legal name/type + unchanged observed shares",
             }
             for a, b, date_key in continuity_edges
         ],
