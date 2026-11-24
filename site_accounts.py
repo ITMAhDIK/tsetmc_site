@@ -701,11 +701,30 @@ class AccountService:
         finally:
             con.close()
 
-        token_data = _json_request(
+        # Google's OAuth token endpoint requires URL-encoded form data,
+        # not the JSON body used by the ZarinPal REST API.
+        token_form = urllib.parse.urlencode({
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": callback,
+            "grant_type": "authorization_code",
+            "code_verifier": state_row["code_verifier"],
+        }).encode("ascii")
+        token_request = urllib.request.Request(
             "https://oauth2.googleapis.com/token",
-            {"code": code, "client_id": client_id, "client_secret": client_secret,
-             "redirect_uri": callback, "grant_type": "authorization_code",
-             "code_verifier": state_row["code_verifier"]})
+            data=token_form,
+            headers={"Content-Type": "application/x-www-form-urlencoded",
+                     "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(token_request, timeout=20) as response:
+                token_data = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            raise AccountError(502, "تبادل کد ورود گوگل انجام نشد.") from exc
+        if not isinstance(token_data, dict):
+            raise AccountError(502, "پاسخ توکن گوگل معتبر نیست.")
         id_token = token_data.get("id_token")
         if not id_token:
             raise AccountError(401, "گوگل توکن هویت برنگرداند.")
@@ -1274,6 +1293,21 @@ class AccountService:
         finally:
             con.close()
 
+    @staticmethod
+    def handles(path: str) -> bool:
+        """Return whether a path belongs to this service (including callbacks)."""
+        return (
+            path == "/api/v1/public/plans"
+            or path.startswith("/api/v1/auth/")
+            or path.startswith("/api/v1/payments/")
+            or path.startswith("/api/v1/subscriptions/")
+            or path == "/api/v1/wallet"
+            or path == "/api/v1/tickets"
+            or path.startswith("/api/v1/tickets/")
+            or path.startswith("/api/v1/site-admin/")
+            or path == "/api/v1/market/sector-config"
+        )
+
     def dispatch(self, method: str, path: str, params: dict, body: dict,
                  user: dict | None, base_url: str):
         secure = base_url.lower().startswith("https://")
@@ -1306,6 +1340,8 @@ class AccountService:
             return {"status": 302,
                     "redirect": "/?payment=" + ("success" if result["success"] else "failed")}
         if path == "/api/v1/auth/logout" and method == "POST":
+            if user:
+                self.check_csrf(user, body.get("_csrf") or body.get("csrf_token"))
             if user and user.get("session_hash"):
                 con = self._connect()
                 try:
