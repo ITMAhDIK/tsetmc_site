@@ -4801,9 +4801,6 @@ class Handler(BaseHTTPRequestHandler):
                 if user.get("role") != "super_admin":
                     raise ApiError(403, "این بخش فقط برای سوپرادمین قابل دسترسی است.")
 
-            if rest and rest[0] in ("watchlists", "screener"):
-                raise ApiError(410, "این بخش قدیمی هنوز به حساب‌های مستقل متصل نشده است و تا زمان تکمیل نسخه امن غیرفعال است.")
-
             if rest == ["stocks"] or (len(rest) == 2 and rest[0] == "stocks"
                                       and rest[1] in ("",)):
                 raise ApiError(404, "نماد یافت نشد.")
