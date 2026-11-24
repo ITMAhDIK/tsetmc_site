@@ -334,4 +334,4 @@ def test_watchlists_and_saved_filters_are_isolated_per_account(service):
     assert service.watchlist_symbols(first_id) == ["فملی"]
     assert service.watchlist_symbols(second_id) == []
     assert len(service.saved_filters_list(first_id)["filters"]) == 1
-    assert service.saved_filters_list(second_id)["filters"] == {"filters": []}
+    assert service.saved_filters_list(second_id)["filters"] == []
