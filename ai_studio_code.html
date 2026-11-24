@@ -1,9 +1,15 @@
+<!-- Single-page Persian RTL dashboard. The React application is embedded in the Babel script below. -->
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ره‌نگار بورس | پلتفرم تحلیل چندسهمی سهام‌داران و پرتفوی (TSETMC)</title>
+  <!--
+    Third-party runtime dependencies are CDN-loaded. REVIEW NOTE (P3-H03):
+    these resources currently have no Subresource Integrity hashes; Babel Standalone
+    also compiles JSX at runtime and therefore complicates a strict Content Security Policy.
+  -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -61,10 +67,16 @@
     const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
     // --- 1. API Client ---
+    // REVIEW NOTE (P3-H02): outside port 8000 this fallback targets the VISITOR'S
+    // own localhost, not the remote server. This must be revisited before domain deployment.
     const API_BASE = window.location.protocol.startsWith('http') && window.location.port === '8000'
       ? ''
       : 'http://127.0.0.1:8000';
 
+    /**
+     * Send a JSON API request and convert non-2xx responses into readable errors.
+     * The helper assumes successful responses contain JSON; CSV downloads use fetch directly.
+     */
     async function apiFetch(path, options = {}) {
       const res = await fetch(`${API_BASE}${path}`, {
         headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -79,10 +91,17 @@
 
     // --- 2. Persian Formatters ---
     const FA_DIGITS = ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'];
+    /** Convert Western digits to Persian digits while preserving non-digit characters. */
     const toFa = (v) => (v === null || v === undefined ? 'نامشخص' : String(v).replace(/\d/g, d => FA_DIGITS[Number(d)]));
+    /** Format a nullable numeric value as a rounded, comma-grouped Persian number. */
     const fmtNum = (n) => (n === null || n === undefined ? '—' : toFa(new Intl.NumberFormat('en-US').format(Math.round(n))));
+    /** Format a percentage using the requested decimal precision and Persian digits. */
     const fmtPct = (p, dec = 3) => (p === null || p === undefined ? '—' : `${toFa(Number(p).toFixed(dec))}٪`);
     // همت = هزار میلیارد تومان (1e12 Toman)؛ همر = هزار میلیارد ریال (1e12 Rial).
+    /**
+     * Format a Rial-denominated amount as Rial or Toman, scaling large values
+     * into the dashboard's همر / همت units.
+     */
     const fmtMoney = (rial, unit = 'IRR') => {
       if (rial === null || rial === undefined) return '—';
       const val = unit === 'IRT' ? rial / 10 : rial;
@@ -96,8 +115,11 @@
     // verified in the VM against 10 known pairs + a 7-year round-trip sweep).
     // div/mod truncate toward zero (NOT Math.floor) -- that matters for
     // negative intermediates like (gm-8)/6.
+    // Integer division truncated toward zero, as required by the Jalali conversion algorithm.
     const _div = (a, b) => ~~(a / b);
+    // Remainder paired with _div; unlike %, this follows truncation-toward-zero semantics.
     const _mod = (a, b) => a - _div(a, b) * b;
+    /** Return the Jalali leap status and Gregorian March start for a Jalali year. */
     function _jalCal(jy) {
       const breaks = [-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178];
       const bl = breaks.length;
@@ -119,12 +141,14 @@
       if (leap === -1) leap = 4;
       return { leap, gy, march };
     }
+    /** Convert a Gregorian date to the integer Julian Day Number. */
     function _gregorianToJdn(gy, gm, gd) {
       let d = _div((gy + _div(gm - 8, 6) + 100100) * 1461, 4)
         + _div(153 * _mod(gm + 9, 12) + 2, 5) + gd - 34840408;
       d = d - _div(_div(gy + 100100 + _div(gm - 8, 6), 100) * 3, 4) + 752;
       return d;
     }
+    /** Convert a Julian Day Number to a Gregorian year/month/day object. */
     function _jdnToGregorian(jdn) {
       let j = 4 * jdn + 139361631;
       j = j + _div(_div(4 * jdn + 183187720, 146097) * 3, 4) * 4 - 3908;
@@ -134,10 +158,12 @@
       const gy = _div(j, 1461) - 100100 + _div(8 - gm, 6);
       return { gy, gm, gd };
     }
+    /** Convert a Jalali date to a Julian Day Number using that year's Nowruz boundary. */
     function _jalaliToJdn(jy, jm, jd) {
       const r = _jalCal(jy);
       return _gregorianToJdn(r.gy, 3, r.march) + (jm - 1) * 31 - _div(jm - 1, 7) * (jm - 7) + jd - 1;
     }
+    /** Convert a Julian Day Number to a Jalali year/month/day object. */
     function _jdnToJalali(jdn) {
       const gy = _jdnToGregorian(jdn).gy;
       let jy = gy - 621;
@@ -154,15 +180,20 @@
       jm = 7 + _div(k, 30); jd = _mod(k, 30) + 1;
       return { jy, jm, jd };
     }
+    /** Convert a Gregorian date tuple to its Jalali representation. */
     const _toJalaali = (gy, gm, gd) => _jdnToJalali(_gregorianToJdn(gy, gm, gd));
+    /** Convert a Jalali date tuple to its Gregorian representation. */
     const _toGregorian = (jy, jm, jd) => _jdnToGregorian(_jalaliToJdn(jy, jm, jd));
+    /** Pad a month/day component to two digits for stable date strings. */
     const _pad2 = (n) => String(n).padStart(2, '0');
 
     // Global date mode ('jalali' | 'gregorian'), set by App. fmtDate reads
     // it at render time, so toggling re-renders every date in the UI.
     let DATE_MODE = 'jalali';
+    /** Update the module-level display mode read by all date formatters. */
     const setDateModeGlobal = (m) => { DATE_MODE = m === 'gregorian' ? 'gregorian' : 'jalali'; };
     // Jalali input ('1405-08-23' or '1405/08/23') -> display per DATE_MODE.
+    /** Format a Jalali date string according to the currently selected display mode. */
     const fmtDate = (jalaliStr) => {
       if (jalaliStr === null || jalaliStr === undefined || jalaliStr === '') return '—';
       const s = String(jalaliStr).replace(/\//g, '-').slice(0, 10);
@@ -175,6 +206,7 @@
       return toFa(`${parts[0]}/${_pad2(parts[1])}/${_pad2(parts[2])}`);
     };
     // Gregorian input ('2024-01-10') -> display per DATE_MODE.
+    /** Format a Gregorian date string directly or convert it to Jalali for display. */
     const fmtGregorianDate = (gregStr) => {
       if (gregStr === null || gregStr === undefined || gregStr === '') return '—';
       const s = String(gregStr).replace(/\//g, '-').slice(0, 10);
@@ -185,6 +217,7 @@
       return toFa(`${j.jy}/${_pad2(j.jm)}/${_pad2(j.jd)}`);
     };
     // UTC ISO timestamp -> Tehran wall time, 'در تاریخ {date} ساعت {HH:MM}'.
+    /** Render an ISO timestamp as Tehran wall time and a date in the active calendar mode. */
     const fmtDateTime = (iso) => {
       if (!iso) return '—';
       const d = new Date(iso);
@@ -211,6 +244,7 @@
     // Map a backend group to the row shape the holders tables render.
     // The group's pct is the same-date computed one; change, price and
     // value come from the representative (best-tier) member row.
+    /** Flatten one backend-resolved holder group into the row shape consumed by the tables. */
     const groupToRow = (g) => {
       const parts = String(g.group_key || '').split(':');
       return {
@@ -222,6 +256,7 @@
     };
     // Groups from the backend when present; otherwise each raw row is
     // its own group (no merging at all -- never name-based).
+    /** Return quantified, backend-grouped holders without changing their identity keys. */
     const resolvedHolders = (res) => {
       if (res && Array.isArray(res.groups) && res.groups.length) {
         return res.groups.map(groupToRow);
@@ -235,6 +270,7 @@
     // Holders mentioned on the date without any share count, from the
     // backend groups (or raw rows as a fallback). They are listed, not
     // counted as major holders, so the counts stay honest.
+    /** Collect names of holder groups whose share count is unavailable. */
     const unquantifiedHolders = (res) => {
       if (res && Array.isArray(res.groups)) {
         return res.groups
@@ -257,6 +293,10 @@
     // tools (trend line / rectangle / horizontal line) as an SVG overlay.
     // Markers + ohlc are memoized by the parent (JSON key) so the chart
     // is not rebuilt on every render.
+    /**
+     * Render a Lightweight Charts series with date formatting, event markers,
+     * resize handling, optional fullscreen mode, and an SVG drawing overlay.
+     */
     function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = false, allowFullscreen = true, onHover = null }) {
       const ref = useRef(null);
       const wrapRef = useRef(null);
@@ -300,6 +340,7 @@
       useEffect(() => {
         if (!ref.current || !window.LightweightCharts || cleanData.length === 0) return;
         const isLight = theme === 'light';
+        /** Convert chart time values to the active calendar's displayed date. */
         const tickFmt = (time) => fmtGregorianDate(String(time).slice(0, 10));
         const chart = window.LightweightCharts.createChart(ref.current, {
           height,
@@ -339,6 +380,7 @@
         // the right; clamp the visible range so the last bar stays at the
         // right edge (2 bars of breathing room).
         const lastIdx = cleanData.length - 1;
+        /** Keep the final data point anchored near the right edge of the visible range. */
         const clampRight = (range) => {
           if (!range) return;
           if (range.to > lastIdx + 2) {
@@ -347,6 +389,7 @@
           }
         };
         chart.timeScale().subscribeVisibleLogicalRangeChange(clampRight);
+        /** Recalculate SVG overlay coordinates after chart-range changes. */
         const bumpDraw = () => setDrawVersion(v => v + 1);
         chart.timeScale().subscribeVisibleTimeRangeChange(bumpDraw);
         chart.subscribeCrosshairMove(bumpDraw);
@@ -373,6 +416,7 @@
       }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, logScale, autoScale]);
 
       // --- drawing overlay ---
+      /** Translate a pointer position into the chart's time and price coordinates. */
       const pointFromEvent = (e) => {
         const chart = chartRef.current, series = seriesRef.current, wrap = wrapRef.current;
         if (!chart || !series || !wrap) return null;
@@ -386,6 +430,7 @@
         if (time === null || time === undefined || price === null || price === undefined || isNaN(price)) return null;
         return { time: String(time).slice(0, 10), price };
       };
+      /** Start a drawing gesture or place a horizontal line at the clicked price. */
       const onOverlayDown = (e) => {
         if (!tool) return;
         const p = pointFromEvent(e);
@@ -397,20 +442,24 @@
         }
         setDraft({ kind: tool, p1: p, p2: p });
       };
+      /** Update the in-progress drawing endpoint while the pointer moves. */
       const onOverlayMove = (e) => {
         if (!draft) return;
         const p = pointFromEvent(e);
         if (!p) return;
         setDraft(d => d ? { ...d, p2: p } : d);
       };
+      /** Commit the completed drawing to component state. */
       const onOverlayUp = () => {
         if (!draft) return;
         setDrawings(ds => [...ds, { id: Date.now() + Math.random(), ...draft }]);
         setDraft(null);
       };
+      /** Convert stored drawing anchors into their current pixel coordinates. */
       const drawingXY = (d) => {
         const chart = chartRef.current, series = seriesRef.current;
         if (!chart || !series) return null;
+        /** Map one drawing anchor to screen coordinates through the chart scales. */
         const toXY = (p) => {
           const x = chart.timeScale().timeToCoordinate(p.time);
           const y = series.priceToCoordinate(p.price);
@@ -423,6 +472,7 @@
         const a = toXY(d.p1), b = toXY(d.p2);
         return (a && b) ? { a, b } : null;
       };
+      /** Build the SVG overlay for saved drawings and the current draft. */
       const renderDrawings = () => {
         const wrap = wrapRef.current;
         if (!wrap) return null;
@@ -497,6 +547,7 @@
       );
     }
 
+    /** Display an identity-resolution status using its Persian label and tier styling. */
     const IdentityBadge = ({ status }) => {
       const map = {
         verified_same_source_row: { text: 'تأییدشده (هم‌ردیف منبع)', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
@@ -510,11 +561,13 @@
       return <span className={`px-1.5 py-0.5 text-[10px] rounded border ${item.cls}`}>{item.text}</span>;
     };
 
+    /** Render a consistent inline error panel, or nothing when no error is present. */
     const ErrorBox = ({ error }) => error ? (
       <div className="p-3 rounded border border-red-500/40 bg-red-500/10 text-red-300 text-xs">{error}</div>
     ) : null;
 
     // --- 4. Page 1: Multi-Stock Market Dashboard ---
+    /** Dashboard summary, paginated market watch, ownership movers, and recently observed holders. */
     function MarketDashboardPage({ onOpenStock, onOpenInvestor, currency, dateMode }) {
       const [overview, setOverview] = useState(null);
       const [watch, setWatch] = useState({ total: 0, rows: [] });
@@ -531,6 +584,8 @@
         apiFetch('/api/v1/market/overview').then(setOverview).catch(e => setError(e.message));
       }, []);
 
+      // REVIEW NOTE (P3-M01): clearing this debounce timer does not cancel a fetch that has
+      // already started; an older search response can still overwrite a newer result.
       useEffect(() => {
         const timer = setTimeout(() => {
           setLoading(true);
@@ -543,6 +598,7 @@
         return () => clearTimeout(timer);
       }, [q, market, sortBy, sortDir, offset]);
 
+      /** Select a sort column or reverse the current direction, then return to the first page. */
       const toggleSort = (col) => {
         setOffset(0);
         if (sortBy === col) setSortDir(d => d === 'DESC' ? 'ASC' : 'DESC');
@@ -692,6 +748,7 @@
     }
 
     // --- 5. Page 2: Dynamic Stock Detail Page ---
+    /** Instrument detail, daily ownership history, holders, actions, and data-quality views. */
     function StockDetailPage({ symbol, currency, theme, dateMode, onOpenInvestor }) {
       const [detail, setDetail] = useState(null);
       const [holdersRes, setHoldersRes] = useState({ total: 0, rows: [], date_jalali: null });
@@ -708,6 +765,8 @@
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
 
+      // REVIEW NOTE (P3-M01): this multi-request load has no abort or symbol-generation guard;
+      // a late response for the previous symbol can overwrite the currently selected symbol.
       useEffect(() => {
         if (!symbol) return;
         setLoading(true);
@@ -732,6 +791,7 @@
           .finally(() => setLoading(false));
       }, [symbol]);
 
+      // REVIEW NOTE (P3-M01): date/sort refetches are not sequenced, so an older response may win.
       useEffect(() => {
         if (!symbol) return;
         const qs = new URLSearchParams({ sort_by: sortBy, sort_dir: 'DESC', limit: '100' });
@@ -741,6 +801,8 @@
           .catch(() => {});
       }, [symbol, selectedDate, sortBy]);
 
+      // REVIEW NOTE (P3-L01): on initial mount this duplicates the unfiltered ownership-series
+      // request already included in the main Promise.all above.
       useEffect(() => {
         if (!symbol) return;
         const qs = new URLSearchParams();
@@ -1059,6 +1121,9 @@
                         <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد — {BASIS_FA[h.basis] || h.basis})</span> : ''}{h.unresolved ? <span className="text-[10px] text-amber-400" title="رکورد دیگری با همین سهام و نام وجود دارد که هویتش حل نشده؛ جمع ممکن است مضاعف باشد"> ⚠ نیاز به بررسی</span> : ''}</td>
                         <td className="p-2">{h.shareholder_type === 'legal' ? 'حقوقی' : h.shareholder_type === 'individual' ? 'حقیقی' : '—'}</td>
                         <td className="p-2 num">{fmtNum(h.shares)}</td>
+                        {/* REVIEW NOTE (P3-H01): reported source percentage is currently primary;
+                            after some capital increases it can be inflated. The calculated
+                            same-date percentage is shown only as the secondary line. */}
                         <td className="p-2 num">
                           <div>{fmtPct(h.ownership_percent_reported)}</div>
                           <div className="text-[var(--text-secondary)] text-[10px]">محاسبه: {fmtPct(h.ownership_percent_calculated)}</div>
@@ -1219,6 +1284,7 @@
     // portfolio: first the combined value chart (sum of all symbols),
     // then one chart per company; clicking a company swaps the main
     // chart to that company's series.
+    /** Search holders across companies and inspect selected holders' portfolios and histories. */
     function ShareholderIntelligencePage({ currency, theme, onOpenStock, onOpenInvestor, dateMode }) {
       const [q, setQ] = useState('');
       const [symbolFilter, setSymbolFilter] = useState('');
@@ -1233,6 +1299,8 @@
       const [loading, setLoading] = useState(false);
       const [offset, setOffset] = useState(0);
 
+      // REVIEW NOTE (P3-M01): clearing this debounce timer does not cancel a fetch that has
+      // already started; an older search response can still overwrite a newer result.
       useEffect(() => {
         const timer = setTimeout(() => {
           setLoading(true);
@@ -1248,6 +1316,10 @@
         return () => clearTimeout(timer);
       }, [q, symbolFilter, typeFilter, minPct, multiOnly, offset]);
 
+      /**
+       * Load the selected holder's portfolio and one observation-history series per symbol.
+       * REVIEW NOTE (P3-M02): requests are not cancelled or tied to a selection generation.
+       */
       const loadGroup = (group) => {
         setSelected(group);
         setPortfolio(null);
@@ -1390,6 +1462,7 @@
     }
 
     // --- 7. Page 4: Investor Portfolio Reconstruction ---
+    /** Reconstruct an investor's direct and evidence-linked positions as of an optional date. */
     function PortfolioReconstructionPage({ currency, theme, onOpenStock, dateMode, initialInvestor = '' }) {
       const [invQuery, setInvQuery] = useState('');
       const [invSort, setInvSort] = useState('linked');
@@ -1411,6 +1484,7 @@
 
       // Direct ID entry: "share_id:123456" / "ondate_share_id:123456",
       // or a bare number (treated as share_id).
+      /** Accept scheme:id, defaulting a bare numeric identifier to share_id. */
       const applyIdInput = () => {
         const v = idInput.trim();
         if (!v) return;
@@ -1438,6 +1512,8 @@
           .finally(() => setCompLoading(false));
       }, [compSymbol]);
 
+      // REVIEW NOTE (P3-M04): the delayed callback reads selectedId from its render closure;
+      // a selection made while the request is pending can be overwritten by auto-select.
       useEffect(() => {
         const timer = setTimeout(() => {
           apiFetch(`/api/v1/portfolios/investors?q=${encodeURIComponent(invQuery)}&limit=30&sort_by=${invSort}`)
@@ -1450,6 +1526,8 @@
         return () => clearTimeout(timer);
       }, [invQuery, invSort]);
 
+      // REVIEW NOTE (P3-M03): a failed detail fetch does not clear the previous portfolio,
+      // so the old investor's positions can remain visible beneath the newly selected ID.
       useEffect(() => {
         if (!selectedId) return;
         setLoading(true);
@@ -1678,6 +1756,7 @@
       ['has_corporate_action', 'تعداد افزایش سرمایه', 'number'],
       ['date_gregorian', 'تاریخ میلادی (YYYY-MM-DD)', 'date'],
     ];
+    /** Build, run, save, and export multi-condition holder/instrument screening queries. */
     function ScreenerPage({ onOpenStock }) {
       const [logic, setLogic] = useState('AND');
       const [conds, setConds] = useState([
@@ -1689,6 +1768,7 @@
       const [saveName, setSaveName] = useState('');
       const [loading, setLoading] = useState(false);
 
+      /** Submit the current AND/OR condition set and replace the visible result rows. */
       const runQuery = useCallback(() => {
         setLoading(true);
         apiFetch('/api/v1/screener/query', {
@@ -1704,6 +1784,7 @@
         apiFetch('/api/v1/screener/saved-filters').then(res => setSaved(res.filters || [])).catch(() => {});
       }, []);
 
+      /** Persist the current screener definition under the user-provided name. */
       const saveCurrent = () => {
         if (!saveName.trim()) return;
         apiFetch('/api/v1/screener/saved-filters', {
@@ -1715,6 +1796,7 @@
         });
       };
 
+      /** Request the current result set as CSV and trigger a browser download. */
       const exportCsv = () => {
         fetch(`${API_BASE}/api/v1/screener/export`, {
           method: 'POST',
@@ -1750,6 +1832,7 @@
               const fieldMeta = SCREENER_FIELDS.find(f => f[0] === c.field) || SCREENER_FIELDS[0];
               const kind = fieldMeta[2];
               const enumOptions = SCREENER_ENUMS[c.field];
+              /** Apply a partial field/operator/value update to this condition row. */
               const setCond = (patch) => setConds(p => p.map((x, i) => i === idx ? { ...x, ...patch } : x));
               return (
               <div key={idx} className="flex flex-wrap gap-2 items-center p-2 rounded bg-[var(--bg-elevated)]">
@@ -1825,6 +1908,7 @@
     }
 
     // --- 9. Page 6: Persistent Watchlist with Autocomplete & Sorting ---
+    /** Manage the default watchlist, including autocomplete, sorting, and removal. */
     function WatchlistPage({ onOpenStock, currency }) {
       const [items, setItems] = useState([]);
       const [symInput, setSymInput] = useState('');
@@ -1834,6 +1918,7 @@
       const [err, setErr] = useState('');
       const [msg, setMsg] = useState('');
 
+      /** Fetch the default watchlist and replace the local item list. */
       const load = () => apiFetch('/api/v1/watchlists/default').then(res => setItems(res.items || []));
       useEffect(() => { load(); }, []);
 
@@ -1847,6 +1932,7 @@
         return () => clearTimeout(t);
       }, [symInput]);
 
+      /** Add the supplied symbol or current input value to the default watchlist. */
       const addSym = (targetSym) => {
         const sym = (targetSym || symInput).trim();
         if (!sym) { setErr('نمادی وارد نشده است.'); setMsg(''); return; }
@@ -1855,6 +1941,7 @@
           .catch(e => { setErr(e.message); setMsg(''); });
       };
 
+      /** Delete a symbol from the default watchlist and refresh the displayed items. */
       const removeSym = (sym) => {
         apiFetch(`/api/v1/watchlists/default/symbols/${encodeURIComponent(sym)}`, { method: 'DELETE' }).then(load);
       };
@@ -1867,6 +1954,7 @@
         });
       }, [items, sortCol, sortAsc]);
 
+      /** Select a sort column or reverse the current direction, then return to the first page. */
       const toggleSort = (col) => {
         if (sortCol === col) setSortAsc(!sortAsc);
         else { setSortCol(col); setSortAsc(false); }
@@ -1926,6 +2014,7 @@
     }
 
     // --- 10. Page 7: Account & Plans (Local Placeholder) ---
+    /** Display the current client-side plan placeholder and its local toggle control. */
     function AccountAndPlansPage({ plan, setPlan }) {
       return (
         <div className="space-y-3 text-xs">
@@ -1956,6 +2045,7 @@
     }
 
     // --- 11. Page 8: Real Ingestion Administration Panel ---
+    /** Show admin overview, workbook manifests, validation issues, and identity review candidates. */
     function AdminDashboardPage() {
       const [overview, setOverview] = useState(null);
       const [manifests, setManifests] = useState([]);
@@ -1965,6 +2055,7 @@
       const [manifestQ, setManifestQ] = useState('');
       const [msg, setMsg] = useState('');
 
+      /** Refresh all four admin datasets in parallel for the admin dashboard. */
       const refreshAll = useCallback(() => {
         apiFetch('/api/v1/admin/overview').then(setOverview);
         apiFetch(`/api/v1/admin/manifests?status=${statusFilter}&q=${encodeURIComponent(manifestQ)}&limit=50`).then(r => setManifests(r.rows || []));
@@ -1974,12 +2065,14 @@
 
       useEffect(() => { refreshAll(); }, [refreshAll]);
 
+      /** Call the currently unimplemented ingestion-trigger endpoint with the retry flag. */
       const trigger = (retryFailed) => {
         apiFetch(`/api/v1/admin/ingestion/trigger?retry_failed=${retryFailed}`, { method: 'POST' })
           .then(res => { setMsg(`پایپلاین ایمپورت با PID ${res.pid} شروع شد.`); refreshAll(); })
           .catch(e => setMsg(e.message));
       };
 
+      /** Submit an identity-queue decision; the corresponding backend route is currently a stub. */
       const resolveLink = (linkId, decision) => {
         apiFetch('/api/v1/admin/identity/resolve', {
           method: 'POST',
@@ -2107,6 +2200,7 @@
       { id: 'admin', label: '۸. پنل مدیریت ایمپورت' },
     ];
 
+    /** Own global navigation and display preferences, and mount the active application page. */
     function App() {
       const [page, setPage] = useState('market');
       const [activeSymbol, setActiveSymbol] = useState('');
@@ -2118,12 +2212,14 @@
       // does not trigger a render, which left tab-4 text dates stale).
       const [, setDateModeTick] = useState(0);
       const [portfolioInvestor, setPortfolioInvestor] = useState('');
+      /** Store the investor identifier and navigate to portfolio reconstruction. */
       const openInvestor = (id) => { setPortfolioInvestor(id); setPage('portfolio'); };
       const [plan, setPlan] = useState('premium');
       const [quickSearch, setQuickSearch] = useState('');
       const [searchResults, setSearchResults] = useState([]);
 
       useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
+      /** Toggle the global calendar display between Jalali and Gregorian dates. */
       const toggleDateMode = () => setDateMode(m => {
         const next = m === 'jalali' ? 'gregorian' : 'jalali';
         setDateModeGlobal(next);
@@ -2151,6 +2247,7 @@
         return () => clearTimeout(t);
       }, [quickSearch]);
 
+      /** Store the selected instrument symbol and navigate to its detail page. */
       const openStock = (sym) => {
         setActiveSymbol(sym);
         setPage('stock');
