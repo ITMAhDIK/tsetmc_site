@@ -1,0 +1,44 @@
+name: Deploy analytics preview to GitHub Pages
+
+on:
+  push:
+    branches:
+      - feat/membership-security-analytics
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout analytics preview
+        uses: actions/checkout@v4
+
+      - name: Validate HTML, JavaScript and public data privacy
+        run: python tools/validate_pages_preview.py
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload sanitized static site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
