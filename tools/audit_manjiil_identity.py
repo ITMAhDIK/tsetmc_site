@@ -56,8 +56,13 @@ def main():
         ]
 
         ids = {}
+        rows_by_pair = {}
         for r in target_history:
             key = (str(r.get("id_scheme") or ""), str(r.get("shareholder_id") or ""))
+            date_key = str(r.get("date_gregorian") or r.get("date") or "")
+            name_key = norm(r.get("shareholder_name"))
+            type_key = str(r.get("shareholder_type") or "")
+            shares = r.get("shares")
             entry = ids.setdefault(key, {
                 "id_scheme": key[0],
                 "shareholder_id": key[1],
@@ -71,11 +76,68 @@ def main():
                 "types": set(),
             })
             entry["rows"] += 1
-            entry["dates"].append(str(r.get("date_gregorian") or r.get("date") or ""))
-            entry["shares_values"].append(r.get("shares"))
-            entry["names"].add(norm(r.get("shareholder_name")))
+            entry["dates"].append(date_key)
+            entry["shares_values"].append(shares)
+            entry["names"].add(name_key)
             entry["identity_statuses"].add(str(r.get("identity_status") or ""))
-            entry["types"].add(str(r.get("shareholder_type") or ""))
+            entry["types"].add(type_key)
+            rows_by_pair.setdefault(key, {})[date_key] = {
+                "name": name_key, "type": type_key, "shares": shares
+            }
+
+        # Build only exact cross-ID links: same date, same normalized legal name,
+        # same shareholder type, same share quantity, and exactly two IDs on
+        # that signature. Any ambiguous/mismatching overlap is not auto-linked.
+        signature_pairs = {}
+        for pair, dated in rows_by_pair.items():
+            for date_key, row in dated.items():
+                if not date_key or row["shares"] is None:
+                    continue
+                signature = (date_key, row["name"], row["type"], str(row["shares"]))
+                signature_pairs.setdefault(signature, set()).add(pair)
+
+        parent = {pair: pair for pair in rows_by_pair}
+        def find(pair):
+            while parent[pair] != pair:
+                parent[pair] = parent[parent[pair]]
+                pair = parent[pair]
+            return pair
+        exact_edges = []
+        ambiguous_signatures = []
+        for signature, pairs in signature_pairs.items():
+            if len(pairs) == 2:
+                a, b = tuple(pairs)
+                ra, rb = rows_by_pair[a][signature[0]], rows_by_pair[b][signature[0]]
+                # Require no contradictory quantity on any shared date.
+                shared_dates = set(rows_by_pair[a]) & set(rows_by_pair[b])
+                conflict = any(
+                    rows_by_pair[a][d]["shares"] != rows_by_pair[b][d]["shares"]
+                    for d in shared_dates
+                )
+                if not conflict:
+                    root_a, root_b = find(a), find(b)
+                    if root_a != root_b:
+                        parent[root_b] = root_a
+                    exact_edges.append({
+                        "date": signature[0],
+                        "shares": signature[3],
+                        "left": f"{a[0]}:{a[1]}",
+                        "right": f"{b[0]}:{b[1]}",
+                        "shared_dates": sorted(shared_dates),
+                    })
+            elif len(pairs) > 2:
+                ambiguous_signatures.append({
+                    "date": signature[0], "shares": signature[3],
+                    "identity_pairs": sorted(f"{p[0]}:{p[1]}" for p in pairs)
+                })
+
+        components = {}
+        for pair in rows_by_pair:
+            components.setdefault(find(pair), []).append(pair)
+        component_list = [
+            sorted(f"{p[0]}:{p[1]}" for p in members)
+            for members in components.values()
+        ]
 
         output_ids = []
         for entry in ids.values():
@@ -99,6 +161,12 @@ def main():
             "history_rows_matched": len(target_history),
             "shareholders_rows_matched": len(target_shareholders),
             "distinct_identity_pairs": len(output_ids),
+            "exact_overlap_edges": exact_edges,
+            "exact_overlap_edge_count": len(exact_edges),
+            "ambiguous_same_signature_count": len(ambiguous_signatures),
+            "ambiguous_same_signatures": ambiguous_signatures,
+            "identity_components_after_exact_overlap_only": component_list,
+            "component_count_after_exact_overlap_only": len(component_list),
             "id_scheme_counts": {},
             "identities": sorted(output_ids, key=lambda x: (x["first_date"] or "", x["shareholder_id"])),
             "shareholders_sheet": [
