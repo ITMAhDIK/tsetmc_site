@@ -12,6 +12,7 @@ class OwnershipResolverReadinessTests(unittest.TestCase):
         self.sc.execute(
             "CREATE TABLE site_meta (key TEXT PRIMARY KEY, value TEXT)"
         )
+        self.sc.execute("CREATE TABLE site_holder_history (id INTEGER PRIMARY KEY)")
 
     def tearDown(self):
         self.sc.close()
@@ -28,6 +29,7 @@ class OwnershipResolverReadinessTests(unittest.TestCase):
         self.put_meta(
             "ownership_resolver_schema", "resolved-v1-source-exclusions"
         )
+        self.put_meta("sidecar_version", "10")
         self.api.require_ready(self.sc)
 
     def test_legacy_sidecar_is_not_ready_even_with_old_last_refresh(self):
