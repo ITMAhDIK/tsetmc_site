@@ -7,6 +7,7 @@ on:
     paths:
       - "docs/**"
       - ".github/workflows/pages-preview.yml"
+      - "tools/validate_pages_preview.py"
   workflow_dispatch:
 
 permissions:
