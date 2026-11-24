@@ -3,7 +3,7 @@ name: Deploy analytics preview to GitHub Pages
 on:
   push:
     branches:
-      - feat/membership-security-analytics
+      - feat/local-first-public-data-membership
     paths:
       - "docs/**"
       - ".github/workflows/pages-preview.yml"
