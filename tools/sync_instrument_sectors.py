@@ -23,49 +23,39 @@ def _as_text(value):
     return value or None
 
 
-def _find_instrument_object(value):
-    candidates = []
-
-    def walk(node):
-        if isinstance(node, dict):
-            if "cSecVal" in node or "lSecVal" in node:
-                candidates.append(node)
-            for child in node.values():
-                walk(child)
-        elif isinstance(node, list):
-            for child in node:
-                walk(child)
-
-    walk(value)
-    if not candidates:
-        return value if isinstance(value, dict) else {}
-    return max(candidates, key=lambda item: (
-        int("cSecVal" in item) + int("lSecVal" in item),
-        int("subSector" in item),
-    ))
-
-
-def _find_subsector(instrument, payload):
-    value = instrument.get("subSector")
-    if value is None and isinstance(payload, dict):
-        value = payload.get("subSector")
-    if isinstance(value, list):
-        value = value[0] if value else None
-    return value if isinstance(value, dict) else {}
-
-
 def extract_sector_fields(payload, ins_code):
-    instrument = _find_instrument_object(payload)
-    subsector = _find_subsector(instrument, payload)
+    """Extract the official group and subgroup from GetInstrumentIdentity.
+
+    The response normally wraps the identity in instrumentIdentity, with
+    sector and subSector as sibling objects. A conservative direct-field
+    fallback is retained for alternate response variants.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("identity response is not a JSON object")
+    identity = payload.get("instrumentIdentity")
+    if not isinstance(identity, dict):
+        identity = payload.get("instrument")
+    if not isinstance(identity, dict):
+        identity = payload
+
+    sector = identity.get("sector")
+    if not isinstance(sector, dict):
+        sector = {}
+    subsector = identity.get("subSector")
+    if isinstance(subsector, list):
+        subsector = subsector[0] if subsector else None
+    if not isinstance(subsector, dict):
+        subsector = {}
+
     return {
         "ins_code": str(ins_code),
-        "cSecVal": _as_text(instrument.get("cSecVal")),
-        "lSecVal": _as_text(instrument.get("lSecVal")),
+        "cSecVal": _as_text(sector.get("cSecVal") or identity.get("cSecVal")),
+        "lSecVal": _as_text(sector.get("lSecVal") or identity.get("lSecVal")),
         "cSoSecVal": _as_text(
-            subsector.get("cSoSecVal") or instrument.get("cSoSecVal")
+            subsector.get("cSoSecVal") or identity.get("cSoSecVal")
         ),
         "lSoSecVal": _as_text(
-            subsector.get("lSoSecVal") or instrument.get("lSoSecVal")
+            subsector.get("lSoSecVal") or identity.get("lSoSecVal")
         ),
     }
 

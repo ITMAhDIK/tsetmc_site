@@ -1,6 +1,7 @@
 """Regression tests for the investor sector-affinity engine."""
 import unittest
 from sector_affinity import SectorAffinityAccumulator
+from tools.sync_instrument_sectors import extract_sector_fields
 
 
 def _sector(group="G1", label="Group 1", sub="S1", category="CAT1"):
@@ -25,6 +26,40 @@ def _row(day, ins, shares, price, **extra):
     }
     row.update(extra)
     return row
+
+
+class SectorRegistryExtractionTests(unittest.TestCase):
+    def test_identity_response_extracts_sibling_sector_and_subsector_objects(self):
+        payload = {
+            "instrumentIdentity": {
+                "insCode": "17914401175772326",
+                "sector": {
+                    "cSecVal": "68 ",
+                    "lSecVal": "صندوق سرمایه گذاری قابل معامله",
+                },
+                "subSector": {
+                    "cSoSecVal": 6821,
+                    "lSoSecVal": "صندوق های سرمایه گذاری اهرمی",
+                },
+            }
+        }
+        result = extract_sector_fields(payload, "17914401175772326")
+        self.assertEqual(result["cSecVal"], "68")
+        self.assertEqual(result["lSecVal"], "صندوق سرمایه گذاری قابل معامله")
+        self.assertEqual(result["cSoSecVal"], "6821")
+        self.assertEqual(result["lSoSecVal"], "صندوق های سرمایه گذاری اهرمی")
+
+    def test_direct_identity_fields_are_supported_as_fallback(self):
+        result = extract_sector_fields({
+            "instrumentIdentity": {
+                "cSecVal": "27",
+                "lSecVal": "فلزات اساسی",
+                "cSoSecVal": 2701,
+                "lSoSecVal": "زیرگروه نمونه",
+            }
+        }, "123")
+        self.assertEqual(result["cSecVal"], "27")
+        self.assertEqual(result["cSoSecVal"], "2701")
 
 
 class SectorAffinityTests(unittest.TestCase):
