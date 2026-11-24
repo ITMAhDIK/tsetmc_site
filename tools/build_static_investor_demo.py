@@ -251,7 +251,8 @@ def main() -> int:
     # Finalize each investor using only its strict (scheme, ID) namespace pair.
     final_investors = []
     aggregate_stats = {
-        "current_positions": 0,
+        "positions_in_latest_valued_snapshots": 0,
+        "investors_with_latest_valuation": 0,
         "timeline_rows": 0,
         "investors_with_affinity": 0,
         "mapped_positions": 0,
@@ -281,11 +282,6 @@ def main() -> int:
             latest_price = last.get("price")
             if latest_value is None and last.get("shares") is not None and latest_price is not None:
                 latest_value = last["shares"] * latest_price
-            if exit_status == "currently_disclosed" and latest_value is not None:
-                current_value_rial += latest_value
-                current_value_known = True
-                aggregate_stats["current_positions"] += 1
-
             symbol_items.append({
                 "symbol": last["symbol"],
                 "ins_code": ins_code,
@@ -334,6 +330,11 @@ def main() -> int:
         affinity = accumulator.result()
         if affinity.get("dashboard_categories") or affinity.get("official_groups"):
             aggregate_stats["investors_with_affinity"] += 1
+        engine_value = affinity.get("current_portfolio_value_rial")
+        engine_positions = int(affinity.get("current_observed_instruments_count") or 0)
+        if engine_value is not None:
+            aggregate_stats["investors_with_latest_valuation"] += 1
+        aggregate_stats["positions_in_latest_valued_snapshots"] += engine_positions
 
         # Keep all source observations for the per-ID history table, but strip
         # low-level fetch URLs and raw identifiers from the public demo payload.
@@ -377,7 +378,9 @@ def main() -> int:
             "identity_verification_status": investor.get("identity_verification_status"),
             "n_companies": len(symbol_items),
             "latest_observation_date": max((r["date"] for r in timeline), default=None),
-            "current_portfolio_value_rial": round(current_value_rial, 2) if current_value_known else None,
+            "current_portfolio_value_rial": engine_value,
+            "portfolio_value_date": affinity.get("latest_valued_date"),
+            "positions_in_latest_valued_snapshot": engine_positions,
             "max_ownership_pct": max_ownership,
             "latest_shares_change": latest_change,
             "symbols": symbol_items,
