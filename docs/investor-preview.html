@@ -458,7 +458,7 @@
           <tbody>${eventRows || '<tr><td colspan="8">برای این شناسه سابقه‌ای وجود ندارد.</td></tr>'}</tbody>
         </table></div>
       </section>
-      <div class="note">روش هویت: فقط برابری دقیق زوج (id_scheme, shareholder_id). هیچ دو شناسه‌ای صرفاً به دلیل نام مشابه ادغام نشده‌اند. ماتریس از موتور SectorAffinityAccumulator پروژه با وزن‌های ۵۰/۳۰/۲۰، نیمه‌عمر تاریخی ۶ ماه و پنجرهٔ چرخش ۹۰ روزه استفاده می‌کند.</div>
+      <div class="note">روش هویت: شناسه‌های خام حفظ می‌شوند. پیوند شناسه‌های تاریخ‌دار فقط با شواهد تداوم معتبر انجام می‌شود؛ مانند crosswalk منبع، یا تطبیق یکتای نام و نوع در همان نماد/تاریخ همراه با رکوردِ بدون تعداد سهام، یا مقدار سهام یکسان در snapshotهای متوالی. شباهت نام به‌تنهایی برای ادغام کافی نیست. ماتریس از موتور SectorAffinityAccumulator پروژه با وزن‌های ۵۰/۳۰/۲۰، نیمه‌عمر تاریخی ۶ ماه و پنجرهٔ چرخش ۹۰ روزه استفاده می‌کند.</div>
     `;
     $("detail").querySelectorAll("[data-symbol]").forEach(btn => {
       btn.addEventListener("click", () => {symbolFilter=btn.getAttribute("data-symbol");renderDetail();});
