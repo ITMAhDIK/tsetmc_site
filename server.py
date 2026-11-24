@@ -4561,9 +4561,12 @@ def _read_json_body(handler, limit=1024 * 1024):
         raise ApiError(413, "بدنه درخواست بیش از حد بزرگ است.")
     raw = handler.rfile.read(length) if length else b"{}"
     try:
-        return json.loads(raw.decode("utf-8") or "{}")
+        value = json.loads(raw.decode("utf-8") or "{}")
     except (ValueError, UnicodeDecodeError):
         raise ApiError(400, "بدنه JSON نامعتبر است.")
+    if not isinstance(value, dict):
+        raise ApiError(400, "بدنه درخواست باید یک شیء JSON باشد.")
+    return value
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -4573,12 +4576,21 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep stdout for our own concise request log
 
+    def end_headers(self):
+        """Apply conservative browser security headers to every response."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        super().end_headers()
+
     # -- response helpers -------------------------------------------------
     def _send_json(self, status, payload, headers=None):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self._cors_headers()
         for name, value in (headers or {}).items():
             if name.lower() in ("set-cookie", "cache-control"):
@@ -4772,7 +4784,7 @@ class Handler(BaseHTTPRequestHandler):
             status = 500
             print("[error] %s %s: %r" % (method, path, e), flush=True)
             try:
-                self._send_json(500, {"detail": "خطای داخلی سرور: %s" % e})
+                self._send_json(500, {"detail": "خطای داخلی سرور؛ جزئیات در لاگ سرور ثبت شده است."})
             except Exception:
                 pass
         finally:
