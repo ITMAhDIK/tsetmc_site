@@ -7,6 +7,8 @@ from server import ApiError, SiteApi, refresh_summaries
 
 class OwnershipResolverReadinessTests(unittest.TestCase):
     def setUp(self):
+        """Create an in-memory API instance and a minimal sidecar metadata table."""
+
         self.api = SiteApi(":memory:", ":memory:", ".", ".")
         self.sc = sqlite3.connect(":memory:")
         self.sc.execute(
@@ -14,9 +16,13 @@ class OwnershipResolverReadinessTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        """Close the sidecar connection used by this test case."""
+
         self.sc.close()
 
     def put_meta(self, key, value):
+        """Insert or replace one readiness metadata key and commit the fixture update."""
+
         self.sc.execute(
             "INSERT OR REPLACE INTO site_meta (key, value) VALUES (?, ?)",
             (key, value),
@@ -24,6 +30,8 @@ class OwnershipResolverReadinessTests(unittest.TestCase):
         self.sc.commit()
 
     def test_ready_requires_completion_marker_and_expected_resolver_schema(self):
+        """Verify readiness requires both the completed refresh marker and expected resolver schema."""
+
         self.put_meta("last_refresh", "2026-11-22T10:00:00")
         self.put_meta(
             "ownership_resolver_schema", "resolved-v1-source-exclusions"
@@ -31,12 +39,16 @@ class OwnershipResolverReadinessTests(unittest.TestCase):
         self.api.require_ready(self.sc)
 
     def test_legacy_sidecar_is_not_ready_even_with_old_last_refresh(self):
+        """Verify an old completion timestamp alone cannot make a legacy sidecar ready."""
+
         self.put_meta("last_refresh", "2026-11-21T10:00:00")
         with self.assertRaises(ApiError) as raised:
             self.api.require_ready(self.sc)
         self.assertEqual(raised.exception.status, 503)
 
     def test_wrong_resolver_schema_is_not_ready(self):
+        """Verify a mismatched resolver schema is rejected with HTTP 503."""
+
         self.put_meta("last_refresh", "2026-11-22T10:00:00")
         self.put_meta("ownership_resolver_schema", "some-other-layout")
         with self.assertRaises(ApiError) as raised:
@@ -44,6 +56,8 @@ class OwnershipResolverReadinessTests(unittest.TestCase):
         self.assertEqual(raised.exception.status, 503)
 
     def test_failed_early_refresh_cannot_leave_stale_ready_markers(self):
+        """Verify a failure before normal refresh stages clears previously published readiness markers."""
+
         self.put_meta("last_refresh", "2026-11-21T10:00:00")
         self.put_meta(
             "ownership_resolver_schema", "resolved-v1-source-exclusions"

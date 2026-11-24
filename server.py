@@ -77,6 +77,8 @@ _CYCLE_LEAP_YEARS = (0, 4, 8, 12, 16, 21, 25, 29)  # 0-based years in a cycle
 
 
 def _gregorian_to_jdn(gy, gm, gd):
+    """Convert a Gregorian calendar date to the integer Julian Day Number used by this module."""
+
     a = (14 - gm) // 12
     y = gy + 4800 - a
     m = gm + 12 * a - 3
@@ -85,6 +87,8 @@ def _gregorian_to_jdn(gy, gm, gd):
 
 
 def _jdn_to_gregorian(jdn):
+    """Convert a Julian Day Number to a Gregorian (year, month, day) tuple."""
+
     a = jdn + 32044
     b = (4 * a + 3) // 146097
     c = a - (146097 * b) // 4
@@ -98,10 +102,14 @@ def _jdn_to_gregorian(jdn):
 
 
 def _jalali_is_leap(jy):
+    """Return whether the Jalali year is leap under the module's 33-year-cycle calendar."""
+
     return ((jy - 1) % 33) in _CYCLE_LEAP_YEARS
 
 
 def _jdn_to_jalali(jdn):
+    """Convert a Julian Day Number to a Jalali (year, month, day) tuple."""
+
     days = jdn - _JALALI_EPOCH_JDN
     cycles = days // _CYCLE_DAYS
     rem = days % _CYCLE_DAYS
@@ -127,6 +135,8 @@ def _jdn_to_jalali(jdn):
 
 
 def _jalali_to_jdn(jy, jm, jd):
+    """Convert a Jalali calendar date to the corresponding Julian Day Number."""
+
     cycles = (jy - 1) // 33
     y = (jy - 1) % 33
     days = cycles * _CYCLE_DAYS
@@ -140,10 +150,14 @@ def _jalali_to_jdn(jy, jm, jd):
 
 
 def gregorian_to_jalali(gy, gm, gd):
+    """Expose the Gregorian-to-Jalali conversion as a public tuple-returning helper."""
+
     return _jdn_to_jalali(_gregorian_to_jdn(gy, gm, gd))
 
 
 def jalali_to_gregorian(jy, jm, jd):
+    """Expose the Jalali-to-Gregorian conversion as a public tuple-returning helper."""
+
     return _jdn_to_gregorian(_jalali_to_jdn(jy, jm, jd))
 
 
@@ -528,6 +542,8 @@ def _duplicate_ondate_source_ids(live):
     signature_ids = defaultdict(list)
 
     def _number(value):
+        """Normalise numeric signature values so equivalent source values compare consistently."""
+
         if value is None:
             return None
         try:
@@ -539,6 +555,8 @@ def _duplicate_ondate_source_ids(live):
             return str(value)
 
     def _flush():
+        """Evaluate the current endpoint-response group and exclude rows only when the strict duplicate rule passes."""
+
         nonlocal qualifying_groups
         if current_key is None or len(signature_counts) < 3:
             return
@@ -616,6 +634,8 @@ def _mirrored_source_snapshot_dates(live):
     endpoint_rows = {}
 
     def _flush():
+        """Mark the date as mirrored only when both endpoint snapshots have identical row multiplicities."""
+
         if current_key is None:
             return
         dated = endpoint_rows.get("shareholders_on_date")
@@ -624,6 +644,8 @@ def _mirrored_source_snapshot_dates(live):
             mirrored.add(current_key)
 
     def _number(value):
+        """Normalise source values before comparing signatures across endpoint snapshots."""
+
         if value is None:
             return None
         try:
@@ -1497,13 +1519,19 @@ def refresh_summaries(live, sidecar):
 # ---------------------------------------------------------------------------
 
 class ApiError(Exception):
+    """Represent an expected API failure with an HTTP status and a safe response detail."""
+
     def __init__(self, status, detail):
+        """Store an HTTP status code and a client-facing detail message on an API error."""
+
         super().__init__(detail)
         self.status = status
         self.detail = detail
 
 
 def _q_int(params, name, default, lo, hi):
+    """Parse a query parameter as an integer and clamp it to the caller-supplied bounds."""
+
     try:
         v = int(params.get(name, [str(default)])[0])
     except (TypeError, ValueError):
@@ -1512,11 +1540,15 @@ def _q_int(params, name, default, lo, hi):
 
 
 def _q_str(params, name, default=""):
+    """Read the first query-string value, returning the supplied default when it is absent."""
+
     v = params.get(name, [default])
     return v[0] if v else default
 
 
 def _like(s):
+    """Build a contains-style SQL LIKE pattern after removing user wildcard characters."""
+
     return "%" + str(s).replace("%", "").replace("_", "") + "%"
 
 
@@ -1524,6 +1556,8 @@ class SiteApi:
     """Holds the DB handles and serves every /api/v1/* endpoint."""
 
     def __init__(self, db_path, sidecar_path, site_dir, output_dir):
+        """Keep the database paths, asset paths, response cache, and refresh coordination state."""
+
         self.db_path = db_path
         self.sidecar_path = sidecar_path
         self.site_dir = site_dir
@@ -1534,6 +1568,8 @@ class SiteApi:
 
     # -- connections -----------------------------------------------------
     def live(self):
+        """Open the source database read-only and attach the sidecar exclusions for consistent reads."""
+
         con = open_live_db(self.db_path)
         # The sidecar stores source-proven duplicate rows. Attach it to every
         # read-only live connection so detail, history and portfolio queries
@@ -1546,16 +1582,22 @@ class SiteApi:
         return con
 
     def sidecar(self):
+        """Open the writable sidecar database and ensure its current schema is available."""
+
         con = open_sidecar_db(self.sidecar_path)
         con.executescript(SIDECAR_SCHEMA)
         return con
 
     def meta(self, con, key, default=None):
+        """Read one sidecar metadata value, returning a default when the key is missing."""
+
         row = con.execute(
             "SELECT value FROM site_meta WHERE key=?", (key,)).fetchone()
         return row[0] if row else default
 
     def refresh(self):
+        """Refresh materialised summaries unless the source fingerprint and schema markers prove they are current."""
+
         # Skip the rebuild when the live DB file has not changed since the
         # last successful refresh: the summaries are already current and a
         # rebuild of the 13.8M-row holdings table is expensive.
@@ -1621,6 +1663,8 @@ class SiteApi:
                 print("[refresh] FAILED: %r" % (e,), flush=True)
 
     def require_ready(self, sc):
+        """Reject API reads until a complete refresh has published both readiness markers."""
+
         # Ready only after a full refresh completed AND the expected ownership
         # resolver schema was materialised. This rejects both partial builds
         # and legacy v7 sidecars that still carry the old deduped_* layout.
@@ -1634,6 +1678,8 @@ class SiteApi:
                                if self._refresh_error else ""))
 
     def resolve_symbol(self, sc, symbol):
+        """Resolve a displayed symbol to its sidecar instrument row or raise a 404 API error."""
+
         row = self._resolve_symbol_row(sc, symbol)
         if row is None:
             raise ApiError(404, "نماد یافت نشد: %s" % symbol)
@@ -1641,6 +1687,8 @@ class SiteApi:
 
     # -- 1. Market dashboard ----------------------------------------------
     def market_overview(self):
+        """Return cached dashboard totals and the precomputed market activity panels."""
+
         now = time.time()
         if (self._overview_cache["payload"] is not None
                 and now - self._overview_cache["at"] < 300):
@@ -1687,6 +1735,8 @@ class SiteApi:
 
     # -- 2. Market watch ---------------------------------------------------
     def market_watch(self, params):
+        """Filter and page the market-watch rows using sidecar indexes and resolved ownership fields."""
+
         sc = self.sidecar()
         try:
             self.require_ready(sc)
@@ -1738,6 +1788,8 @@ class SiteApi:
 
     # -- 3. Stock search / detail ------------------------------------------
     def stocks_search(self, params):
+        """Search instrument symbols and company names using Persian/Arabic spelling variants."""
+
         sc = self.sidecar()
         try:
             self.require_ready(sc)
@@ -1769,12 +1821,16 @@ class SiteApi:
         return None
 
     def _company_daily(self, live, ins_code):
+        """Read the chronological company_daily disclosure rows for one instrument."""
+
         return live.execute(
             "SELECT date, disclosed_shareholder_count, "
             "  disclosed_ownership_percent_sum FROM company_daily "
             "WHERE ins_code=? ORDER BY date ASC", (ins_code,)).fetchall()
 
     def stock_detail(self, symbol):
+        """Assemble an instrument profile and its identity-resolved daily ownership history."""
+
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
@@ -1869,6 +1925,8 @@ class SiteApi:
         }
 
     def stock_shareholders(self, symbol, params):
+        """Load every non-excluded holding row for one instrument/date, then return its resolved holder groups and totals."""
+
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
@@ -2021,10 +2079,14 @@ class SiteApi:
         }
 
         def text_rep_key(value):
+            """Return a deterministic, NULL-aware ordering key for textual representative fields."""
+
             # Keep NULL distinct from an empty string, with a stable order.
             return (0, "") if value is None else (1, str(value))
 
         def numeric_rep_key(value):
+            """Return a deterministic numeric ordering key; invalid and non-finite values rank below valid numbers."""
+
             # Compare numeric source values numerically (not as strings:
             # lexicographic ordering would put "9" above "10"). Decimal
             # avoids binary-float ordering surprises and accepts numeric
@@ -2171,6 +2233,8 @@ class SiteApi:
         return out
 
     def stock_ownership_series(self, symbol, params):
+        """Build company-level and optional holder-level ownership series plus dated holding-change events."""
+
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
@@ -2199,6 +2263,8 @@ class SiteApi:
                           (w["ins_code"],)).fetchall()}
 
             def _pct_on_date(shares, date, row_total=None):
+                """Calculate a holder's ownership percentage from shares and that date's issued-share denominator."""
+
                 total = totals.get(date)
                 if total is None or total <= 0:
                     total = row_total
@@ -2301,6 +2367,8 @@ class SiteApi:
                 "events": events}
 
     def stock_corporate_actions(self, symbol):
+        """Return corporate actions and expose the event's capital-increase ratio where available."""
+
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
@@ -2338,6 +2406,8 @@ class SiteApi:
         return {"corporate_actions": out}
 
     def stock_data_quality(self, symbol):
+        """Return source data gaps and the latest reconciliation notes for one instrument."""
+
         sc = self.sidecar()
         try:
             w = self.resolve_symbol(sc, symbol)
@@ -2581,6 +2651,8 @@ class SiteApi:
         return rows[offset:offset + min(limit * 2, 200)]
 
     def shareholders_search(self, params):
+        """Search holder records, resolve only evidence-backed identities, and group results by investor."""
+
         sc = self.sidecar()
         try:
             self.require_ready(sc)
@@ -2626,6 +2698,8 @@ class SiteApi:
                 live, live, rows, tbl="sidecar.site_holder_latest")
 
             def _group_key(scheme, sh_id):
+                """Choose the stable identity key for a holder, preferring a linked share_id when one is evidenced."""
+
                 members = [(scheme, sh_id)]
                 raw = raw_map.get((scheme, sh_id))
                 if raw:
@@ -2722,6 +2796,8 @@ class SiteApi:
         return {"rows": out}
 
     def shareholder_observation_history(self, params):
+        """Return one holder's chronological observation history for the requested instrument."""
+
         symbol = _q_str(params, "symbol").strip()
         scheme = _q_str(params, "id_scheme").strip()
         sh_id = _q_str(params, "shareholder_id").strip()
@@ -2753,6 +2829,8 @@ class SiteApi:
 
     # -- 5. Investor portfolios ---------------------------------------------
     def portfolio_investors(self, params):
+        """Search the materialised investor index and rank candidates by linked or inferred record counts."""
+
         sc = self.sidecar()
         try:
             self.require_ready(sc)
@@ -3010,6 +3088,8 @@ class SiteApi:
         result is just the requested id (current behaviour).
         """
         def _parse_raw(raw):
+            """Parse the pipeline's comma-separated scheme:id member list, ignoring malformed tokens."""
+
             out = set()
             if not raw:
                 return out
@@ -3025,10 +3105,14 @@ class SiteApi:
             return out
 
         def _chunks(seq, n=400):
+            """Yield bounded slices so large identity closures stay below SQLite's bind-parameter limit."""
+
             for i in range(0, len(seq), n):
                 yield seq[i:i + n]
 
         def _raw_closure(seeds):
+            """Expand raw_source_ids links breadth-first, querying each frontier in bounded batches."""
+
             # Transitive closure over the pipeline's raw_source_ids
             # links, BATCHED by BFS level: one IN query per chunk of
             # the frontier instead of one point lookup per id. For the
@@ -3110,6 +3194,8 @@ class SiteApi:
         id_list = list(ids)
 
         def _chunks(seq, n=400):
+            """Yield chunks of identity pairs for bounded SQLite row-value IN queries."""
+
             for i in range(0, len(seq), n):
                 yield seq[i:i + n]
 
@@ -3183,6 +3269,8 @@ class SiteApi:
         return positions
 
     def portfolio_detail(self, investor_id, params):
+        """Reconstruct a holder's as-of portfolio, separating direct positions from inferred twins and valuing with non-future closes."""
+
         try:
             scheme, sh_id = investor_id.split(":", 1)
             sh_id = int(sh_id)
@@ -3419,6 +3507,8 @@ class SiteApi:
     _SCREEN_OPS = {">=", "<=", "=", ">", "<"}
 
     def _screener_query(self, body, limit):
+        """Build a parameterised screener query from the allow-listed field and operator maps."""
+
         logic = str(body.get("logic", "AND")).upper()
         if logic not in ("AND", "OR"):
             logic = "AND"
@@ -3475,6 +3565,8 @@ class SiteApi:
         return sql, args, limit
 
     def screener_query(self, body):
+        """Execute the screener query and return a JSON list of matching holder rows."""
+
         limit = max(1, min(500, int(body.get("limit", 100) or 100)))
         sql, args, _ = self._screener_query(body, limit)
         sc = self.sidecar()
@@ -3486,6 +3578,8 @@ class SiteApi:
             sc.close()
 
     def screener_export(self, body):
+        """Export the same screener result shape as a bounded CSV download."""
+
         limit = 5000
         sql, args, _ = self._screener_query(body, limit)
         sc = self.sidecar()
@@ -3507,6 +3601,8 @@ class SiteApi:
 
     # -- 7. Saved filters + watchlist (sidecar) ------------------------------
     def saved_filters_list(self):
+        """Return saved screener definitions in stable creation order."""
+
         sc = self.sidecar()
         try:
             rows = sc.execute(
@@ -3517,6 +3613,8 @@ class SiteApi:
             sc.close()
 
     def saved_filters_create(self, body):
+        """Validate and persist a named screener definition in the sidecar database."""
+
         name = str(body.get("name", "")).strip()
         if not name:
             raise ApiError(400, "نام فیلتر لازم است.")
@@ -3534,6 +3632,8 @@ class SiteApi:
             sc.close()
 
     def watchlist_get(self):
+        """Return watchlist symbols enriched with any available dashboard summary fields."""
+
         sc = self.sidecar()
         try:
             # LEFT JOIN: a symbol added from the companies table may have
@@ -3556,6 +3656,8 @@ class SiteApi:
             sc.close()
 
     def watchlist_add(self, body):
+        """Add a known instrument symbol to the sidecar watchlist without duplicating it."""
+
         symbol = str(body.get("symbol", "")).strip()
         if not symbol:
             raise ApiError(400, "نماد لازم است.")
@@ -3597,6 +3699,8 @@ class SiteApi:
             sc.close()
 
     def watchlist_remove(self, symbol):
+        """Remove a symbol from the sidecar watchlist."""
+
         sc = self.sidecar()
         try:
             with sc:
@@ -3630,6 +3734,8 @@ class SiteApi:
         return out
 
     def admin_overview(self):
+        """Summarise workbook discovery and current sidecar health for the admin dashboard."""
+
         sc = self.sidecar()
         try:
             self.require_ready(sc)
@@ -3655,6 +3761,8 @@ class SiteApi:
         }
 
     def admin_manifests(self, params):
+        """List output workbooks with a lightweight status inferred from their filenames."""
+
         status = _q_str(params, "status", "ALL")
         q = _q_str(params, "q").strip()
         limit = _q_int(params, "limit", 50, 1, 200)
@@ -3686,6 +3794,8 @@ class SiteApi:
         return {"rows": rows}
 
     def admin_errors(self, params):
+        """Return the most recent source validation issues for the admin error panel."""
+
         limit = _q_int(params, "limit", 30, 1, 200)
         live = self.live()
         try:
@@ -3704,6 +3814,8 @@ class SiteApi:
         } for r in rows]}
 
     def admin_identity_queue(self, params):
+        """Return identity-link candidates that still require review or resolution."""
+
         limit = _q_int(params, "limit", 30, 1, 200)
         live = self.live()
         try:
@@ -3728,6 +3840,8 @@ DEFAULT_OUTPUT = "E:\\tsetmc_holdings\\output"
 
 
 def _read_json_body(handler, limit=1024 * 1024):
+    """Read and decode a size-limited JSON request body, returning a 400 for malformed input."""
+
     length = int(handler.headers.get("Content-Length") or 0)
     if length > limit:
         raise ApiError(413, "بدنه درخواست بیش از حد بزرگ است.")
@@ -3739,14 +3853,20 @@ def _read_json_body(handler, limit=1024 * 1024):
 
 
 class Handler(BaseHTTPRequestHandler):
+    """HTTP adapter for static dashboard assets and the /api/v1 JSON/CSV API."""
+
     api = None  # set in main()
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
+        """Suppress the default HTTP server log; request logging is handled in _route."""
+
         pass  # keep stdout for our own concise request log
 
     # -- response helpers -------------------------------------------------
     def _send_json(self, status, payload):
+        """Serialise a response payload as UTF-8 JSON and write the standard CORS headers."""
+
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -3756,6 +3876,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_text(self, status, text, content_type):
+        """Write a UTF-8 text response with the caller-selected media type."""
+
         body = text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -3764,12 +3886,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # REVIEW NOTE: CORS is currently wildcarded and this server has no authentication;
+    # do not expose it beyond a trusted local environment in its current form.
     def _cors_headers(self):
+        """Emit the current permissive cross-origin headers used by the browser client."""
+
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
+    # REVIEW NOTE (P3-C01): this currently serves every file beneath site_dir and
+    # defaults non-JS/CSS files to text/html. Keep logs and private data outside site_dir;
+    # an attacker-controlled request path can poison a log that is later served as HTML.
     def _serve_file(self, path):
+        """Serve a file from site_dir after a path-containment check."""
+
         site_dir = os.path.abspath(self.api.site_dir)
         target = os.path.abspath(os.path.join(site_dir, path))
         if not target.startswith(site_dir + os.sep) and target != site_dir:
@@ -3796,21 +3927,33 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- routing ------------------------------------------------------------
     def do_OPTIONS(self):
+        """Handle browser CORS preflight requests without dispatching an API operation."""
+
         self.send_response(204)
         self._cors_headers()
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self):
+        """Route an incoming GET request through the shared HTTP request handler."""
+
         self._route("GET")
 
     def do_POST(self):
+        """Route an incoming POST request through the shared HTTP request handler."""
+
         self._route("POST")
 
     def do_DELETE(self):
+        """Route an incoming DELETE request through the shared HTTP request handler."""
+
         self._route("DELETE")
 
+    # REVIEW NOTE (P3-C01): the request path is URL-decoded before it is logged below.
+    # Encoded markup can therefore become literal HTML-like text in server.log.
     def _route(self, method):
+        """Decode the request path, resolve static assets or dispatch the matching API route, and log the result."""
+
         t0 = time.time()
         parsed = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(parsed.path)
@@ -3853,6 +3996,8 @@ class Handler(BaseHTTPRequestHandler):
                   flush=True)
 
     def _dispatch(self, method, path, params, body):
+        """Map the HTTP method and versioned API path to the corresponding SiteApi operation."""
+
         api = self.api
         seg = [s for s in path.split("/") if s]
         # seg: ['api','v1', ...]
@@ -3923,6 +4068,8 @@ class Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 def main():
+    """Parse CLI configuration, verify required paths, start background refreshes, and serve HTTP requests."""
+
     # The DB path contains Persian characters; the Windows console default
     # (cp1252) cannot print them, which used to crash startup before the
     # first refresh. Force UTF-8 on both streams.
@@ -3979,6 +4126,8 @@ def main():
 
     if args.refresh_minutes and args.refresh_minutes > 0:
         def _loop():
+            """Periodically rebuild sidecar summaries while the configured refresh interval remains active."""
+
             while True:
                 time.sleep(args.refresh_minutes * 60)
                 api.refresh()

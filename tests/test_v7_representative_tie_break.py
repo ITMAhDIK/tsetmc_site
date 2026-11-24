@@ -6,7 +6,11 @@ from server import SiteApi
 
 
 class RepresentativeTieBreakTests(unittest.TestCase):
+    """Regression coverage for deterministic selection of a representative source row within a resolved holder group."""
+
     def setUp(self):
+        """Build a minimal live database and two verified source IDs that resolve to one canonical holder."""
+
         self.live = sqlite3.connect(":memory:")
         self.live.row_factory = sqlite3.Row
         self.live.executescript("""
@@ -34,10 +38,14 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         self.api = object.__new__(SiteApi)
 
     def tearDown(self):
+        """Close the in-memory source database after the test."""
+
         self.live.close()
 
     @staticmethod
     def row(scheme, holder_id, change, price, market_value):
+        """Create a source-row fixture with display, ownership, and valuation fields for the resolver."""
+
         return {
             "id_scheme": scheme,
             "shareholder_id": holder_id,
@@ -56,6 +64,8 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         }
 
     def resolve(self, rows):
+        """Resolve the supplied source rows and assert the fixture produces exactly one holder group."""
+
         result = self.api._resolve_date_rows(
             self.live, "INS1", "2026-11-20", rows
         )
@@ -64,6 +74,8 @@ class RepresentativeTieBreakTests(unittest.TestCase):
 
     def assert_same_representative(self, first, second, expected_field,
                                    expected_value):
+        """Assert representative fields are stable under input-order reversal and match the expected winner."""
+
         forward = self.resolve([first, second])
         reverse = self.resolve([second, first])
         self.assertEqual(
@@ -86,6 +98,8 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         self.assertEqual(reverse["ownership_percent"], 25.0)
 
     def test_equal_rank_and_name_choose_same_representative_in_any_row_order(self):
+        """Verify deterministic tie-breaking when identity rank and name are equal."""
+
         first = self.row("holder_id", 11, 2, 100, 2500000)
         second = self.row("share_id", 22, 3, 200, 5000000)
 
@@ -97,6 +111,8 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         self.assertEqual(forward["market_value"], 5000000)
 
     def test_numeric_strings_and_multi_digit_values_use_numeric_order(self):
+        """Verify numeric strings are compared numerically rather than lexicographically."""
+
         first = self.row("holder_id", 11, 9, 100, 2500000)
         second = self.row("share_id", 22, "10", 100, 2500000)
 
@@ -105,6 +121,8 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         )
 
     def test_negative_and_decimal_values_use_numeric_order(self):
+        """Verify negative and decimal representative values use Decimal ordering."""
+
         negative_low = self.row("holder_id", 11, -10, 100, 2500000)
         negative_high = self.row("share_id", 22, -2, 100, 2500000)
         self.assert_same_representative(
@@ -120,6 +138,8 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         )
 
     def test_missing_and_invalid_numeric_values_sort_below_valid_numbers(self):
+        """Verify NULL, malformed, and non-finite values lose to valid numeric values."""
+
         missing = self.row("holder_id", 11, None, 100, 2500000)
         zero = self.row("share_id", 22, 0, 100, 2500000)
         self.assert_same_representative(
@@ -139,6 +159,8 @@ class RepresentativeTieBreakTests(unittest.TestCase):
         )
 
     def test_none_and_empty_text_have_stable_distinct_ordering(self):
+        """Verify NULL text and an empty string remain distinct and order deterministically."""
+
         missing = self.row("holder_id", 11, 2, 100, 2500000)
         empty = self.row("share_id", 22, 2, 100, 2500000)
         missing["shareholder_type"] = None

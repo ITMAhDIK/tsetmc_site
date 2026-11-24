@@ -8,7 +8,11 @@ from tools.audit_ownership_source import audit_source
 
 
 class OwnershipSourceAuditTests(unittest.TestCase):
+    """Exercise the read-only ownership audit against small, controlled SQLite fixtures."""
+
     def setUp(self):
+        """Create a temporary SQLite source fixture with duplicate keys and conflicting identity links."""
+
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "holdings.sqlite"
         con = sqlite3.connect(self.db_path)
@@ -43,9 +47,13 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         con.close()
 
     def tearDown(self):
+        """Remove the temporary database directory after each test."""
+
         self.temp.cleanup()
 
     def test_detects_duplicate_keys_raw_over_100_and_canonical_conflict(self):
+        """Verify the audit reports duplicate source keys, raw totals over 100%, and canonical share conflicts."""
+
         report = audit_source(self.db_path)
         checks = report["checks"]
         self.assertTrue(report["read_only"])
@@ -60,6 +68,8 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         )
 
     def test_same_date_percentage_recalculation_passes_for_fixture_rows(self):
+        """Verify reported and pipeline percentages match the fixture's same-date denominator."""
+
         report = audit_source(self.db_path)
         pct = report["checks"]["percentage_recalculation"]
         self.assertEqual(
@@ -70,6 +80,8 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         )
 
     def test_audit_does_not_change_source_rows(self):
+        """Verify that running the audit leaves the source holdings row count unchanged."""
+
         with closing(sqlite3.connect(self.db_path)) as con:
             before = con.execute(
                 "SELECT COUNT(*) FROM shareholder_holdings"
@@ -83,6 +95,8 @@ class OwnershipSourceAuditTests(unittest.TestCase):
 
 
     def test_denominator_disagreement_and_percentage_mismatch_are_reported(self):
+        """Verify denominator-source disagreement and a deliberately incorrect reported percentage are surfaced."""
+
         with closing(sqlite3.connect(self.db_path)) as con:
             con.execute(
                 "UPDATE company_daily SET total_company_shares=90 "
@@ -101,6 +115,8 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         )
 
     def test_holdings_denominator_is_used_when_company_daily_total_is_absent(self):
+        """Verify the audit falls back to a positive holdings denominator when company_daily has none."""
+
         with closing(sqlite3.connect(self.db_path)) as con:
             con.execute("DELETE FROM company_daily")
             con.commit()
@@ -114,6 +130,8 @@ class OwnershipSourceAuditTests(unittest.TestCase):
         )
 
     def test_invalid_sample_limit_is_rejected(self):
+        """Verify sample limits outside the supported range are rejected before querying."""
+
         with self.assertRaises(ValueError):
             audit_source(self.db_path, sample_limit=0)
 

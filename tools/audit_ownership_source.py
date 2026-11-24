@@ -16,6 +16,8 @@ from typing import Any
 
 
 def _readonly_uri(path: str | Path) -> str:
+    """Resolve and validate the SQLite path, then return a URI that opens the database read-only."""
+
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
         raise FileNotFoundError(f"Database not found: {resolved}")
@@ -23,16 +25,22 @@ def _readonly_uri(path: str | Path) -> str:
 
 
 def _tables(con: sqlite3.Connection) -> set[str]:
+    """Return the names of user tables present in the connected SQLite database."""
+
     return {r[0] for r in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
 
 
 def _columns(con: sqlite3.Connection, table: str) -> set[str]:
+    """Return the column names for one known table using SQLite schema metadata."""
+
     return {r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}
 
 
 def _query_report(con: sqlite3.Connection, sql: str,
                   sample_limit: int) -> dict[str, Any]:
+    """Count all rows produced by an audit query and retain only a bounded sample for the report."""
+
     count = con.execute(
         "SELECT COUNT(*) FROM (" + sql + ") AS audit_rows").fetchone()[0]
     samples = [dict(r) for r in con.execute(
@@ -41,7 +49,16 @@ def _query_report(con: sqlite3.Connection, sql: str,
 
 
 def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
-    """Audit source ownership data without modifying the database."""
+    """Audit source ownership data without modifying the database.
+
+    Args:
+        db_path: Path to the source holdings SQLite database.
+        sample_limit: Maximum number of representative rows retained per check.
+
+    Returns:
+        A JSON-serialisable report containing source counts, diagnostic checks,
+        bounded samples, and interpretation notes. The source connection is read-only.
+    """
     if sample_limit < 1 or sample_limit > 500:
         raise ValueError("sample_limit must be between 1 and 500")
 
@@ -75,6 +92,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
         date_count = con.execute(
             "SELECT COUNT(DISTINCT date) FROM shareholder_holdings").fetchone()[0]
 
+        # Check repeated source keys before any identity resolution or row exclusion.
         duplicate_source_keys = _query_report(con, """
             SELECT ins_code, date, id_scheme, shareholder_id,
                    COUNT(*) AS row_count,
@@ -86,6 +104,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             ORDER BY row_count DESC, ins_code, date
         """, sample_limit)
 
+        # Check whether the daily company table supplies one consistent issued-share total per date.
         company_denominator_conflicts = _query_report(con, """
             SELECT ins_code, date,
                    COUNT(DISTINCT total_company_shares) AS distinct_totals,
@@ -112,6 +131,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             ORDER BY distinct_totals DESC, ins_code, date
         """, sample_limit)
 
+        # Compare the company_daily and holdings denominator sources for the same symbol/date.
         denominator_source_disagreements = _query_report(con, """
             WITH cd AS (
                 SELECT ins_code, date,
@@ -138,6 +158,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             ORDER BY cd.ins_code, cd.date
         """, sample_limit)
 
+        # Identify dates for which neither source provides a usable positive denominator.
         dates_without_positive_denominator = _query_report(con, """
             WITH dates AS (
                 SELECT DISTINCT ins_code, date FROM shareholder_holdings
@@ -160,6 +181,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             ORDER BY dates.ins_code, dates.date
         """, sample_limit)
 
+        # This raw total is deliberately pre-resolution; values above 100% are diagnostic, not proof of over-ownership.
         raw_share_totals_over_100 = _query_report(con, """
             WITH totals AS (
                 SELECT ins_code, date,
@@ -194,6 +216,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             ORDER BY raw_percent_before_identity_resolution DESC
         """, sample_limit)
 
+        # Recalculate reported and pipeline percentages from shares / same-date issued shares.
         percent_audit: dict[str, Any] = {}
         if "ownership_percent" in hcols:
             percent_audit["reported_percent_vs_same_date_shares"] = _query_report(
@@ -277,6 +300,7 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
             percent_audit["pipeline_calc_vs_same_date_shares"] = {
                 "skipped": "shareholder_holdings.ownership_percent_calc is absent"}
 
+        # Inspect canonical-link duplicates and quantity conflicts without choosing a winning row.
         xref_audit: dict[str, Any] = {"available": "shareholder_id_xref" in tables}
         if "shareholder_id_xref" in tables:
             xcols = _columns(con, "shareholder_id_xref")
@@ -363,6 +387,8 @@ def audit_source(db_path: str | Path, sample_limit: int = 25) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Parse command-line options, run the read-only audit, and print or write its JSON report."""
+
     parser = argparse.ArgumentParser(
         description="Read-only audit of raw TSETMC ownership data.")
     parser.add_argument("--db", required=True,
