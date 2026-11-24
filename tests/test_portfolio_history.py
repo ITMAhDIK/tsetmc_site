@@ -90,8 +90,8 @@ def test_first_observation_and_capital_action_precedence():
 
 def test_linked_identity_quantity_conflict_is_not_valued():
     rows = [
-        _row("2024-01-01", "X", 10, id_scheme="share_id", shareholder_id=1),
-        _row("2024-01-01", "X", 12, id_scheme="holder_id", shareholder_id=2),
+        _row("2024-01-01", "X", None, identity_conflict=True,
+             shares_change=None, reference_price=None),
         _row("2024-01-01", "Y", 10),
     ]
     summary, symbols, series = build_portfolio_history_summary(rows)
