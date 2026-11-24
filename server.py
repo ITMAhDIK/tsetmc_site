@@ -3915,19 +3915,24 @@ class SiteApi:
             if historical_symbols:
                 ins_codes = list(dict.fromkeys(
                     item["ins_code"] for item in historical_symbols if item.get("ins_code")))
-                placeholders = ",".join("?" for _ in ins_codes)
-                date_sql = (
-                    "SELECT ins_code, MAX(date) AS latest_date FROM company_daily "
-                    "WHERE ins_code IN (%s)" % placeholders)
-                date_args = list(ins_codes)
-                if as_of_dashed:
-                    date_sql += " AND date<=?"
-                    date_args.append(as_of_dashed)
-                date_sql += " GROUP BY ins_code"
-                latest_company_dates = {
-                    row["ins_code"]: _norm_date(row["latest_date"])
-                    for row in live.execute(date_sql, date_args).fetchall()
-                }
+                latest_company_dates = {}
+                # Stay below SQLite's bound-parameter limit even for investors
+                # with unusually broad historical portfolios.
+                for start in range(0, len(ins_codes), 500):
+                    part = ins_codes[start:start + 500]
+                    placeholders = ",".join("?" for _ in part)
+                    date_sql = (
+                        "SELECT ins_code, MAX(date) AS latest_date FROM company_daily "
+                        "WHERE ins_code IN (%s)" % placeholders)
+                    date_args = list(part)
+                    if as_of_dashed:
+                        date_sql += " AND date<=?"
+                        date_args.append(as_of_dashed)
+                    date_sql += " GROUP BY ins_code"
+                    latest_company_dates.update({
+                        row["ins_code"]: _norm_date(row["latest_date"])
+                        for row in live.execute(date_sql, date_args).fetchall()
+                    })
                 for item in historical_symbols:
                     latest_date = latest_company_dates.get(item["ins_code"])
                     item["latest_company_observation_date"] = latest_date
