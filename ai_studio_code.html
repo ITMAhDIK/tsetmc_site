@@ -1348,7 +1348,6 @@
             method: 'POST',
             body: JSON.stringify({
               username, password, display_name: displayName || username,
-              email: email || null, phone: phone || null,
               referral_code: referralCode || null, remember,
             }),
           });
@@ -1552,16 +1551,9 @@
                     <input value={displayName} onChange={e => setDisplayName(e.target.value)}
                       className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
                   </label>
-                  <label className="text-xs">ایمیل (اختیاری)
-                    <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                      autoComplete="email"
-                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
-                  </label>
-                  <label className="text-xs">شماره همراه (اختیاری)
-                    <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="0912..."
-                      autoComplete="tel"
-                      className="mt-1 w-full p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]" />
-                  </label>
+                  <div className="md:col-span-2 text-[10px] text-[var(--text-secondary)]">
+                    برای ورود با Gmail از دکمه Google و برای ساخت حساب با شماره همراه از ورود پیامکی استفاده کنید تا مالکیت راه ارتباطی تأیید شود.
+                  </div>
                   <label className="text-xs">رمز عبور (حداقل ۱۰ نویسه)
                     <input type="password" value={password} onChange={e => setPassword(e.target.value)}
                       minLength={10} autoComplete="new-password" required
