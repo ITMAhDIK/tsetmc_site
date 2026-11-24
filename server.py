@@ -3573,8 +3573,10 @@ class SiteApi:
             sql = (
                 "SELECT h.*, "
                 "CASE WHEN h.price IS NOT NULL AND h.price>0 "
+                "AND (h.price_date IS NULL OR h.price_date<=h.date) "
                 "THEN h.price ELSE tp.p_closing END AS reference_price, "
                 "CASE WHEN h.price IS NOT NULL AND h.price>0 "
+                "AND (h.price_date IS NULL OR h.price_date<=h.date) "
                 "THEN COALESCE(h.price_date,h.date) ELSE tp.date END AS reference_price_date "
                 "FROM sidecar_data.site_holder_history h "
                 "LEFT JOIN trading_days tp "
