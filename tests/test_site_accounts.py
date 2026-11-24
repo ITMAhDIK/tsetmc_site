@@ -198,12 +198,50 @@ def test_account_route_matcher_is_scoped():
     assert not AccountService.handles("/api/v1/stocks/ABC/prices")
 
 
-def test_phone_login_accepts_local_09xx_format(service):
-    user_id = service.register({
-        "username": "phone_login_01",
-        "password": "phone-login-password-123",
-        "phone": "09121234567",
-    })
+def test_registration_rejects_unverified_phone_or_email(service):
+    with pytest.raises(AccountError) as phone_error:
+        service.register({
+            "username": "phone_claim_01",
+            "password": "phone-claim-password-123",
+            "phone": "09121234567",
+        })
+    assert phone_error.value.status == 400
+
+    with pytest.raises(AccountError) as email_error:
+        service.register({
+            "username": "email_claim_01",
+            "password": "email-claim-password-123",
+            "email": "person@example.com",
+        })
+    assert email_error.value.status == 400
+
+
+def test_verified_phone_accepts_local_and_international_login_formats(service):
+    phone = "+989121234567"
+    code = "123456"
+    con = service._connect()
+    try:
+        with con:
+            now = utc_now()
+            con.execute(
+                "INSERT INTO site_otp_challenges(phone,code_hash,referral_code,"
+                "attempts,expires_at,created_at) VALUES (?,?,NULL,0,?,?)",
+                (phone, service._token_hash(code),
+                 (now + timedelta(minutes=5)).isoformat(timespec="seconds"),
+                 now.isoformat(timespec="seconds")),
+            )
+    finally:
+        con.close()
+
+    user_id = service.verify_otp({"phone": phone, "code": code})
+    con = service._connect()
+    try:
+        with con:
+            con.execute("UPDATE site_users SET password_hash=? WHERE id=?",
+                        (service._password_hash("phone-login-password-123"), user_id))
+    finally:
+        con.close()
+
     assert service.login({
         "identifier": "09121234567",
         "password": "phone-login-password-123",
