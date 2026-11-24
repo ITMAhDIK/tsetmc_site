@@ -282,6 +282,9 @@ def main() -> int:
     investors: dict[str, dict[str, Any]] = {}
     symbol_latest_date: dict[str, str] = {}
     symbol_latest_label: dict[str, str] = {}
+    company_names: dict[str, str | None] = {}
+    company_histories: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    price_observations: dict[str, dict[str, set[float]]] = defaultdict(lambda: defaultdict(set))
     diagnostics = {
         "shareholder_types": Counter(),
         "identity_statuses": Counter(),
@@ -301,12 +304,44 @@ def main() -> int:
         company_rows = read_sheet(path, "company_history")
         shareholder_rows = read_sheet(path, "shareholders")
         history_rows = read_sheet(path, "holdings_history")
+        metadata_rows = read_sheet(path, "metadata")
+        metadata = {
+            text_value(row.get("key")): row.get("value")
+            for row in metadata_rows if text_value(row.get("key"))
+        }
+        name_keys = ("company_name", "instrument_name", "lval30", "name", "full_name", "company")
+        company_name = next(
+            (text_value(metadata.get(key)) for key in name_keys if text_value(metadata.get(key))),
+            None,
+        )
 
         for company_row in company_rows:
             candidate = iso_date(company_row.get("date_gregorian")) or iso_date(company_row.get("date"))
             if candidate and (ins_code not in symbol_latest_date or candidate > symbol_latest_date[ins_code]):
                 symbol_latest_date[ins_code] = candidate
             symbol_latest_label[ins_code] = text_value(company_row.get("symbol")) or symbol_from_name
+            company_name = (
+                text_value(company_row.get("company_name"))
+                or text_value(company_row.get("instrument_name"))
+                or company_name
+            )
+            if candidate:
+                company_histories[ins_code].append({
+                    "date": candidate,
+                    "total_company_shares": number(company_row.get("total_company_shares")),
+                    "disclosed_shareholder_count": number(company_row.get("disclosed_shareholder_count")),
+                    "total_shareholder_count": number(company_row.get("total_shareholder_count")),
+                    "disclosed_shares_sum": number(company_row.get("disclosed_shares_sum")),
+                    "disclosed_ownership_percent_sum": number(company_row.get("disclosed_ownership_percent_sum")),
+                    "corporate_action": text_value(company_row.get("corporate_action")),
+                })
+        company_names[ins_code] = company_name
+
+        for source_row in history_rows:
+            price = number(source_row.get("price"))
+            price_date = iso_date(source_row.get("price_date")) or iso_date(source_row.get("date_gregorian")) or iso_date(source_row.get("date"))
+            if price is not None and price > 0 and price_date:
+                price_observations[ins_code][price_date].add(price)
 
         metadata_by_pair = {}
         for holder in shareholder_rows:
@@ -504,6 +539,11 @@ def main() -> int:
                 "last_observation_shares_change": last.get("shares_change"),
                 "observations_count": len(records),
                 "exit_status": exit_status,
+                "group_code": registry.get(ins_code, {}).get("cSecVal"),
+                "group_label": registry.get(ins_code, {}).get("lSecVal"),
+                "subgroup_code": registry.get(ins_code, {}).get("cSoSecVal"),
+                "subgroup_label": registry.get(ins_code, {}).get("lSoSecVal"),
+                "company_name": company_names.get(ins_code),
             })
 
         # Reuse the project's production affinity scoring engine, with the selected
@@ -580,6 +620,9 @@ def main() -> int:
             (row["ownership_pct"] for row in timeline if row.get("ownership_pct") is not None),
             default=None,
         )
+        open_positions_count = sum(
+            1 for item in symbol_items if item["exit_status"] == "currently_disclosed"
+        )
         final_investors.append({
             "id": investor["id"],
             "id_scheme": investor["id_scheme"],
@@ -594,6 +637,7 @@ def main() -> int:
             "source_ids": sorted(investor.get("source_ids", {}).values(), key=lambda x: (x["id_scheme"], x["shareholder_id"])),
             "identity_link_evidence": investor.get("identity_link_evidence", {}),
             "n_companies": len(symbol_items),
+            "open_positions_count": open_positions_count,
             "latest_observation_date": max((r["date"] for r in timeline), default=None),
             "current_portfolio_value_rial": engine_value,
             "portfolio_value_date": affinity.get("latest_valued_date"),
@@ -615,6 +659,62 @@ def main() -> int:
     final_investors.sort(key=lambda item: (
         item["n_companies"], item["current_portfolio_value_rial"] or 0
     ), reverse=True)
+
+    companies = {}
+    for path in files:
+        symbol_from_name, ins_code = workbook_identity(path)
+        history = sorted(company_histories.get(ins_code, []), key=lambda row: row["date"])
+        latest = history[-1] if history else {}
+        prices = []
+        for price_date, values in sorted(price_observations.get(ins_code, {}).items()):
+            # A conflicting reference price on the same date is not silently chosen.
+            if len(values) == 1:
+                prices.append({"date": price_date, "price_rial": next(iter(values))})
+            else:
+                prices.append({"date": price_date, "price_rial": None, "conflict": True})
+        symbol = symbol_latest_label.get(ins_code) or symbol_from_name
+        latest_date = latest.get("date")
+        company_shareholders = []
+        if latest_date:
+            for person in final_investors:
+                for row in person.get("timeline", []):
+                    if row.get("ins_code") == ins_code and row.get("date") == latest_date and row.get("shares") is not None:
+                        company_shareholders.append({
+                            "investor_id": person["id"],
+                            "shareholder_name": person["shareholder_name"],
+                            "shareholder_type": person["shareholder_type"],
+                            "shares": row.get("shares"),
+                            "ownership_pct": row.get("ownership_pct"),
+                            "market_value_rial": row.get("market_value_rial"),
+                            "open_positions_count": person.get("open_positions_count", 0),
+                        })
+        companies[ins_code] = {
+            "ins_code": ins_code,
+            "symbol": symbol,
+            "company_name": company_names.get(ins_code),
+            "group_code": registry.get(ins_code, {}).get("cSecVal"),
+            "group_label": registry.get(ins_code, {}).get("lSecVal"),
+            "subgroup_code": registry.get(ins_code, {}).get("cSoSecVal"),
+            "subgroup_label": registry.get(ins_code, {}).get("lSoSecVal"),
+            "latest_snapshot": latest,
+            "history": history,
+            "price_series": prices,
+            "shareholders": sorted(company_shareholders, key=lambda row: row.get("market_value_rial") or 0, reverse=True),
+        }
+
+    universe = [
+        {
+            "ins_code": ins_code,
+            "symbol": item.get("symbol"),
+            "group_code": item.get("cSecVal"),
+            "group_label": item.get("lSecVal"),
+            "subgroup_code": item.get("cSoSecVal"),
+            "subgroup_label": item.get("lSoSecVal"),
+            "company_name": companies.get(ins_code, {}).get("company_name"),
+            "has_sample_detail": ins_code in companies,
+        }
+        for ins_code, item in registry.items()
+    ]
 
     if not all_dates:
         raise SystemExit("No usable Gregorian observation dates found in workbook histories.")
@@ -672,6 +772,8 @@ def main() -> int:
         },
         "summary": summary,
         "investors": final_investors,
+        "companies": companies,
+        "official_universe": universe,
     }
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
