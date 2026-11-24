@@ -840,6 +840,16 @@
               </div>
             )}
 
+            <div className="px-3 pt-3 flex flex-wrap items-center gap-3 text-[10px]">
+              <span className="text-[var(--text-secondary)]">
+                پوشش طبقه‌بندی بر اساس ارزش بازار:
+                <strong className="text-[var(--text-primary)] mr-1">{fmtPct((groups || []).reduce((sum,g)=>sum+(Number(g.market_value_rial)||0),0) > 0
+                  ? ((groups.filter(g=>!['سایر / طبقه‌بندی‌نشده'].includes(g.label))
+                    .reduce((sum,g)=>sum+(Number(g.market_value_rial)||0),0) /
+                    (groups || []).reduce((sum,g)=>sum+(Number(g.market_value_rial)||0),0))*100) : 0, 2)}</strong>
+              </span>
+              <span className="text-[var(--text-muted)]">گروه «سایر» شامل ابزارهای فاقد کد رسمی در رجیستری فعلی است.</span>
+            </div>
             <div className="p-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
               {groups.length === 0 ? (
                 <div className="text-xs text-[var(--text-secondary)] p-5">اطلاعات دسته‌بندی رسمی هنوز روی سرور نصب نشده است.</div>
@@ -1081,6 +1091,160 @@
                 : <span>ابزارهای ترسیم برای اشتراک Premium فعال است.</span>}
             </div>
           </section>
+        </div>
+      );
+    }
+
+    // --- 6. Premium investor sector-interest analysis (aggregate only) ---
+    function InvestorAffinityPage({ theme, currency }) {
+      const [scheme, setScheme] = useState('share_id');
+      const [rawId, setRawId] = useState('');
+      const [result, setResult] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const runAnalysis = async (event) => {
+        event.preventDefault();
+        const digits = String(rawId || '').replace(/[^\d]/g, '');
+        if (!digits) { setError('شناسه عددی را وارد کنید.'); return; }
+        setLoading(true); setError(''); setResult(null);
+        try {
+          const key = scheme + ':' + digits;
+          const data = await apiFetch('/api/v1/analytics/sector-affinity?investor_id=' +
+            encodeURIComponent(key));
+          setResult(data);
+        } catch (e) { setError(e.message); }
+        finally { setLoading(false); }
+      };
+
+      const groups = result && result.groups ? result.groups : [];
+      const quality = result && result.data_quality ? result.data_quality : {};
+      const history = result && result.history ? result.history : [];
+      const historySeries = history.filter(row => row.total_value_rial !== null)
+        .map(row => ({ time: row.date, value: row.total_value_rial }));
+      const directionLabel = value => value === 'increasing' ? 'افزایش'
+        : value === 'decreasing' ? 'کاهش' : 'خنثی';
+
+      return (
+        <div className="space-y-4 max-w-6xl mx-auto">
+          <div>
+            <div className="text-[11px] text-blue-400">ابزار اختصاصی Premium</div>
+            <h1 className="text-xl font-bold mt-1">تحلیل گرایش سرمایه‌گذار به صنایع</h1>
+            <p className="text-xs text-[var(--text-secondary)] mt-1">
+              فقط سهم گروه‌ها از ارزش پرتفوی و شاخص علاقه‌مندی نشان داده می‌شود؛ نام اشخاص، نمادهای داخل پرتفوی، تعداد سهام و شناسه‌های پیوندخورده نمایش داده نمی‌شوند.
+            </p>
+          </div>
+          <form onSubmit={runAnalysis} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 flex flex-wrap items-end gap-3">
+            <label className="text-xs">
+              <span className="block mb-1.5 text-[var(--text-secondary)]">نوع شناسه</span>
+              <select value={scheme} onChange={e => setScheme(e.target.value)}
+                className="p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)]">
+                <option value="holder_id">شناسه holder_id</option>
+                <option value="share_id">شناسه share_id</option>
+                <option value="ondate_share_id">شناسه ondate_share_id</option>
+              </select>
+            </label>
+            <label className="flex-1 min-w-48 text-xs">
+              <span className="block mb-1.5 text-[var(--text-secondary)]">شناسه عددی</span>
+              <input value={rawId} onChange={e => setRawId(e.target.value)}
+                inputMode="numeric" required placeholder="فقط بخش عددی شناسه"
+                className="w-full p-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] num" />
+            </label>
+            <button disabled={loading} className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-50">
+              {loading ? 'در حال محاسبه تحلیل...' : 'محاسبه گرایش صنایع'}
+            </button>
+          </form>
+          <ErrorBox error={error} />
+
+          {loading && <div className="p-8 text-center text-xs text-[var(--text-secondary)]">در حال محاسبه تحلیل از تاریخچه مشاهدات...</div>}
+
+          {result && (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                {[
+                  ['ارزش پرتفوی مشاهده‌شده', result.current_portfolio_value_rial === null
+                    ? '—' : fmtMoney(result.current_portfolio_value_rial, currency)],
+                  ['آخرین مشاهده', result.latest_observation_date
+                    ? fmtGregorianDate(result.latest_observation_date) : '—'],
+                  ['اطمینان کلی تحلیل', fmtPct(quality.confidence_score == null
+                    ? null : quality.confidence_score * 100, 1)],
+                  ['پوشش ارزش‌گذاری', fmtPct(quality.valuation_coverage_pct, 1)],
+                ].map(([label,value]) => (
+                  <div key={label} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+                    <div className="text-[10px] text-[var(--text-secondary)]">{label}</div>
+                    <div className="font-bold text-sm mt-1">{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                <div className="p-3 border-b border-[var(--border-subtle)]">
+                  <h2 className="font-bold text-sm">روند ارزش پرتفوی افشاشده</h2>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+                    مجموع ارزش فقط از موقعیت‌هایی محاسبه می‌شود که در همان تاریخ مقدار و قیمت معتبر داشته‌اند؛ داده به روزهای فاقد مشاهده منتقل نمی‌شود.
+                  </p>
+                </div>
+                <div className="p-2">
+                  <LWChart data={historySeries} type="area" height={360}
+                    theme={theme} unitLabel="ریال" enableDrawing={false}
+                    persistKey={'investor-affinity-' + scheme + '-' + rawId} />
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                <div className="p-3 border-b border-[var(--border-subtle)]">
+                  <h2 className="font-bold text-sm">رتبه‌بندی علاقه‌مندی گروه‌های صنعتی</h2>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+                    امتیاز ترکیبی از وزن فعلی، تمایل تاریخی و تغییر خالص مشاهده‌شده است؛ تغییر افشای سهام‌داری اثبات معامله واقعی نیست.
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-right">
+                    <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                      <tr>
+                        <th className="p-3">گروه رسمی بورس</th>
+                        <th className="p-3">امتیاز علاقه‌مندی</th>
+                        <th className="p-3">وزن فعلی</th>
+                        <th className="p-3">گرایش تاریخی</th>
+                        <th className="p-3">تغییر خالص اخیر</th>
+                        <th className="p-3">جهت</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)]">
+                      {groups.map((group,index) => (
+                        <tr key={group.label + '-' + index}>
+                          <td className="p-3 font-semibold">{group.label || 'گروه نامشخص'}</td>
+                          <td className="p-3 num font-bold">{fmtNum(group.interest_score)}</td>
+                          <td className="p-3 num">{fmtPct(group.current_weight_pct,2)}</td>
+                          <td className="p-3 num">{fmtPct(group.historical_affinity_pct,2)}</td>
+                          <td className="p-3 num">{fmtPct(group.recent_net_change_pct_of_portfolio,2)}</td>
+                          <td className="p-3">{directionLabel(group.rotation_direction)}</td>
+                        </tr>
+                      ))}
+                      {groups.length === 0 && <tr><td colSpan="6" className="p-5 text-center text-[var(--text-secondary)]">گروه طبقه‌بندی‌شده‌ای برای نمایش نیست.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                {[
+                  ['پوشش طبقه‌بندی صنایع', quality.sector_classification_coverage_pct],
+                  ['اطمینان هویت', quality.identity_confidence_pct],
+                  ['پوشش شواهد تغییر خالص', quality.rotation_evidence_coverage_pct],
+                ].map(([label,value]) => (
+                  <div key={label} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+                    <div className="text-[10px] text-[var(--text-secondary)]">{label}</div>
+                    <div className="font-bold num mt-1">{fmtPct(value,1)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-[var(--text-muted)]">
+                وضعیت تحلیل: {result.status || 'نامشخص'} · وزن امتیاز: تخصیص فعلی ۵۰٪، گرایش تاریخی ۳۰٪، تغییر خالص اخیر ۲۰٪.
+                این نمودار ارزش روزانه خالص دارایی نیست و فقط تاریخ‌های افشای قابل ارزش‌گذاری را نشان می‌دهد.
+              </div>
+            </>
+          )}
         </div>
       );
     }
@@ -2030,6 +2194,8 @@
 
       const availablePages = [
         ...NAV_PAGES,
+        ...(user && user.is_premium
+          ? [{ id: 'investor-affinity', label: 'تحلیل گرایش صنایع' }] : []),
         ...(user && ['admin','super_admin'].includes(user.role)
           ? [{ id: 'site-admin', label: 'مدیریت کاربران و پشتیبانی' }] : []),
         ...(user && user.role === 'super_admin'
@@ -2119,6 +2285,8 @@
               <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode="jalali" user={user} />}
             {page === 'account' &&
               <AccountAndPlansPage user={user} setUser={setUser} onOpenAdmin={openAdmin} />}
+            {page === 'investor-affinity' && user && user.is_premium &&
+              <InvestorAffinityPage theme={theme} currency={currency} />}
             {page === 'site-admin' && user && ['admin','super_admin'].includes(user.role) &&
               <SiteAdminDashboardPage user={user} />}
             {page === 'admin' && user && user.role === 'super_admin' &&
