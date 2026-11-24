@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import hashlib
 import sys
 import unicodedata
 from collections import Counter, defaultdict
@@ -105,6 +106,48 @@ def workbook_identity(path: Path) -> tuple[str, str]:
     if not match:
         raise ValueError(f"Workbook filename has no instrument code suffix: {path.name}")
     return path.stem[:match.start()], match.group(1)
+
+
+def normalized_legal_name(value: Any) -> str | None:
+    """Normalize spacing only; do not transliterate or fuzzy-match."""
+    value = text_value(value)
+    return re.sub(r"\\s+", " ", value).strip() if value else None
+
+
+def build_ondate_legal_aliases(files: list[Path]) -> tuple[dict[str, str], dict[str, Any]]:
+    """Resolve only exact legal names with multi-date evidence and no same-day collision."""
+    evidence: dict[str, dict[str, Any]] = {}
+    for path in files:
+        _, ins_code = workbook_identity(path)
+        for row in read_sheet(path, "holdings_history"):
+            if text_value(row.get("id_scheme")) != "ondate_share_id":
+                continue
+            if (text_value(row.get("shareholder_type")) or "").lower() != "legal":
+                continue
+            name = normalized_legal_name(row.get("shareholder_name"))
+            source_id = id_value(row.get("shareholder_id"))
+            observed_date = iso_date(row.get("date_gregorian")) or iso_date(row.get("date"))
+            if not name or not source_id or not observed_date:
+                continue
+            item = evidence.setdefault(name, {"dates": set(), "ids": set(), "day_ids": defaultdict(set)})
+            item["dates"].add(observed_date)
+            item["ids"].add(source_id)
+            item["day_ids"][(ins_code, observed_date)].add(source_id)
+
+    aliases = {}
+    ambiguous_names = []
+    for name, item in evidence.items():
+        collision = any(len(ids) > 1 for ids in item["day_ids"].values())
+        if len(item["dates"]) >= 2 and len(item["ids"]) >= 2 and not collision:
+            aliases[name] = hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+        elif len(item["ids"]) > 1:
+            ambiguous_names.append(name)
+    return aliases, {
+        "ondate_legal_names_seen": len(evidence),
+        "resolved_exact_legal_name_aliases": len(aliases),
+        "ambiguous_legal_names_not_merged": len(ambiguous_names),
+        "source_ondate_ids_covered": sum(len(evidence[name]["ids"]) for name in aliases),
+    }
 
 
 def to_json_safe(value: Any) -> Any:
@@ -294,6 +337,7 @@ def main() -> int:
         "id_schemes": Counter(),
     }
     symbol_summary = []
+    legal_name_aliases, alias_audit = build_ondate_legal_aliases(files)
     total_history_rows = 0
     valid_history_rows = 0
     skipped_no_identity = 0
@@ -398,8 +442,10 @@ def main() -> int:
 
             investor = investors.setdefault(pair_key, {
                 "id": pair_key,
-                "id_scheme": scheme,
-                "shareholder_id": holder_id,
+                "id_scheme": effective_scheme,
+                "shareholder_id": effective_id,
+                "source_ids": [],
+                "identity_resolution": "exact_legal_name_across_ondate_records" if resolved_alias else "source_composite_id",
                 "shareholder_name": None,
                 "shareholder_type": None,
                 "identity_verification_status": None,
@@ -463,6 +509,11 @@ def main() -> int:
                 "anomaly_flags": text_value(source_row.get("anomaly_flags")),
                 "source": text_value(source_row.get("source")),
             }
+            if raw_pair_key not in investor["source_ids"]:
+                investor["source_ids"].append(raw_pair_key)
+            row["source_id_scheme"] = scheme
+            row["source_shareholder_id"] = holder_id
+            row["identity_resolution"] = "exact_legal_name_across_ondate_records" if resolved_alias else "source_composite_id"
             investor["timeline"].append(row)
             investor["symbols"].setdefault(ins_code, {
                 "symbol": row["symbol"],
@@ -773,6 +824,7 @@ def main() -> int:
         "earliest_observation_date": min(all_dates),
         "latest_observation_date": max(all_dates),
         "sector_registry": registry_meta,
+        "identity_alias_audit": alias_audit,
         "aggregate": aggregate_stats,
         "diagnostics": {key: dict(counter) for key, counter in diagnostics.items()},
     }
