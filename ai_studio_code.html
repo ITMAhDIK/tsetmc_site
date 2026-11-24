@@ -53,6 +53,7 @@
     ::-webkit-scrollbar-track { background: var(--bg-canvas); }
     ::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
   </style>
+  <link rel="stylesheet" href="./ui-refresh.css" />
 </head>
 <body>
   <div id="root"></div>
@@ -1519,36 +1520,59 @@
       })[item.exit_status] || 'وضعیت نامشخص';
 
       return (
-        <div className="space-y-3 text-xs">
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
-            <div>
-              <h1 className="text-sm font-bold">بازسازی پرتفوی سرمایه‌گذاران</h1>
-              <p className="text-[11px] text-[var(--text-secondary)]">هویت هر سرمایه‌گذار از شناسه‌های (id_scheme, shareholder_id) منبع ساخته می‌شود؛ لینک‌های «محتمل» فقط وقتی در جمع می‌آیند که در همهٔ تاریخ‌ها تاریخ+سهام+نام دقیقاً یکسان بوده و هیچ تناقضی نداشته باشند.</p>
+        <div className="portfolio-page space-y-3 text-xs">
+          <section className="portfolio-heading">
+            <div className="portfolio-eyebrow">تحلیل مالکیت و سوابق سهام‌داری</div>
+            <h1>بازسازی پرتفوی سرمایه‌گذاران</h1>
+            <p>دارایی‌های مستقیم و پیوندهای هویتی محتمل را جداگانه ببینید، تغییرات هر نماد را در طول زمان بررسی کنید و تاریخ مبنای تحلیل را کنترل کنید.</p>
+          </section>
+          <section className="portfolio-control-panel">
+            <div className="portfolio-panel-heading">
+              <div><h2>انتخاب سرمایه‌گذار</h2><p>ابتدا نام یا شناسه را پیدا کنید؛ سپس پرتفوی و دفتر تاریخچه به‌صورت جداگانه نمایش داده می‌شود.</p></div>
+              <span className="portfolio-live-tag">هویت‌محور · بدون ادغام نامی</span>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <input value={invQuery} onChange={e => setInvQuery(e.target.value)} placeholder="جستجوی سرمایه‌گذار..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48" />
-              <select value={invSort} onChange={e => setInvSort(e.target.value)} className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]" title="مرتب‌سازی فهرست سرمایه‌گذاران">
-                <option value="linked">بیشترین رکورد</option>
-                <option value="inferred">بیشترین لینک استنتاجی</option>
-              </select>
-              <select value={selectedId} onChange={e => setSelectedId(e.target.value)} className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] max-w-xs">
-                {investors.map(inv => (
-                  <option key={inv.id} value={inv.id}>
-                    {inv.canonical_name} ({toFa(inv.verified_links_count)} تأیید / {toFa(inv.inferred_links_count || 0)} استنتاجی / {toFa(inv.linked_records_count)} کل)
-                  </option>
-                ))}
-              </select>
-              <input value={idInput} onChange={e => setIdInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyIdInput(); }} placeholder="شناسه: share_id:123456" className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48 num" title="شناسهٔ سرمایه‌گذار به شکل scheme:id — عدد خالی یعنی share_id" />
-              <button onClick={applyIdInput} className="px-3 py-1.5 rounded bg-blue-600 text-white font-bold">اعمال</button>
-              <input type="date" value={asOfDate} onChange={e => setAsOfDate(e.target.value)} className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] num" title="تاریخ میلادی مبنا" />
-              {asOfDate && <span className="text-[11px] text-[var(--text-secondary)] num">{fmtGregorianDate(asOfDate)}</span>}
+            <div className="portfolio-controls-grid">
+              <div className="portfolio-field">
+                <label htmlFor="portfolio-investor-search">جستجوی سرمایه‌گذار</label>
+                <input id="portfolio-investor-search" value={invQuery} onChange={e => setInvQuery(e.target.value)} placeholder="نام یا بخشی از شناسه..." />
+              </div>
+              <div className="portfolio-field">
+                <label htmlFor="portfolio-investor-sort">ترتیب نمایش نتایج</label>
+                <select id="portfolio-investor-sort" value={invSort} onChange={e => setInvSort(e.target.value)} title="مرتب‌سازی فهرست سرمایه‌گذاران">
+                  <option value="linked">بیشترین رکورد</option><option value="inferred">بیشترین لینک استنتاجی</option>
+                </select>
+              </div>
+              <div className="portfolio-field">
+                <label htmlFor="portfolio-investor-select">سرمایه‌گذار انتخاب‌شده</label>
+                <select id="portfolio-investor-select" value={selectedId} onChange={e => setSelectedId(e.target.value)}>
+                  {investors.map(inv => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.canonical_name} ({toFa(inv.verified_links_count)} تأیید / {toFa(inv.inferred_links_count || 0)} استنتاجی / {toFa(inv.linked_records_count)} کل)
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
+            <div className="portfolio-controls-secondary">
+              <div className="portfolio-field">
+                <label htmlFor="portfolio-direct-id">ورود مستقیم شناسهٔ منبع</label>
+                <input id="portfolio-direct-id" value={idInput} onChange={e => setIdInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyIdInput(); }} placeholder="مثلاً share_id:123456" className="num" title="شناسهٔ سرمایه‌گذار به شکل scheme:id — عدد خالی یعنی share_id" />
+              </div>
+              <button onClick={applyIdInput} className="portfolio-apply-button">اعمال شناسه</button>
+              <div className="portfolio-field">
+                <label htmlFor="portfolio-as-of-date">تاریخ مبنای تحلیل (اختیاری)</label>
+                <input id="portfolio-as-of-date" type="date" value={asOfDate} onChange={e => setAsOfDate(e.target.value)} className="num" title="تاریخ میلادی مبنا" />
+              </div>
+              {asOfDate && <span className="text-[11px] text-[var(--text-secondary)] num" aria-live="polite">{fmtGregorianDate(asOfDate)}</span>}
+            </div>
+            <p className="portfolio-control-help">توجه: شناسه‌های «تأییدشده» و «استنتاجی» در سامانه یک سطح اطمینان ندارند؛ مقادیر آن‌ها در خلاصهٔ پرتفوی تفکیک شده‌اند.</p>
+          </section>
 
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
-            <div className="font-bold">یافتن سرمایه‌گذار از روی شرکت</div>
+          <section className="portfolio-lookup-panel p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2">
+            <div className="font-bold">شروع از روی یک شرکت</div>
+            <p className="text-[11px] text-[var(--text-secondary)]">نماد را انتخاب کنید تا فهرست سهام‌داران عمدهٔ آن شرکت نمایش داده شود؛ با انتخاب هر فرد، پرتفوی او باز می‌شود.</p>
             <div className="flex flex-wrap gap-2">
-              <input value={compQuery} onChange={e => { setCompQuery(e.target.value); setCompSymbol(''); }} placeholder="نام یا نماد شرکت را جستجو کنید..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-64" />
+              <input value={compQuery} onChange={e => { setCompQuery(e.target.value); setCompSymbol(''); }} placeholder="نام یا نماد شرکت را جستجو کنید..." className="portfolio-company-search-input px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-64" aria-label="جستجوی شرکت برای یافتن سهام‌داران" />
               {compResults.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {compResults.map(r => (
@@ -1576,36 +1600,36 @@
                 )}
               </div>
             )}
-          </div>
+          </section>
 
           {loading ? (
             <div className="p-8 text-center text-[var(--text-secondary)]">در حال بازسازی پرتفوی...</div>
           ) : portfolio && (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
-                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+              <div className="portfolio-kpis grid grid-cols-1 md:grid-cols-4 gap-2.5">
+                <div className="portfolio-kpi portfolio-kpi--primary p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
                   <div className="text-[var(--text-secondary)]">ارزش کل تأییدشده (ترکیبی)</div>
                   <div className="text-base font-bold num text-emerald-400 mt-1">{fmtMoney(sum.confirmed_combined_value_rial, currency)}</div>
                   <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">فاقد قیمت معتبر: {toFa(sum.positions_missing_price_count)} پوزیشن</div>
                 </div>
-                <div className="p-3 rounded border border-blue-500/30 bg-blue-500/5">
+                <div className="portfolio-kpi portfolio-kpi--probable p-3 rounded border border-blue-500/30 bg-blue-500/5">
                   <div className="text-blue-300">ارزش محتمل (تطبیق دقیق استنتاجی)</div>
                   <div className="text-base font-bold num text-blue-400 mt-1">{fmtMoney(sum.probable_combined_value_rial, currency)}</div>
                   <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">شرکت‌های محتمل: {toFa(sum.probable_companies_count)}</div>
                 </div>
-                <div className="p-3 rounded border border-amber-500/30 bg-amber-500/5">
+                <div className="portfolio-kpi portfolio-kpi--uncertain p-3 rounded border border-amber-500/30 bg-amber-500/5">
                   <div className="text-amber-300">کاندیداهای غیرقطعی (مستثنی)</div>
                   <div className="text-base font-bold num mt-1">{toFa(sum.uncertain_candidates_count)}</div>
                 </div>
-                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+                <div className="portfolio-kpi p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
                   <div className="text-[var(--text-secondary)]">وضعیت سرمایه‌گذار</div>
                   <div className="mt-1"><IdentityBadge status={portfolio.investor.verification_status} /></div>
                 </div>
               </div>
 
               {portfolio.identity_evidence && (
-                <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
-                  <div className="font-bold">چرا هویت این سرمایه‌گذار درست است؟ (شواهد)</div>
+                <section className="portfolio-identity-panel p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
+                  <div className="font-bold">شواهد و سطح اطمینان هویت</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
                     <div>وضعیت در رجیستری هویت: <IdentityBadge status={portfolio.identity_evidence.registry_identity_status} /></div>
                     <div>نوع سهام‌دار: {portfolio.identity_evidence.shareholder_type === 'legal' ? 'حقوقی' : portfolio.identity_evidence.shareholder_type === 'individual' ? 'حقیقی' : '—'}</div>
@@ -1616,17 +1640,17 @@
                   <div className="text-[11px] text-[var(--text-secondary)]">
                     «تأییدشده» یعنی پوزیشن رکورد مستقیم همین شناسه است (یا منبع خودش هر دو شناسه را در یک ردیف گذاشته است). «محتمل» یعنی پوزیشن زیر یک شناسهٔ دوقلوی استنتاجی است: در همهٔ تاریخ‌ها تاریخ + تعداد سهام + نام دقیقاً یکسان بوده، فقط یک کاندید وجود داشته، هیچ تناقضی در هیچ تاریخی نبوده، و برای اشخاص حقیقیِ بدون نام (شخص حقیقی) حداقل دو تاریخ مستقل هم‌خوانی داشته‌اند؛ نام فقط برای بررسی سازگاری استفاده شده، نه به‌تنهایی. بقیهٔ رکوردها «غیرقطعی» هستند و در هیچ جمعی نمی‌آیند.
                   </div>
-                </div>
+                </section>
               )}
 
               {portfolio.historical_summary && (
-                <section className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                <section className="portfolio-history-panel rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
                   <div className="p-3 border-b border-[var(--border-subtle)]">
                     <h3 className="font-bold text-sm">تاریخچهٔ تمام نمادهای مشاهده‌شده</h3>
                     <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                       این فهرست شامل نمادهایی است که در گذشته برای این هویت ثبت شده‌اند، حتی اگر در آخرین فهرست سهام‌داران دیده نشوند.
                     </p>
-                    <p className="mt-2 text-[11px] text-amber-300">
+                    <p className="portfolio-exit-note mt-2 text-[11px] text-amber-300">
                       راهنمای خروج: اگر پس از آخرین مشاهدهٔ سهام‌دار، snapshot جدیدی از شرکت وجود داشته باشد ولی نام او در فهرست افشاشده نباشد، وضعیت «فروش فرضی» نمایش داده می‌شود. این فرض ممکن است اشتباه باشد؛ سهام‌دار شاید فقط به زیر آستانهٔ افشا رسیده باشد. داده‌های TSETMC به‌تنهایی معاملهٔ فروش را اثبات نمی‌کنند.
                     </p>
                   </div>
@@ -1711,14 +1735,14 @@
                 </section>
               )}
 
-              <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+              <div className="portfolio-chart-panel p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
                 <h3 className="font-bold mb-1">ارزش موقعیت‌های افشاشده در تاریخ‌های موجود ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
                 <p className="text-[10px] text-[var(--text-secondary)] mb-2">این نمودار فقط تعداد و قیمت معتبر همان تاریخ را جمع می‌کند؛ موجودی روزهای بدون افشا به صفر تبدیل نمی‌شود و از روزهای قبل هم به جلو منتقل نمی‌شود.</p>
                 <LWChart data={chartSeries} height={220} theme={theme} color="#2962ff" unitLabel={currency === 'IRT' ? 'همت' : 'همر'} dateMode={dateMode} />
               </div>
 
-              <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
-                <div className="p-2.5 border-b border-[var(--border-subtle)] font-bold">پوزیشن‌های مستقیم (رکورد همین شناسه)</div>
+              <div className="portfolio-table-panel rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
+                <div className="portfolio-table-title p-2.5 border-b border-[var(--border-subtle)] font-bold">پوزیشن‌های مستقیم (رکورد همین شناسه)</div>
                 <table className="w-full text-right">
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
                     <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th></tr>
@@ -1740,8 +1764,8 @@
                 </table>
               </div>
 
-              <div className="rounded border border-blue-500/30 bg-blue-500/5 overflow-x-auto">
-                <div className="p-2.5 border-b border-blue-500/30 font-bold text-blue-300">پوزیشن‌های محتمل (تطبیق دقیق استنتاجی — در جمع ارزش لحاظ شده‌اند)</div>
+              <div className="portfolio-table-panel rounded border border-blue-500/30 bg-blue-500/5 overflow-x-auto">
+                <div className="portfolio-table-title p-2.5 border-b border-blue-500/30 font-bold text-blue-300">پوزیشن‌های محتمل (تطبیق دقیق استنتاجی — در جمع ارزش لحاظ شده‌اند)</div>
                 <table className="w-full text-right">
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
                     <tr><th className="p-2">نماد</th><th className="p-2">تاریخ مشاهده</th><th className="p-2">تعداد سهام</th><th className="p-2">درصد مالکیت</th><th className="p-2">قیمت</th><th className="p-2">ارزش</th><th className="p-2">هویت</th></tr>
@@ -1765,7 +1789,7 @@
               </div>
 
               {portfolio.uncertain_candidates.length > 0 && (
-                <div className="rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
+                <div className="portfolio-uncertain-panel rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
                   <div className="font-bold text-amber-300">رکوردهای سهام‌داری غیرقطعی (محاسبه‌نشده در جمع کل)</div>
                   {portfolio.uncertain_candidates.map((u, i) => (
                     <div key={i} className="p-2 rounded bg-[var(--bg-panel)] border border-[var(--border-subtle)] flex justify-between">
@@ -2238,14 +2262,14 @@
 
     // --- 12. Root Shell ---
     const NAV_PAGES = [
-      { id: 'market', label: '۱. داشبورد بازار' },
-      { id: 'stock', label: '۲. صفحه نماد' },
-      { id: 'shareholders', label: '۳. تحلیل سهام‌داران' },
-      { id: 'portfolio', label: '۴. پرتفوی سرمایه‌گذاران' },
-      { id: 'screener', label: '۵. فیلتر پیشرفته' },
-      { id: 'watchlist', label: '۶. دیده‌بان' },
-      { id: 'account', label: '۷. حساب و اشتراک' },
-      { id: 'admin', label: '۸. پنل مدیریت ایمپورت' },
+      { id: 'market', label: 'نمای کلی بازار' },
+      { id: 'stock', label: 'صفحهٔ نماد' },
+      { id: 'shareholders', label: 'تحلیل سهام‌داران' },
+      { id: 'portfolio', label: 'پرتفوی سرمایه‌گذاران' },
+      { id: 'screener', label: 'فیلتر پیشرفته' },
+      { id: 'watchlist', label: 'دیده‌بان' },
+      { id: 'account', label: 'حساب و اشتراک' },
+      { id: 'admin', label: 'مدیریت داده' },
     ];
 
     function App() {
@@ -2300,56 +2324,56 @@
       };
 
       return (
-        <div className={`min-h-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
-          <header className="sticky top-0 z-40 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-            <div className="max-w-[1600px] mx-auto px-3 h-12 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 relative">
-                <button onClick={() => setPage('market')} className="font-extrabold text-sm text-blue-400 whitespace-nowrap">
-                  ره‌نگار بورس
-                </button>
-                <div className="relative">
-                  <input
-                    value={quickSearch}
-                    onChange={e => setQuickSearch(e.target.value)}
-                    placeholder="جستجوی نماد یا نام شرکت در کل دیتاست..."
-                    className="w-60 md:w-80 px-3 py-1 text-xs rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] focus:outline-none focus:border-blue-500"
-                  />
-                  {searchResults.length > 0 && (
-                    <div className="absolute right-0 mt-1 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] shadow-xl z-50 text-xs max-h-72 overflow-y-auto">
-                      {searchResults.map(m => (
-                        <button key={m.symbol} onClick={() => openStock(m.symbol)} className="w-full text-right p-2 hover:bg-[var(--bg-elevated)] flex justify-between gap-2">
-                          <span className="font-bold text-blue-400">{m.symbol}</span>
-                          <span className="text-[var(--text-secondary)] truncate">{m.company_name || m.market}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+        <div className={`app-shell min-h-screen flex flex-col text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
+          <header className="app-header">
+            <div className="app-topbar-inner">
+              <button onClick={() => setPage('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
+                <span className="app-brand-mark" aria-hidden="true">ر</span>
+                <span className="app-brand-copy"><strong>ره‌نگار بورس</strong><small>تحلیل بازار و مالکیت سهام</small></span>
+              </button>
+              <div className="app-search" role="search">
+                <span className="app-search-glyph" aria-hidden="true">⌕</span>
+                <input value={quickSearch}
+                  onChange={e => setQuickSearch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') { setQuickSearch(''); setSearchResults([]); } }}
+                  placeholder="جستجوی نماد یا نام شرکت..."
+                  aria-label="جستجوی نماد یا نام شرکت"
+                  aria-expanded={searchResults.length > 0}
+                  className="app-search-input" />
+                {searchResults.length > 0 && (
+                  <div className="app-search-results text-xs" role="listbox" aria-label="نتایج جستجو">
+                    {searchResults.map(m => (
+                      <button key={m.symbol} type="button" onClick={() => openStock(m.symbol)} className="w-full text-right flex justify-between items-center gap-3">
+                        <span>{m.symbol}</span>
+                        <span className="text-[var(--text-secondary)] truncate">{m.company_name || m.market}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-
-              <div className="flex items-center gap-2 text-xs">
-                <button onClick={toggleDateMode} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]" title="همهٔ تاریخ‌ها (نمودارها و جدول‌ها) بین شمسی و میلادی جابه‌جا می‌شوند">
-                  تاریخ: {dateMode === 'jalali' ? 'شمسی' : 'میلادی'}
+              <div className="app-toolbar" aria-label="تنظیمات نمایش">
+                <button onClick={toggleDateMode} className="app-tool-button" title="تغییر تقویم همهٔ تاریخ‌ها">
+                  <span className="app-tool-label">تاریخ</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
                 </button>
-                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
-                  واحد: {currency === 'IRR' ? 'ریال' : 'تومان'}
+                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="app-tool-button" title="تغییر واحد پول">
+                  <span className="app-tool-label">واحد</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
                 </button>
-                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="px-2.5 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
-                  {theme === 'dark' ? 'تم روشن' : 'تم تیره'}
+                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="app-tool-button" title="تغییر پوسته">
+                  <span className="app-tool-label">پوسته</span><strong>{theme === 'dark' ? 'روشن' : 'تیره'}</strong>
                 </button>
               </div>
             </div>
-
-            <nav className="max-w-[1600px] mx-auto px-3 flex items-center gap-1 overflow-x-auto border-t border-[var(--border-subtle)] text-xs">
-              {NAV_PAGES.map(n => (
-                <button key={n.id} onClick={() => setPage(n.id)} className={`px-3 py-2 whitespace-nowrap border-b-2 transition-colors ${page === n.id ? 'border-blue-500 text-blue-400 font-bold' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}>
-                  {n.label}
-                </button>
-              ))}
-            </nav>
+            <div className="app-nav-wrap">
+              <nav className="app-nav" aria-label="بخش‌های سامانه">
+                {NAV_PAGES.map(n => (
+                  <button key={n.id} onClick={() => setPage(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
+                    {n.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
           </header>
-
-          <main className="flex-1 max-w-[1600px] w-full mx-auto p-3">
+          <main className="app-main flex-1">
             {page === 'market' && <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode} />}
             {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
             {page === 'shareholders' && <ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode} />}
