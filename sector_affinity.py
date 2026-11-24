@@ -229,17 +229,24 @@ class SectorAffinityAccumulator:
         subgroup_values = {}
         category_values = {}
         rotation_values = {}
+        category_rotation_values = {}
         total_value = classified_value = 0.0
         valued_count = identity_sum = identity_count = 0
         rotation_candidates = rotation_eligible = rotation_excluded = 0
 
         for security_key, item in by_security.items():
+            self._counts["unique_security_observations"] += 1
             if security_key in conflicts:
                 self._counts["cisin_alias_conflicts"] += 1
                 continue
-            self._counts["unique_security_observations"] += 1
             row = item["row"]
             if row.get("identity_conflict"):
+                delta_candidate = _number(row.get("shares_change"))
+                if delta_candidate is not None:
+                    rotation_candidates += 1
+                    rotation_excluded += 1
+                    self._counts["rotation_change_candidates"] += 1
+                    self._counts["rotation_excluded"] += 1
                 continue
             shares = item["shares"]
             if shares is None or shares < 0:
@@ -302,7 +309,13 @@ class SectorAffinityAccumulator:
             if eligible:
                 rotation_eligible += 1
                 self._counts["rotation_eligible"] += 1
-                rotation_values[group_code] = rotation_values.get(group_code, 0.0) + delta * item["price"]
+                delta_value = delta * item["price"]
+                rotation_values[group_code] = rotation_values.get(group_code, 0.0) + delta_value
+                category_id = _code(sector.get("dashboard_category_id"))
+                if category_id:
+                    category_rotation_values[category_id] = (
+                        category_rotation_values.get(category_id, 0.0) + delta_value
+                    )
             elif delta is not None:
                 rotation_excluded += 1
                 self._counts["rotation_excluded"] += 1
@@ -320,6 +333,7 @@ class SectorAffinityAccumulator:
             "category_values": {key: value["value"] for key, value in category_values.items()},
             "category_labels": {key: value["label"] for key, value in category_values.items()},
             "rotation_values": rotation_values,
+            "category_rotation_values": category_rotation_values,
             "observed_instruments": len(observed_codes),
             "unique_securities": len(by_security),
             "valued_positions": valued_count,
@@ -371,6 +385,7 @@ class SectorAffinityAccumulator:
 
         cutoff = _date(latest_valued_date) - timedelta(days=self.rotation_lookback_days) if latest_valued_date else None
         recent_rotation = {}
+        recent_category_rotation = {}
         recent_candidates = recent_eligible = recent_excluded = 0
         for item in days:
             item_date = _date(item["date"])
@@ -378,6 +393,10 @@ class SectorAffinityAccumulator:
                 continue
             for code, value in item["rotation_values"].items():
                 recent_rotation[code] = recent_rotation.get(code, 0.0) + value
+            for category_id, value in item["category_rotation_values"].items():
+                recent_category_rotation[category_id] = (
+                    recent_category_rotation.get(category_id, 0.0) + value
+                )
             recent_candidates += item["rotation_candidates"]
             recent_eligible += item["rotation_eligible"]
             recent_excluded += item["rotation_excluded"]
@@ -467,7 +486,7 @@ class SectorAffinityAccumulator:
                 category_id, labels[-1] if labels else self.categories.get(category_id, category_id),
                 current_value,
                 weighted_categories[category_id] / decay_total if decay_total else 0.0,
-                0.0, observations,
+                recent_category_rotation.get(category_id, 0.0), observations,
             ))
         dashboard_categories.sort(key=lambda item: item["interest_score"], reverse=True)
 

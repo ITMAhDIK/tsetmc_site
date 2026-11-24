@@ -147,6 +147,18 @@ class SectorAffinityTests(unittest.TestCase):
         self.assertEqual(result["dashboard_categories"][0]["current_weight_pct"], 50.0)
         self.assertEqual(result["data_quality"]["sector_classification_coverage_pct"], 100.0)
 
+    def test_dashboard_category_aggregates_recent_rotation(self):
+        result = self.calculate([
+            _row("2026-01-01", "A", 100, 10),
+            _row("2026-02-01", "A", 120, 10, shares_change=20,
+                 change_calculation_status="consecutive_observations"),
+        ], registry={
+            "A": _sector("G1", "Group 1", "S1", "CAT1"),
+        }, categories={"CAT1": "Category 1"})
+        category = result["dashboard_categories"][0]
+        self.assertEqual(category["recent_net_change_value_rial"], 200.0)
+        self.assertEqual(category["rotation_direction"], "increasing")
+
     def test_missing_registry_is_explicit(self):
         result = self.calculate([_row("2026-01-01", "A", 10, 10)], registry={})
         self.assertEqual(result["status"], "registry_missing")
