@@ -82,6 +82,7 @@ def test_first_observation_and_capital_action_precedence():
         "change_calculation_status": "first_observation_no_previous",
     }) == "first_observation"
     assert classify_portfolio_change({
+        "shares": 1000,
         "shares_change": 100,
         "corporate_action": "capital_increase",
         "change_calculation_status": "consecutive_observations",
