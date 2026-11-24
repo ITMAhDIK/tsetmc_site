@@ -57,6 +57,16 @@ Before accepting real payments:
 
 A production gateway credential is not included in this repository. Until it is configured and end-to-end tested, checkout must be treated as unavailable.
 
+The public group dashboard uses the official TSETMC instrument-sector registry in `data/instrument_sectors.json`. The checked-in snapshot on this branch contains 724 instrument mappings, so it must be treated as partial until the server-side synchronization job has completed and coverage is reviewed. The dashboard reports coverage and does not imply that missing instruments have been classified.
+
+To refresh the registry on the server (do not run this against a client laptop or against a public upload), provide the actual local source database path:
+
+```powershell
+python tools/sync_instrument_sectors.py --db "<absolute path to tsetmc_holdings.sqlite>" --output "data/instrument_sectors.json"
+```
+
+The tool reads the source database read-only and writes the JSON registry atomically/resumably. Its defaults are 0.12 seconds between requests, two retries, and a checkpoint every 25 instruments. Use `--limit` only for a small pilot; do not interpret a limited run as complete. This is a network-backed registry refresh, separate from account or billing setup.
+
 ## First Super Admin setup
 
 1. Deploy the new branch to a staging environment over HTTPS.
