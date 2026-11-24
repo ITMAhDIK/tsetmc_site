@@ -4760,6 +4760,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
 
+            rest = [part for part in path.split("/") if part][2:]
+
             if rest == ["watchlists", "default"] or rest == ["watchlists", "default", "symbols"] or (
                     len(rest) == 4 and rest[:3] == ["watchlists", "default", "symbols"]):
                 if not user:
