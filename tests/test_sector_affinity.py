@@ -29,12 +29,15 @@ def _row(day, ins, shares, price, **extra):
 
 class SectorAffinityTests(unittest.TestCase):
     def calculate(self, rows, registry=None, **kwargs):
+        categories = kwargs.pop(
+            "categories", {"CAT1": "Category 1", "CAT2": "Category 2"}
+        )
         engine = SectorAffinityAccumulator(
             registry if registry is not None else {
                 "A": _sector("G1", "Group 1", "S1", "CAT1"),
                 "B": _sector("G2", "Group 2", "S2", "CAT2"),
             },
-            categories={"CAT1": "Category 1", "CAT2": "Category 2"},
+            categories=categories,
             requested_pair=("share_id", 10), **kwargs,
         )
         for row in rows:
