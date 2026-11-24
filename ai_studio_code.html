@@ -1591,7 +1591,7 @@
                 ) : (
                   <div className="max-h-56 overflow-y-auto divide-y divide-[var(--border-subtle)]">
                     {compHolders.map(h => (
-                      <div key={`${h.id_scheme}:${h.shareholder_id}`} onClick={() => setSelectedId(`${h.id_scheme}:${h.shareholder_id}`)} className="py-1.5 flex justify-between gap-2 cursor-pointer hover:text-blue-400">
+                      <div key={`${h.id_scheme}:${h.shareholder_id}`} role="button" tabIndex={0} onClick={() => setSelectedId(`${h.id_scheme}:${h.shareholder_id}`)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedId(`${h.id_scheme}:${h.shareholder_id}`); } }} className="py-1.5 flex justify-between gap-2 cursor-pointer hover:text-blue-400">
                         <span className="font-semibold">{h.shareholder_name} <span className="text-[10px] text-[var(--text-secondary)] num">{h.id_scheme}:{h.shareholder_id}</span></span>
                         <span className="num">{fmtNum(h.shares)} سهم ({fmtPct(h.ownership_percent_calculated)})</span>
                       </div>
@@ -2351,7 +2351,7 @@
                   </div>
                 )}
               </div>
-              <div className="app-toolbar" aria-label="تنظیمات نمایش">
+              <div className="app-toolbar" role="group" aria-label="تنظیمات نمایش">
                 <button onClick={toggleDateMode} className="app-tool-button" title="تغییر تقویم همهٔ تاریخ‌ها">
                   <span className="app-tool-label">تاریخ</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
                 </button>
