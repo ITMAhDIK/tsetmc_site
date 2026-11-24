@@ -1574,7 +1574,7 @@ class AccountService:
             return {
                 "currency": "TOMAN",
                 "referral_reward_toman": REFERRAL_REWARD_TOMAN,
-                "promotions": [{"code": "WELCOME5", "discount_percent": 5,
+                "promotions": [{"code": "WELCOME15", "discount_percent": 15,
                                 "new_customer_only": True}],
                 "plans": [dict(r) for r in rows],
                 "features": {
