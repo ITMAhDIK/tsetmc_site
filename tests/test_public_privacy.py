@@ -1,4 +1,6 @@
 import io
+
+import pytest
 """Privacy contract tests for public market-facing API projections."""
 import server
 
