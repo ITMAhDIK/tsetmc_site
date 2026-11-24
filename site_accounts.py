@@ -269,11 +269,12 @@ class AccountService:
                         "name=excluded.name,duration_days=excluded.duration_days,"
                         "price_toman=excluded.price_toman,is_active=1",
                         (slug, name, days, price))
+                con.execute("UPDATE site_promo_codes SET is_active=0 WHERE code IN ('WELCOME10','WELCOME20')")
                 con.execute(
                     "INSERT INTO site_promo_codes "
                     "(code,discount_percent,max_uses,used_count,new_customer_only,is_active) "
-                    "VALUES ('WELCOME10',10,2000,0,1,1) "
-                    "ON CONFLICT(code) DO UPDATE SET discount_percent=10,"
+                    "VALUES ('WELCOME5',5,2000,0,1,1) "
+                    "ON CONFLICT(code) DO UPDATE SET discount_percent=5,"
                     "max_uses=2000,new_customer_only=1,is_active=1")
         finally:
             con.close()
@@ -1469,7 +1470,7 @@ class AccountService:
             return {
                 "currency": "TOMAN",
                 "referral_reward_toman": REFERRAL_REWARD_TOMAN,
-                "promotions": [{"code": "WELCOME10", "discount_percent": 10,
+                "promotions": [{"code": "WELCOME5", "discount_percent": 5,
                                 "new_customer_only": True}],
                 "plans": [dict(r) for r in rows],
                 "features": {
