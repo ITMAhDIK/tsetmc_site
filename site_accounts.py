@@ -540,13 +540,20 @@ class AccountService:
         password = str(body.get("password") or "")
         if not identifier or not password:
             raise AccountError(400, "شناسه و رمز عبور را وارد کنید.")
+        # Phone numbers are stored in canonical +98 format. Accept the
+        # common local 09xx form as a login identifier too.
+        phone_identifier = identifier
+        try:
+            phone_identifier = self.normalize_phone(identifier)
+        except AccountError:
+            pass
         con = self._connect()
         try:
             row = con.execute(
                 "SELECT id,password_hash,is_active FROM site_users "
                 "WHERE username=? COLLATE NOCASE OR public_id=? COLLATE NOCASE "
                 "OR email=? COLLATE NOCASE OR phone=?",
-                (identifier, identifier, identifier.lower(), identifier)).fetchone()
+                (identifier, identifier, identifier.lower(), phone_identifier)).fetchone()
             if not row or not row["is_active"] or not self._verify_password(password, row["password_hash"]):
                 self._login_failure(identifier)
                 raise AccountError(401, "شناسه یا رمز عبور اشتباه است.")
@@ -1365,6 +1372,10 @@ class AccountService:
             return {"payload": {"logged_out": True},
                     "headers": {"Set-Cookie": self.clear_session_cookie(secure)}}
         self.require_user(user)
+        if user.get("must_change_password") and path not in (
+                "/api/v1/auth/change-password", "/api/v1/auth/logout",
+                "/api/v1/auth/me"):
+            raise AccountError(403, "برای ادامه کار ابتدا رمز عبور موقت را تغییر دهید.")
         if method in ("POST", "PUT", "DELETE"):
             self.check_csrf(user, body.get("_csrf") or body.get("csrf_token") or
                              (body.get("headers", {}) or {}).get("X-CSRF-Token"))
