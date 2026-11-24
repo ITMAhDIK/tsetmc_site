@@ -67,6 +67,8 @@ import urllib.request
 from datetime import datetime, timedelta
 
 from sector_affinity import SectorAffinityAccumulator, load_sector_reference
+from site_accounts import AccountService, AccountError
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Jalali (Persian) calendar conversion -- pure Python, no dependency.
@@ -2079,6 +2081,190 @@ class SiteApi:
         return payload
 
     # -- 2. Market watch ---------------------------------------------------
+    def market_watch_public(self, params):
+        """Return only public market-level fields; never expose ownership rows."""
+        result = self.market_watch(params)
+        allowed = (
+            "symbol", "company_name", "market", "latest_price",
+            "latest_price_date", "market_value", "data_completeness",
+            "latest_date_jalali",
+        )
+        return {
+            "total": result["total"],
+            "rows": [{key: row.get(key) for key in allowed}
+                     for row in result["rows"]],
+        }
+
+    def market_overview_public(self):
+        """Return market counts only; hide collection volume and holder identities."""
+        raw = self.market_overview()
+        summary = raw.get("summary") or {}
+        return {
+            "summary": {
+                "total_companies": summary.get("total_companies", 0),
+                "tse_companies": summary.get("tse_companies", 0),
+                "ifb_companies": summary.get("ifb_companies", 0),
+                "unknown_market_companies": summary.get("unknown_market_companies", 0),
+            }
+        }
+
+    def stock_detail_public(self, symbol):
+        """Public stock card. Raw company/holder history is never returned."""
+        raw = self.stock_detail(symbol)
+        instrument = raw.get("instrument") or {}
+        snapshot = raw.get("latest_snapshot") or {}
+        return {
+            "instrument": {
+                "symbol": instrument.get("symbol"),
+                "company_name": instrument.get("company_name"),
+                "market": instrument.get("market"),
+            },
+            "latest_snapshot": {
+                "latest_price": snapshot.get("latest_price"),
+                "latest_price_date": snapshot.get("latest_price_date"),
+                "market_value": snapshot.get("market_value"),
+                "data_completeness": snapshot.get("data_completeness"),
+            },
+        }
+
+    def market_sector_groups(self, user=None, params=None):
+        """Aggregate market value by official TSETMC sectors, never by symbol."""
+        params = params or {}
+        market = (params.get("market") or ["ALL"])[0]
+        if market not in ("ALL", "TSE", "IFB"):
+            raise ApiError(400, "بازار انتخاب‌شده معتبر نیست.")
+        registry, _categories, metadata = load_sector_reference(self.site_dir)
+        mapping = {}
+        if user and user.get("is_premium"):
+            try:
+                mapping = self.accounts.get_sector_mapping(user["id"]).get("mapping") or {}
+            except Exception:
+                mapping = {}
+        sc = self.sidecar()
+        try:
+            self.require_ready(sc)
+            sql = "SELECT ins_code, market_value, market FROM site_watch"
+            args = []
+            if market in ("TSE", "IFB"):
+                sql += " WHERE market=?"
+                args.append(market)
+            rows = sc.execute(sql, args).fetchall()
+        finally:
+            sc.close()
+
+        groups = {}
+        total_value = 0.0
+        classified_value = 0.0
+        for row in rows:
+            info = registry.get(str(row["ins_code"]))
+            group_code = str((info or {}).get("cSecVal") or "").strip()
+            official_label = str((info or {}).get("lSecVal") or "").strip()
+            custom_label = str(mapping.get(group_code) or "").strip()
+            label = custom_label or official_label or "سایر / طبقه‌بندی‌نشده"
+            group_key = label.casefold()
+            value = row["market_value"]
+            try:
+                value = float(value) if value is not None and float(value) > 0 else 0.0
+            except (TypeError, ValueError, OverflowError):
+                value = 0.0
+            total_value += value
+            if group_code:
+                classified_value += value
+            item = groups.setdefault(group_key, {
+                "label": label, "market_value_rial": 0.0,
+                "instrument_count": 0, "official_group_codes": set(),
+                "subgroups": {},
+            })
+            item["market_value_rial"] += value
+            item["instrument_count"] += 1
+            if group_code:
+                item["official_group_codes"].add(group_code)
+                subgroup_code = str((info or {}).get("cSoSecVal") or "").strip()
+                subgroup_label = str((info or {}).get("lSoSecVal") or "").strip()
+                if subgroup_code:
+                    sub_key = subgroup_label or subgroup_code
+                    sub = item["subgroups"].setdefault(sub_key, {
+                        "label": sub_key, "market_value_rial": 0.0,
+                        "instrument_count": 0,
+                    })
+                    sub["market_value_rial"] += value
+                    sub["instrument_count"] += 1
+
+        output = []
+        for item in groups.values():
+            item_value = item["market_value_rial"]
+            item["market_value_rial"] = round(item_value, 2)
+            item["market_share_pct"] = round(
+                100.0 * item_value / total_value, 4) if total_value > 0 else 0.0
+            item["official_group_codes"] = sorted(item["official_group_codes"])
+            item["subgroups"] = sorted(
+                [{**sub, "market_value_rial": round(sub["market_value_rial"], 2)}
+                 for sub in item["subgroups"].values()],
+                key=lambda x: x["market_value_rial"], reverse=True)
+            output.append(item)
+        output.sort(key=lambda x: x["market_value_rial"], reverse=True)
+        return {
+            "market": market,
+            "groups": output,
+            "total_market_value_rial": round(total_value, 2),
+            "classification_coverage_pct": round(
+                100.0 * classified_value / total_value, 2) if total_value > 0 else 0.0,
+            "can_customize": bool(user and user.get("is_premium")),
+            "registry_available": bool(metadata.get("instrument_file_present")),
+        }
+
+    def sector_affinity_public(self, params):
+        """Premium analysis only: strip every personal and record-level field."""
+        investor_id = (params.get("investor_id") or [""])[0].strip()
+        if not investor_id or len(investor_id) > 96:
+            raise ApiError(400, "شناسه سرمایه‌گذار برای تحلیل لازم است.")
+        raw = self.portfolio_detail(investor_id, params)
+        affinity = raw.get("sector_affinity") or {}
+        groups = affinity.get("dashboard_categories") or affinity.get("official_groups") or []
+        safe_groups = []
+        for group in groups:
+            safe_groups.append({
+                "label": group.get("label"),
+                "current_value_rial": group.get("current_value_rial"),
+                "current_weight_pct": group.get("current_weight_pct"),
+                "historical_affinity_pct": group.get("historical_affinity_pct"),
+                "recent_net_change_pct_of_portfolio":
+                    group.get("recent_net_change_pct_of_portfolio"),
+                "rotation_direction": group.get("rotation_direction"),
+                "rotation_score": group.get("rotation_score"),
+                "interest_score": group.get("interest_score"),
+                "confidence_score": group.get("confidence_score"),
+            })
+        history = []
+        for row in affinity.get("history") or []:
+            history.append({
+                "date": row.get("date"),
+                "total_value_rial": row.get("total_value_rial"),
+                "official_group_weights": row.get("official_group_weights") or {},
+            })
+        quality = affinity.get("data_quality") or {}
+        return {
+            "status": affinity.get("status"),
+            "current_portfolio_value_rial":
+                affinity.get("current_portfolio_value_rial"),
+            "latest_observation_date": affinity.get("latest_observation_date"),
+            "groups": safe_groups,
+            "history": history,
+            "data_quality": {
+                "confidence_score": quality.get("confidence_score"),
+                "valuation_coverage_pct": quality.get("valuation_coverage_pct"),
+                "sector_classification_coverage_pct":
+                    quality.get("sector_classification_coverage_pct"),
+                "identity_confidence_pct": quality.get("identity_confidence_pct"),
+                "rotation_evidence_coverage_pct":
+                    quality.get("rotation_evidence_coverage_pct"),
+            },
+            "methodology": {
+                "trade_proof": False,
+                "score_weights": affinity.get("score_weights") or {},
+            },
+        }
+
     def market_watch(self, params):
         sc = self.sidecar()
         try:
@@ -4367,14 +4553,27 @@ class Handler(BaseHTTPRequestHandler):
         pass  # keep stdout for our own concise request log
 
     # -- response helpers -------------------------------------------------
-    def _send_json(self, status, payload):
+    def _send_json(self, status, payload, headers=None):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self._cors_headers()
+        for name, value in (headers or {}).items():
+            if name.lower() in ("set-cookie", "cache-control"):
+                self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_redirect(self, status, location, headers=None):
+        self.send_response(status)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            if name.lower() in ("set-cookie", "cache-control"):
+                self.send_header(name, value)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _send_text(self, status, text, content_type):
         body = text.encode("utf-8")
@@ -4386,9 +4585,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # The dashboard is served from this same origin. Deliberately avoid
+        # wildcard CORS so third-party sites cannot read authenticated APIs.
+        self.send_header("Vary", "Origin")
 
     def _serve_file(self, path):
         site_dir = os.path.abspath(self.api.site_dir)
@@ -4431,6 +4630,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._route("DELETE")
 
+    def do_PUT(self):
+        self._route("PUT")
+
     def _route(self, method):
         t0 = time.time()
         parsed = urllib.parse.urlparse(self.path)
@@ -4438,8 +4640,15 @@ class Handler(BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         status = 200
         try:
-            if path in ("/", "/index.html", "/ai_studio_code.html"):
-                self._serve_file("ai_studio_code.html")
+            static_files = {
+                "/": "ai_studio_code.html",
+                "/index.html": "ai_studio_code.html",
+                "/ai_studio_code.html": "ai_studio_code.html",
+                "/ai_studio_code.css": "ai_studio_code.css",
+                "/ui-refresh.css": "ui-refresh.css",
+            }
+            if path in static_files:
+                self._serve_file(static_files[path])
                 status = 200
                 return
             if path == "/favicon.ico":
@@ -4447,11 +4656,86 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
+            # Nothing else in the project directory is a public static asset:
+            # SQLite files, JSON registries, workbooks and source files stay private.
             if not path.startswith("/api/v1/"):
-                self._serve_file(path.lstrip("/"))
+                raise ApiError(404, "منبع عمومی پیدا نشد.")
+
+            body = _read_json_body(self) if method in ("POST", "PUT") else {}
+            cookie = SimpleCookie()
+            try:
+                cookie.load(self.headers.get("Cookie", ""))
+            except Exception:
+                cookie = SimpleCookie()
+            session_cookie = cookie.get("rn_session")
+            session_token = session_cookie.value if session_cookie else None
+            user = self.api.accounts.authenticate(session_token) if session_token else None
+            configured_base = os.environ.get("SITE_PUBLIC_BASE_URL", "").strip().rstrip("/")
+            base_url = configured_base or ("http://" + self.headers.get("Host", "localhost"))
+
+            if self.api.accounts.handles(path):
+                if user and method in ("POST", "PUT", "DELETE"):
+                    body["_csrf"] = self.headers.get("X-CSRF-Token", "")
+                result = self.api.accounts.dispatch(
+                    method, path, params, body, user, base_url)
+                response_status = int(result.get("status", 200))
+                response_headers = result.get("headers") or {}
+                if result.get("redirect"):
+                    self._send_redirect(response_status, result["redirect"], response_headers)
+                    status = response_status
+                    return
+                self._send_json(response_status, result.get("payload", {}),
+                                response_headers)
+                status = response_status
                 return
-            body = _read_json_body(self) if method in ("POST",) else {}
-            payload, status, ctype = self._dispatch(method, path, params, body)
+
+            # Raw ownership records and per-holder endpoints are intentionally
+            # disabled. Hiding their tabs is not a security boundary.
+            rest = [part for part in path.split("/") if part][2:]
+            if (rest in (["shareholders", "search"],
+                         ["shareholders", "observation-history"],
+                         ["portfolios", "investors"])
+                    or (len(rest) >= 2 and rest[0] == "portfolios")
+                    or (len(rest) == 3 and rest[0] == "stocks"
+                        and rest[2] == "shareholders")
+                    or rest in (["screener", "query"], ["screener", "export"])):
+                raise ApiError(410, "نمایش داده‌های ردیفی و خام در سایت عمومی غیرفعال است؛ فقط خروجی تحلیلی ارائه می‌شود.")
+
+            if rest and rest[0] == "admin":
+                if not user:
+                    raise ApiError(401, "ورود مدیر سایت لازم است.")
+                if user.get("role") != "super_admin":
+                    raise ApiError(403, "این بخش فقط برای سوپرادمین قابل دسترسی است.")
+
+            if rest and rest[0] in ("watchlists", "screener"):
+                if not user:
+                    raise ApiError(401, "برای استفاده از این قابلیت وارد حساب شوید.")
+                if not user.get("is_premium"):
+                    raise ApiError(402, "این قابلیت مخصوص اشتراک حرفه‌ای است.")
+
+            if rest == ["stocks"] or (len(rest) == 2 and rest[0] == "stocks"
+                                      and rest[1] in ("",)):
+                raise ApiError(404, "نماد یافت نشد.")
+
+            if method == "GET" and rest == ["market", "groups"]:
+                self._send_json(200, self.api.market_sector_groups(user, params))
+                status = 200
+                return
+            if method == "GET" and rest == ["analytics", "sector-affinity"]:
+                if not user:
+                    raise ApiError(401, "برای مشاهده این تحلیل وارد حساب شوید.")
+                if not user.get("is_premium"):
+                    raise ApiError(402, "تحلیل گرایش صنایع مخصوص اشتراک حرفه‌ای است.")
+                self._send_json(200, self.api.sector_affinity_public(params))
+                status = 200
+                return
+            # A holder-specific time series would disclose a private position.
+            if (len(rest) == 3 and rest[0] == "stocks"
+                    and rest[2] == "ownership-series"
+                    and (params.get("shareholder_id") or params.get("id_scheme"))):
+                raise ApiError(410, "نمودار اختصاصی سهام‌دار از رابط عمومی حذف شده است.")
+
+            payload, status, ctype = self._dispatch(method, path, params, body, user)
             if ctype == "csv":
                 self._send_text(200, payload,
                                 "text/csv; charset=utf-8")
@@ -4459,6 +4743,9 @@ class Handler(BaseHTTPRequestHandler):
                       flush=True)
                 return
             self._send_json(status, payload)
+        except AccountError as e:
+            status = e.status
+            self._send_json(e.status, {"detail": e.detail})
         except ApiError as e:
             status = e.status
             self._send_json(e.status, {"detail": e.detail})
@@ -4473,19 +4760,19 @@ class Handler(BaseHTTPRequestHandler):
             print("%s %s -> %d %.2fs" % (method, path, status, time.time() - t0),
                   flush=True)
 
-    def _dispatch(self, method, path, params, body):
+    def _dispatch(self, method, path, params, body, user=None):
         api = self.api
         seg = [s for s in path.split("/") if s]
         # seg: ['api','v1', ...]
         rest = seg[2:]
         if method == "GET" and rest == ["market", "overview"]:
-            return api.market_overview(), 200, "json"
+            return api.market_overview_public(), 200, "json"
         if method == "GET" and rest == ["market", "watch"]:
-            return api.market_watch(params), 200, "json"
+            return api.market_watch_public(params), 200, "json"
         if method == "GET" and rest == ["stocks", "search"]:
             return api.stocks_search(params), 200, "json"
         if method == "GET" and len(rest) == 2 and rest[0] == "stocks":
-            return api.stock_detail(rest[1]), 200, "json"
+            return api.stock_detail_public(rest[1]), 200, "json"
         if method == "GET" and len(rest) == 3 and rest[0] == "stocks":
             if rest[2] == "shareholders":
                 return api.stock_shareholders(rest[1], params), 200, "json"
@@ -4579,6 +4866,9 @@ def main():
     api = SiteApi(args.db,
                   os.path.join(args.site_dir, "site_data.sqlite"),
                   args.site_dir, args.output_dir)
+    # Account state is physically separate from the read-only market database
+    # and from the analytics sidecar. Rebuilding the sidecar never touches users.
+    api.accounts = AccountService(os.path.join(args.site_dir, "site_accounts.sqlite"))
     Handler.api = api
 
     print("tsetmc_site API server")
