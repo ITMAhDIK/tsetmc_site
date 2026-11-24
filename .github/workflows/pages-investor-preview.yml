@@ -46,6 +46,19 @@ jobs:
       - name: Audit repeated Manjil shareholder IDs
         run: python tools/audit_manjiil_identity.py
 
+      - name: Validate investor preview JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("docs/investor-preview.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+          if len(scripts) != 1:
+              raise SystemExit(f"Expected one inline script, found {len(scripts)}")
+          Path("/tmp/investor-preview.js").write_text(scripts[0], encoding="utf-8")
+          PY
+          node --check /tmp/investor-preview.js
+
       - name: Build static investor history and affinity data
         run: python tools/build_static_investor_demo.py
 
