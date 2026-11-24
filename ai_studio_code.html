@@ -1643,6 +1643,75 @@
                 </section>
               )}
 
+              {portfolio.sector_affinity && (
+                <section className="portfolio-sector-affinity rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+                  <div className="p-3 border-b border-[var(--border-subtle)]">
+                    <h3 className="font-bold text-sm">گرایش و چرخش سرمایه در گروه‌های بورسی</h3>
+                    <p className="mt-1 text-[11px] text-[var(--text-secondary)]">تخصیص فعلی، گرایش تاریخی و تغییر خالص اخیر جداگانه محاسبه می‌شوند؛ این خروجی اثبات معامله نیست.</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">ارزش مشاهده‌شده</div><div className="font-bold num mt-1">{fmtMoney(portfolio.sector_affinity.current_portfolio_value_rial, currency)}</div></div>
+                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">اطمینان داده</div><div className="font-bold num mt-1">{fmtNum(portfolio.sector_affinity.data_quality?.confidence_score)} از ۱۰۰</div></div>
+                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">پوشش ارزش‌گذاری</div><div className="font-bold num mt-1">{fmtPct(portfolio.sector_affinity.data_quality?.valuation_coverage_pct, 1)}</div></div>
+                      <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">پوشش گروه رسمی</div><div className="font-bold num mt-1">{fmtPct(portfolio.sector_affinity.data_quality?.sector_classification_coverage_pct, 1)}</div></div>
+                    </div>
+                  </div>
+                  {portfolio.sector_affinity.status === 'registry_missing' ? (
+                    <div className="p-3 text-amber-300 text-[11px]">
+                      مرجع گروه‌های رسمی هنوز ساخته نشده است. ابزار tools/sync_instrument_sectors.py را مطابق docs/sector-affinity.md اجرا کنید. تا آن زمان سیستم گروهی را حدس نمی‌زند.
+                    </div>
+                  ) : portfolio.sector_affinity.status === 'no_valued_history' ? (
+                    <div className="p-3 text-[var(--text-secondary)]">در تاریخچه، ترکیب تعداد سهام و قیمت مرجع معتبر پیدا نشد.</div>
+                  ) : (
+                    <>
+                      <div className="p-3 border-b border-[var(--border-subtle)]">
+                        <div className="font-bold mb-2">گروه رسمی TSETMC</div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-right">
+                            <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                              <tr><th className="p-2">کد / گروه</th><th className="p-2">تخصیص فعلی</th><th className="p-2">گرایش تاریخی</th><th className="p-2">چرخش خالص ۹۰ روز</th><th className="p-2">امتیاز علاقه</th></tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--border-subtle)]">
+                              {(portfolio.sector_affinity.official_groups || []).length === 0 ? (
+                                <tr><td colSpan="5" className="p-3 text-center text-[var(--text-secondary)]">گروه رسمی قابل‌محاسبه‌ای وجود ندارد.</td></tr>
+                              ) : portfolio.sector_affinity.official_groups.map(group => (
+                                <tr key={group.code}>
+                                  <td className="p-2"><div className="font-semibold">{group.label}</div><div className="text-[10px] text-[var(--text-secondary)] num">{group.code}</div></td>
+                                  <td className="p-2 num">{fmtPct(group.current_weight_pct, 2)}</td>
+                                  <td className="p-2 num">{fmtPct(group.historical_affinity_pct, 2)}</td>
+                                  <td className="p-2"><div className={group.rotation_direction === 'increasing' ? 'text-emerald-400' : group.rotation_direction === 'decreasing' ? 'text-rose-400' : 'text-[var(--text-secondary)]'}>{group.rotation_direction === 'increasing' ? 'افزایش خالص' : group.rotation_direction === 'decreasing' ? 'کاهش خالص' : 'خنثی'}</div><div className="num text-[10px]">{fmtMoney(group.recent_net_change_value_rial, currency)}</div></td>
+                                  <td className="p-2 num font-bold">{fmtNum(group.interest_score)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      <div className="p-3 border-b border-[var(--border-subtle)]">
+                        <div className="font-bold mb-2">دسته‌بندی تجمیعی داشبورد</div>
+                        {(portfolio.sector_affinity.dashboard_categories || []).length === 0 ? (
+                          <p className="text-[11px] text-[var(--text-secondary)]">هنوز نگاشت صریحی بین کدهای رسمی و دسته‌های داشبورد تعریف نشده است. فایل dashboard_sector_categories.json را پس از بازبینی گروه‌ها تکمیل کنید.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {portfolio.sector_affinity.dashboard_categories.map(category => (
+                              <div key={category.code} className="rounded bg-[var(--bg-elevated)] p-2 min-w-36">
+                                <div className="font-semibold">{category.label}</div>
+                                <div className="num mt-1">{fmtPct(category.current_weight_pct, 2)}</div>
+                                <div className="text-[10px] text-[var(--text-secondary)]">گرایش تاریخی: {fmtPct(category.historical_affinity_pct, 2)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-3 text-[10px] text-[var(--text-secondary)] space-y-1">
+                        <div>تعداد موقعیت ارزش‌گذاری‌شده: {fmtNum(portfolio.sector_affinity.data_quality?.valued_positions)}؛ تعارض هویت: {fmtNum(portfolio.sector_affinity.data_quality?.identity_conflicts)}؛ تعارض CISIN: {fmtNum(portfolio.sector_affinity.data_quality?.cisin_alias_conflicts)}؛ تغییرات قابل‌استفاده برای چرخش: {fmtNum(portfolio.sector_affinity.data_quality?.rotation_eligible)}.</div>
+                        <div>وزن امتیاز: ۵۰٪ تخصیص فعلی، ۳۰٪ گرایش تاریخی با نیمه‌عمر شش‌ماهه و ۲۰٪ چرخش خالص ۹۰ روز اخیر. تغییر خالص تعداد سهام × قیمت مرجع است، نه قیمت اجرای معامله.</div>
+                        {(portfolio.sector_affinity.warnings || []).map(warning => <div key={warning} className="text-amber-300">{warning}</div>)}
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
               {portfolio.historical_summary && (
                 <section className="portfolio-history-panel rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
                   <div className="p-3 border-b border-[var(--border-subtle)]">
