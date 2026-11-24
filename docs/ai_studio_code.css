@@ -1,0 +1,57 @@
+:root {
+  --bg-canvas: #0b0e14;
+  --bg-panel: #131722;
+  --bg-elevated: #1a202c;
+  --border-subtle: #242b3d;
+  --text-primary: #e6eaf2;
+  --text-secondary: #8b95a8;
+  --text-muted: #5f697d;
+  --up: #00c853;
+  --down: #ff3d00;
+  --accent: #2962ff;
+}
+
+.theme-light {
+  --bg-canvas: #f1f5f9;
+  --bg-panel: #ffffff;
+  --bg-elevated: #f8fafc;
+  --border-subtle: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+}
+
+body {
+  font-family: 'Vazirmatn', Tahoma, sans-serif;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  display: inline-block;
+}
+
+/* The .num rule above breaks table layout: a td/th with display
+   inline-block stops behaving as a table cell, so its content drifts
+   away from its column header. Table cells keep table-cell; inline
+   spans keep inline-block. */
+td.num, th.num {
+  display: table-cell;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
