@@ -25,10 +25,10 @@ REFERRAL_REWARD_TOMAN = 100_000
 PASSWORD_ITERATIONS = 600_000
 
 PLANS = (
-    ("pro_30", "اشتراک حرفه‌ای یک‌ماهه", 30, 2_790_000),
-    ("pro_90", "اشتراک حرفه‌ای سه‌ماهه", 90, 7_990_000),
-    ("pro_180", "اشتراک حرفه‌ای شش‌ماهه", 180, 15_490_000),
-    ("pro_365", "اشتراک حرفه‌ای یک‌ساله", 365, 28_900_000),
+    ("pro_30", "اشتراک حرفه‌ای یک‌ماهه", 30, 690_000),
+    ("pro_90", "اشتراک حرفه‌ای سه‌ماهه", 90, 1_890_000),
+    ("pro_180", "اشتراک حرفه‌ای شش‌ماهه", 180, 3_480_000),
+    ("pro_365", "اشتراک حرفه‌ای یک‌ساله", 365, 6_600_000),
 )
 
 SCHEMA = """
@@ -182,6 +182,25 @@ CREATE TABLE IF NOT EXISTS site_sector_configs (
     mapping_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS site_user_watchlist (
+    user_id INTEGER NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY(user_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_site_user_watchlist_user
+    ON site_user_watchlist(user_id, added_at);
+CREATE TABLE IF NOT EXISTS site_saved_filters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    filter_ast_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_site_saved_filters_user
+    ON site_saved_filters(user_id, created_at);
+
 CREATE TABLE IF NOT EXISTS site_login_failures (
     identifier_hash TEXT PRIMARY KEY,
     failed_count INTEGER NOT NULL,
@@ -269,12 +288,12 @@ class AccountService:
                         "name=excluded.name,duration_days=excluded.duration_days,"
                         "price_toman=excluded.price_toman,is_active=1",
                         (slug, name, days, price))
-                con.execute("UPDATE site_promo_codes SET is_active=0 WHERE code IN ('WELCOME10','WELCOME20')")
+                con.execute("UPDATE site_promo_codes SET is_active=0 WHERE code IN ('WELCOME5','WELCOME10','WELCOME20')")
                 con.execute(
                     "INSERT INTO site_promo_codes "
                     "(code,discount_percent,max_uses,used_count,new_customer_only,is_active) "
-                    "VALUES ('WELCOME5',5,2000,0,1,1) "
-                    "ON CONFLICT(code) DO UPDATE SET discount_percent=5,"
+                    "VALUES ('WELCOME15',15,2000,0,1,1) "
+                    "ON CONFLICT(code) DO UPDATE SET discount_percent=15,"
                     "max_uses=2000,new_customer_only=1,is_active=1")
         finally:
             con.close()
@@ -1280,6 +1299,82 @@ class AccountService:
                             (user["id"],))
                 con.execute("DELETE FROM site_sessions WHERE user_id=?", (user["id"],))
             return {"bootstrapped": True}
+        finally:
+            con.close()
+
+
+    def watchlist_symbols(self, user_id: int):
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT symbol FROM site_user_watchlist WHERE user_id=? ORDER BY added_at ASC",
+                (user_id,)).fetchall()
+            return [row["symbol"] for row in rows]
+        finally:
+            con.close()
+
+    def watchlist_add_symbol(self, user_id: int, symbol: str):
+        clean = str(symbol or "").strip()
+        if not clean or len(clean) > 64:
+            raise AccountError(400, "نماد معتبر نیست.")
+        con = self._connect()
+        try:
+            with con:
+                count = con.execute(
+                    "SELECT COUNT(*) FROM site_user_watchlist WHERE user_id=?",
+                    (user_id,)).fetchone()[0]
+                if count >= 100:
+                    raise AccountError(400, "حداکثر ۱۰۰ نماد می‌توانید در دیده‌بان داشته باشید.")
+                con.execute(
+                    "INSERT OR IGNORE INTO site_user_watchlist(user_id,symbol,added_at) VALUES (?,?,?)",
+                    (user_id, clean, iso_now()))
+            return {"ok": True, "symbol": clean}
+        finally:
+            con.close()
+
+    def watchlist_remove_symbol(self, user_id: int, symbol: str):
+        con = self._connect()
+        try:
+            with con:
+                con.execute(
+                    "DELETE FROM site_user_watchlist WHERE user_id=? AND symbol=?",
+                    (user_id, str(symbol or "").strip()))
+            return {"ok": True}
+        finally:
+            con.close()
+
+    def saved_filters_list(self, user_id: int):
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT id,name,filter_ast_json FROM site_saved_filters WHERE user_id=? ORDER BY id ASC",
+                (user_id,)).fetchall()
+            return {"filters": [dict(row) for row in rows]}
+        finally:
+            con.close()
+
+    def saved_filter_create(self, user_id: int, body: dict):
+        name = str(body.get("name") or "").strip()
+        ast = body.get("filter_ast")
+        if not name or len(name) > 80:
+            raise AccountError(400, "نام فیلتر باید ۱ تا ۸۰ نویسه باشد.")
+        if not isinstance(ast, dict):
+            raise AccountError(400, "ساختار فیلتر معتبر نیست.")
+        encoded = json.dumps(ast, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded) > 16_000:
+            raise AccountError(413, "حجم فیلتر ذخیره‌شده بیش از حد مجاز است.")
+        con = self._connect()
+        try:
+            with con:
+                count = con.execute(
+                    "SELECT COUNT(*) FROM site_saved_filters WHERE user_id=?",
+                    (user_id,)).fetchone()[0]
+                if count >= 100:
+                    raise AccountError(400, "حداکثر ۱۰۰ فیلتر می‌توانید ذخیره کنید.")
+                cur = con.execute(
+                    "INSERT INTO site_saved_filters(user_id,name,filter_ast_json,created_at) VALUES (?,?,?,?)",
+                    (user_id, name, encoded, iso_now()))
+            return {"id": cur.lastrowid, "name": name}
         finally:
             con.close()
 
