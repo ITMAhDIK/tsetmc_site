@@ -1655,6 +1655,53 @@
                       <div className="rounded bg-[var(--bg-elevated)] p-2"><div className="text-[10px] text-[var(--text-secondary)]">پوشش گروه رسمی</div><div className="font-bold num mt-1">{fmtPct(portfolio.sector_affinity.data_quality?.sector_classification_coverage_pct, 1)}</div></div>
                     </div>
                   </div>
+                  <div className="p-3 border-b border-[var(--border-subtle)]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-bold text-sm">نقشهٔ حرارتی علاقه‌مندی سرمایه‌گذار</h4>
+                        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">هر خانه یک گروه رسمی بورسی است. زرد پررنگ‌تر یعنی امتیاز علاقه بالاتر؛ خانهٔ بی‌رنگ یعنی امتیاز پایین‌تر یا نبود داده.</p>
+                      </div>
+                      <div className="text-[10px] text-[var(--text-secondary)]">امتیاز از ۰ تا ۱۰۰</div>
+                    </div>
+                    <div className="mt-3 flex items-center gap-2 text-[10px] text-[var(--text-secondary)]">
+                      <span>کم</span>
+                      <div className="h-2 flex-1 rounded-full border border-[var(--border-subtle)]" style={{background: 'linear-gradient(to left, rgba(255,193,7,0.02), rgba(255,193,7,0.72))'}}></div>
+                      <span>زیاد</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mt-3">
+                      {(
+                        (portfolio.sector_affinity.dashboard_categories || []).length
+                          ? portfolio.sector_affinity.dashboard_categories
+                          : (portfolio.sector_affinity.official_groups || [])
+                      ).map(group => {
+                        const score = Math.max(0, Math.min(100, Number(group.interest_score) || 0));
+                        const alpha = 0.025 + (score / 100) * 0.68;
+                        return (
+                          <div
+                            key={group.code}
+                            title={`${group.label} | امتیاز علاقه: ${score.toFixed(1)} | تخصیص فعلی: ${group.current_weight_pct}% | گرایش تاریخی: ${group.historical_affinity_pct}% | چرخش ۹۰روزه: ${group.rotation_direction}`}
+                            className="rounded-lg border p-3 min-h-[104px] flex flex-col justify-between"
+                            style={{
+                              backgroundColor: `rgba(255, 193, 7, ${alpha.toFixed(3)})`,
+                              borderColor: `rgba(234, 179, 8, ${Math.min(0.85, alpha + 0.12).toFixed(3)})`
+                            }}
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-xs leading-5">{group.label}</div>
+                              <div className="text-[10px] text-[var(--text-secondary)] num mt-1">{group.code}</div>
+                            </div>
+                            <div className="flex items-end justify-between gap-2 mt-3">
+                              <div className="text-[10px] text-[var(--text-secondary)]">امتیاز علاقه</div>
+                              <div className="font-bold text-base num">{toFa(score.toFixed(1))}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {!(portfolio.sector_affinity.dashboard_categories || []).length && !(portfolio.sector_affinity.official_groups || []).length && (
+                      <div className="text-center text-[11px] text-[var(--text-secondary)] p-4">برای این سرمایه‌گذار هنوز گروه بورسی قابل‌محاسبه‌ای ثبت نشده است.</div>
+                    )}
+                  </div>
                   {portfolio.sector_affinity.status === 'registry_missing' ? (
                     <div className="p-3 text-amber-300 text-[11px]">
                       مرجع گروه‌های رسمی هنوز ساخته نشده است. ابزار tools/sync_instrument_sectors.py را مطابق docs/sector-affinity.md اجرا کنید. تا آن زمان سیستم گروهی را حدس نمی‌زند.
