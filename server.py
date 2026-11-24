@@ -1994,12 +1994,18 @@ class SiteApi:
     def require_ready(self, sc):
         # Ready only after a full refresh completed AND the expected ownership
         # resolver schema was materialised. This rejects both partial builds
-        # and legacy v7 sidecars that still carry the old deduped_* layout.
+        # and legacy sidecars that predate the historical-holder ledger.
         row = sc.execute(
             "SELECT value FROM site_meta WHERE key='last_refresh'").fetchone()
         ownership_schema = self.meta(sc, "ownership_resolver_schema")
+        sidecar_version = self.meta(sc, "sidecar_version")
+        history_table = sc.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='site_holder_history'").fetchone()
         if (not row or not row[0]
-                or ownership_schema != "resolved-v1-source-exclusions"):
+                or ownership_schema != "resolved-v1-source-exclusions"
+                or sidecar_version != str(SIDECAR_VERSION)
+                or not history_table):
             raise ApiError(503, "داده‌ها هنوز آماده نیستند؛ ساخت کامل Sidecar لازم است."
                             + (" خطا: " + self._refresh_error
                                if self._refresh_error else ""))
