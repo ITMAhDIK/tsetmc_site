@@ -528,7 +528,7 @@ def build_portfolio_history_summary(observations):
     }
     return historical_summary, historical_symbols, history_series
 
-def classify_historical_exit(last_holder_date, latest_company_date):
+def classify_historical_exit(last_holder_date, latest_company_date, last_observed_shares=None):
     """Label absence from a later disclosure as an assumed sale, not a proven trade.
 
     A shareholder can disappear from a disclosed list by falling below the
@@ -540,7 +540,8 @@ def classify_historical_exit(last_holder_date, latest_company_date):
     if latest_company_date > last_holder_date:
         return "assumed_sold"
     if latest_company_date == last_holder_date:
-        return "currently_disclosed"
+        return ("currently_disclosed" if last_observed_shares is not None
+                else "unknown")
     return "unknown"
 
 
@@ -3926,7 +3927,8 @@ class SiteApi:
                     latest_date = latest_company_dates.get(item["ins_code"])
                     item["latest_company_observation_date"] = latest_date
                     item["exit_status"] = classify_historical_exit(
-                        item.get("last_observation_date"), latest_date)
+                        item.get("last_observation_date"), latest_date,
+                        item.get("last_observation_shares"))
                     item["exit_status_label"] = {
                         "assumed_sold": "assumed_sold",
                         "currently_disclosed": "currently_disclosed",
