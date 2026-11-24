@@ -1,11 +1,22 @@
+/*
+ * LEGACY SNAPSHOT — this file is not loaded by ai_studio_code.html.
+ * The active dashboard is implemented in the inline Babel script in that HTML file.
+ * This copy is truncated and must not be treated as the authoritative API client or formatter source.
+ */
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
 // --- 1. API Client ---
+// REVIEW NOTE (P3-H02): this duplicate base-URL heuristic has the same remote-deployment
+// limitation as the active HTML copy; keep any future migration changes synchronised.
 const API_BASE =
   window.location.protocol.startsWith('http') && window.location.port === '8000'
     ? ''
     : 'http://127.0.0.1:8000';
 
+/**
+ * Send a JSON request to the configured API base and throw on a non-success status.
+ * This legacy helper is retained only as a historical snapshot.
+ */
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
