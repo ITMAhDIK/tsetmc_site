@@ -62,14 +62,23 @@
     const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
     // --- 1. API Client ---
-    const API_BASE = window.location.protocol.startsWith('http') && window.location.port === '8000'
-      ? ''
-      : 'http://127.0.0.1:8000';
+    // The dashboard and API are same-origin; cookies must stay on this origin.
+    const API_BASE = '';
 
     async function apiFetch(path, options = {}) {
+      const method = String(options.method || 'GET').toUpperCase();
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      };
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && window.__siteCsrf) {
+        headers['X-CSRF-Token'] = window.__siteCsrf;
+      }
       const res = await fetch(`${API_BASE}${path}`, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
         ...options,
+        method,
+        credentials: 'same-origin',
+        headers,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -258,7 +267,7 @@
     // tools (trend line / rectangle / horizontal line) as an SVG overlay.
     // Markers + ohlc are memoized by the parent (JSON key) so the chart
     // is not rebuilt on every render.
-    function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = false, allowFullscreen = true, onHover = null }) {
+    function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = false, allowFullscreen = true, onHover = null, persistKey = null }) {
       const ref = useRef(null);
       const wrapRef = useRef(null);
       const chartRef = useRef(null);
@@ -271,9 +280,47 @@
       const [draft, setDraft] = useState(null);
       // Scale controls (TradingView-style, bottom-right): A = auto-scale,
       // L = logarithmic price scale.
-      const [logScale, setLogScale] = useState(false);
+      const [scaleMode, setScaleMode] = useState('normal');
       const [autoScale, setAutoScale] = useState(true);
+      const [rangeMode, setRangeMode] = useState('all');
+      const [indicators, setIndicators] = useState({
+        sma20: false, sma50: false, ema20: false, bollinger: false, volume: true,
+      });
+      const [drawingsLoaded, setDrawingsLoaded] = useState(false);
       const [, setDrawVersion] = useState(0);
+
+      useEffect(() => {
+        setDrawingsLoaded(false);
+        if (!persistKey) { setDrawings([]); setDrawingsLoaded(true); return; }
+        try {
+          const saved = window.localStorage.getItem('rn-chart:' + persistKey);
+          const parsed = saved ? JSON.parse(saved) : [];
+          setDrawings(Array.isArray(parsed) ? parsed.slice(0, 250) : []);
+        } catch (e) {
+          setDrawings([]);
+        }
+        setDrawingsLoaded(true);
+      }, [persistKey]);
+
+      useEffect(() => {
+        if (!persistKey || !drawingsLoaded) return;
+        try {
+          window.localStorage.setItem('rn-chart:' + persistKey,
+            JSON.stringify(drawings.slice(-250)));
+        } catch (e) { /* local persistence is optional when storage is unavailable */ }
+      }, [drawings, drawingsLoaded, persistKey]);
+
+      const applyRange = (mode) => {
+        setRangeMode(mode);
+        const chart = chartRef.current;
+        const count = cleanData.length;
+        if (!chart || !count) return;
+        const sessions = { '1M': 22, '3M': 66, '6M': 132, '1Y': 264, '3Y': 792, 'ALL': count };
+        const span = Math.min(count, sessions[mode] || count);
+        chart.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, count - span), to: count + 1,
+        });
+      };
       const markersKey = JSON.stringify(markers || []);
 
       const cleanData = useMemo(() => {
@@ -313,7 +360,11 @@
             vertLines: { color: isLight ? '#e2e8f0' : '#1e2536' },
             horzLines: { color: isLight ? '#e2e8f0' : '#1e2536' },
           },
-          rightPriceScale: { borderColor: isLight ? '#cbd5e1' : '#242b3d', mode: logScale ? 1 : 0, autoScale },
+          rightPriceScale: {
+            borderColor: isLight ? '#cbd5e1' : '#242b3d',
+            mode: scaleMode === 'log' ? 1 : (scaleMode === 'percentage' ? 2 : 0),
+            autoScale,
+          },
           timeScale: { borderColor: isLight ? '#cbd5e1' : '#242b3d', timeVisible: false, tickMarkFormatter: tickFmt },
           localization: {
             priceFormatter: (p) => `${p.toFixed(2)} ${unitLabel}`,
@@ -331,11 +382,97 @@
           series = chart.addAreaSeries({ lineColor: color, topColor: `${color}55`, bottomColor: `${color}05`, lineWidth: 2 });
         }
         series.setData(cleanData);
+
+        // Optional moving averages and Bollinger bands. These are computed
+        // client-side from the visible price series and never reveal holder rows.
+        const closeRows = cleanData.map(row => ({
+          time: row.time,
+          close: row.close !== undefined ? Number(row.close) : Number(row.value),
+        }));
+        const overlaySeries = [];
+        const addIndicator = (rows, lineColor, title, width = 1) => {
+          if (!rows.length) return;
+          const line = chart.addLineSeries({
+            color: lineColor, lineWidth: width, title,
+            priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          line.setData(rows);
+          overlaySeries.push(line);
+        };
+        const averageRows = (period, exponential = false) => {
+          const out = [];
+          let ema = null;
+          const alpha = 2 / (period + 1);
+          for (let i = 0; i < closeRows.length; i++) {
+            const value = closeRows[i].close;
+            if (!Number.isFinite(value)) continue;
+            if (exponential) {
+              ema = ema === null ? value : (alpha * value + (1 - alpha) * ema);
+              if (i >= period - 1) out.push({ time: closeRows[i].time, value: ema });
+            } else if (i >= period - 1) {
+              const windowRows = closeRows.slice(i - period + 1, i + 1);
+              if (windowRows.length === period) {
+                out.push({ time: closeRows[i].time,
+                  value: windowRows.reduce((sum, item) => sum + item.close, 0) / period });
+              }
+            }
+          }
+          return out;
+        };
+        if (indicators.sma20) addIndicator(averageRows(20), '#f5a623', 'SMA 20', 1);
+        if (indicators.sma50) addIndicator(averageRows(50), '#ab47bc', 'SMA 50', 1);
+        if (indicators.ema20) addIndicator(averageRows(20, true), '#26a69a', 'EMA 20', 1);
+        if (indicators.bollinger) {
+          const upper = [], lower = [];
+          for (let i = 19; i < closeRows.length; i++) {
+            const values = closeRows.slice(i - 19, i + 1).map(x => x.close);
+            if (values.some(v => !Number.isFinite(v))) continue;
+            const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+            const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+            const delta = Math.sqrt(variance) * 2;
+            upper.push({ time: closeRows[i].time, value: mean + delta });
+            lower.push({ time: closeRows[i].time, value: mean - delta });
+          }
+          addIndicator(upper, '#78909c', 'BB Upper', 1);
+          addIndicator(lower, '#78909c', 'BB Lower', 1);
+        }
+
+        // Daily volume is displayed in its own compressed lower scale.
+        if (indicators.volume && Array.isArray(ohlc) && ohlc.length) {
+          const volumeRows = ohlc.filter(row => row && row.time && Number(row.volume) > 0)
+            .map(row => ({
+              time: String(row.time).slice(0, 10),
+              value: Number(row.volume),
+              color: Number(row.close) >= Number(row.open) ? '#26a69a55' : '#ef535055',
+            }));
+          if (volumeRows.length) {
+            const volumeSeries = chart.addHistogramSeries({
+              priceScaleId: 'volume',
+              priceFormat: { type: 'volume' },
+              lastValueVisible: false,
+              priceLineVisible: false,
+            });
+            volumeSeries.setData(volumeRows);
+            chart.priceScale('volume').applyOptions({
+              scaleMargins: { top: 0.82, bottom: 0 },
+              visible: false,
+            });
+          }
+        }
+
         const parsedMarkers = JSON.parse(markersKey || '[]');
         if (parsedMarkers.length > 0) {
           try { series.setMarkers(parsedMarkers); } catch (e) { /* markers on missing times are ignored */ }
         }
         chart.timeScale().fitContent();
+        if (rangeMode !== 'all') {
+          const sessions = { '1M': 22, '3M': 66, '6M': 132, '1Y': 264, '3Y': 792 };
+          const span = Math.min(cleanData.length, sessions[rangeMode] || cleanData.length);
+          chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, cleanData.length - span), to: cleanData.length + 1,
+          });
+        }
         // Right-edge anchor: zooming out must never leave empty space on
         // the right; clamp the visible range so the last bar stays at the
         // right edge (2 bars of breathing room).
@@ -371,7 +508,7 @@
         });
         ro.observe(ref.current);
         return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
-      }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, logScale, autoScale]);
+      }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, scaleMode, autoScale, indicators]);
 
       // --- drawing overlay ---
       const pointFromEvent = (e) => {
@@ -446,6 +583,25 @@
                 const x = Math.min(xy.a.x, xy.b.x), y = Math.min(xy.a.y, xy.b.y);
                 return <rect key={d.id} x={x} y={y} width={Math.abs(xy.b.x - xy.a.x)} height={Math.abs(xy.b.y - xy.a.y)} fill="#2962ff22" stroke="#2962ff" strokeWidth={1.5} />;
               }
+              if (d.kind === 'fib') {
+                const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+                const low = Math.min(d.p1.price, d.p2.price);
+                const high = Math.max(d.p1.price, d.p2.price);
+                return <g key={d.id}>
+                  {ratios.map(ratio => {
+                    const price = low + (high - low) * ratio;
+                    const y = seriesRef.current ? seriesRef.current.priceToCoordinate(price) : null;
+                    if (y === null || y === undefined) return null;
+                    return <g key={ratio}>
+                      <line x1={Math.min(xy.a.x, xy.b.x)} y1={y}
+                        x2={Math.max(xy.a.x, xy.b.x)} y2={y}
+                        stroke="#e0a93b" strokeWidth={1} strokeDasharray="4 3" />
+                      <text x={Math.max(xy.a.x, xy.b.x) - 3} y={y - 3}
+                        fill="#e0a93b" fontSize={9} textAnchor="end">{(ratio * 100).toFixed(1)}%</text>
+                    </g>;
+                  })}
+                </g>;
+              }
               return <line key={d.id} x1={xy.a.x} y1={xy.a.y} x2={xy.b.x} y2={xy.b.y} stroke="#00c853" strokeWidth={2} />;
             })}
           </svg>
@@ -456,31 +612,38 @@
       if (cleanData.length === 0) return <div className="p-6 text-center text-xs text-[var(--text-secondary)]">سری زمانی معتبری برای رسم نمودار در این بازه موجود نیست.</div>;
       return (
         <div ref={wrapRef} className={full ? 'fixed inset-0 z-[100] bg-[var(--bg-canvas)] p-4 flex flex-col' : 'relative w-full'}>
-          {(enableDrawing || allowFullscreen) && (
-            <div className="flex flex-wrap gap-1.5 items-center mb-1.5 text-[11px]">
-              {allowFullscreen && (
-                <button onClick={() => setFull(f => !f)} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
-                  {full ? '✕ خروج از تمام‌صفحه' : '⛶ تمام‌صفحه'}
-                </button>
-              )}
-              {enableDrawing && (
-                <>
-                  <span className="text-[var(--text-secondary)]">ابزار ترسیم:</span>
-                  <button onClick={() => setTool(t => t === 'line' ? null : 'line')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'line' ? 'bg-emerald-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>╲ خط روند</button>
-                  <button onClick={() => setTool(t => t === 'rect' ? null : 'rect')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'rect' ? 'bg-blue-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>▭ مستطیل</button>
-                  <button onClick={() => setTool(t => t === 'hline' ? null : 'hline')} className={`px-2 py-0.5 rounded border border-[var(--border-subtle)] ${tool === 'hline' ? 'bg-amber-600 text-white' : 'bg-[var(--bg-elevated)]'}`}>― خط افقی</button>
-                  <button onClick={() => setDrawings(ds => ds.slice(0, -1))} disabled={drawings.length === 0} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">↩ بازگشت</button>
-                  <button onClick={() => setDrawings([])} disabled={drawings.length === 0} className="px-2 py-0.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">✕ پاک کردن ترسیم‌ها</button>
-                  {tool && <span className="text-amber-300">روی نمودار بکشید (ابزار فعال: {tool === 'line' ? 'خط روند' : tool === 'rect' ? 'مستطیل' : 'خط افقی'})</span>}
-                </>
-              )}
-            </div>
-          )}
+          <div className="flex flex-wrap gap-1 items-center mb-1.5 text-[10px]" dir="rtl">
+            {allowFullscreen && <button onClick={() => setFull(f => !f)}
+              className="px-2 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+              {full ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه'}</button>}
+            <span className="text-[var(--text-muted)]">بازه</span>
+            {['1M','3M','6M','1Y','3Y','ALL'].map(mode =>
+              <button key={mode} onClick={() => applyRange(mode)}
+                className={`px-2 py-1 rounded border ${rangeMode === mode.toLowerCase() ? 'border-blue-500 bg-blue-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>{mode}</button>)}
+            <span className="mx-1 text-[var(--text-muted)]">اندیکاتور</span>
+            {[
+              ['sma20','SMA 20'],['sma50','SMA 50'],['ema20','EMA 20'],
+              ['bollinger','Bollinger'],['volume','حجم'],
+            ].map(([key,label]) => <button key={key}
+              onClick={() => setIndicators(v => ({...v,[key]:!v[key]}))}
+              className={`px-2 py-1 rounded border ${indicators[key] ? 'border-blue-500 text-blue-300 bg-blue-500/15' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'}`}>{label}</button>)}
+            {enableDrawing && <>
+              <span className="mx-1 text-[var(--text-muted)]">ترسیم</span>
+              <button onClick={() => setTool(t => t === 'line' ? null : 'line')} className={`px-2 py-1 rounded border ${tool === 'line' ? 'bg-emerald-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>خط روند</button>
+              <button onClick={() => setTool(t => t === 'rect' ? null : 'rect')} className={`px-2 py-1 rounded border ${tool === 'rect' ? 'bg-blue-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>مستطیل</button>
+              <button onClick={() => setTool(t => t === 'hline' ? null : 'hline')} className={`px-2 py-1 rounded border ${tool === 'hline' ? 'bg-amber-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>خط افقی</button>
+              <button onClick={() => setTool(t => t === 'fib' ? null : 'fib')} className={`px-2 py-1 rounded border ${tool === 'fib' ? 'bg-amber-600 text-white' : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]'}`}>فیبوناچی</button>
+              <button onClick={() => setDrawings(ds => ds.slice(0, -1))} disabled={!drawings.length} className="px-2 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">بازگشت</button>
+              <button onClick={() => setDrawings([])} disabled={!drawings.length} className="px-2 py-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] disabled:opacity-40">پاک‌کردن</button>
+            </>}
+            {tool && <span className="text-amber-300">ابزار {tool === 'fib' ? 'فیبوناچی' : tool === 'hline' ? 'خط افقی' : tool === 'rect' ? 'مستطیل' : 'خط روند'} فعال است</span>}
+          </div>
           <div className="relative flex-1" style={full ? { minHeight: 0 } : undefined}>
             <div ref={ref} className="w-full" dir="ltr" />
             <div className="absolute bottom-1 right-1 z-10 flex gap-1" dir="ltr">
               <button title="مقیاس خودکار (Auto scale)" onClick={() => setAutoScale(a => !a)} className={`w-6 h-6 rounded border text-[11px] font-bold ${autoScale ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>A</button>
-              <button title="مقیاس لگاریتمی (Log scale)" onClick={() => setLogScale(l => !l)} className={`w-6 h-6 rounded border text-[11px] font-bold ${logScale ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>L</button>
+              <button title="مقیاس لگاریتمی" onClick={() => setScaleMode(m => m === 'log' ? 'normal' : 'log')} className={`w-6 h-6 rounded border text-[10px] font-bold ${scaleMode === 'log' ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>LOG</button>
+              <button title="مقیاس درصدی" onClick={() => setScaleMode(m => m === 'percentage' ? 'normal' : 'percentage')} className={`w-6 h-6 rounded border text-[10px] font-bold ${scaleMode === 'percentage' ? 'bg-blue-600 text-white border-blue-600' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'}`}>%</button>
             </div>
             {enableDrawing && (
               <div
