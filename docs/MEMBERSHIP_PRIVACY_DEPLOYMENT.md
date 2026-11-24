@@ -148,7 +148,7 @@ Lightweight Charts is the free open-source chart renderer; it does not include a
 - https://tradingview.github.io/lightweight-charts/plugins
 - https://tradingview.github.io/lightweight-charts/docs/plugins/intro
 
-The existing CDN version is pinned to 4.2.3 because the application currently uses its v4 API. Do not load v5 plugins into this page without a planned v5 migration and compatibility tests.
+The existing CDN version is pinned to 4.2.3 because the application currently uses its v4 API. The required `NOTICE` attribution text is copied into the repository and the chart attribution logo is explicitly kept visible. Do not remove the logo or notice. Do not load v5 plugins into this page without a planned v5 migration and compatibility tests.
 
 ## Pre-production checklist
 
