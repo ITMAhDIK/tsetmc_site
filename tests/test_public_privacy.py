@@ -1,3 +1,4 @@
+import io
 """Privacy contract tests for public market-facing API projections."""
 import server
 
@@ -114,3 +115,17 @@ def test_public_corporate_actions_are_chart_markers_only():
     assert "old_total_shares" not in event
     assert "new_total_shares" not in event
     assert "capital_increase_ratio" not in event
+
+
+def test_request_body_must_be_a_json_object():
+    class Request:
+        def __init__(self, body):
+            self.headers = {"Content-Length": str(len(body))}
+            self.rfile = io.BytesIO(body)
+
+    with pytest.raises(server.ApiError) as exc:
+        server._read_json_body(Request(b'["unexpected","array"]'))
+    assert exc.value.status == 400
+
+    assert server._read_json_body(Request(b'{"safe":true}')) == {"safe": True}
+    assert server._read_json_body(Request(b'')) == {}
