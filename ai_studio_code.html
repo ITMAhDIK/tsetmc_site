@@ -1712,7 +1712,8 @@
               )}
 
               <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-                <h3 className="font-bold mb-2">ارزش موقعیت‌های افشاشده در تاریخ‌های موجود ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
+                <h3 className="font-bold mb-1">ارزش موقعیت‌های افشاشده در تاریخ‌های موجود ({currency === 'IRT' ? 'همت' : 'همر'})</h3>
+                <p className="text-[10px] text-[var(--text-secondary)] mb-2">این نمودار فقط تعداد و قیمت معتبر همان تاریخ را جمع می‌کند؛ موجودی روزهای بدون افشا به صفر تبدیل نمی‌شود و از روزهای قبل هم به جلو منتقل نمی‌شود.</p>
                 <LWChart data={chartSeries} height={220} theme={theme} color="#2962ff" unitLabel={currency === 'IRT' ? 'همت' : 'همر'} dateMode={dateMode} />
               </div>
 
