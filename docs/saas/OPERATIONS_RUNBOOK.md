@@ -71,28 +71,30 @@ The deployment template does not configure a cloud load balancer, DNS, certifica
 
 ## Backup and restore
 
-The repository includes `scripts/saas_db_backup.sh` and `scripts/saas_db_restore_verify.sh`.
+The repository includes `scripts/saas_db_backup.sh` and `scripts/saas_db_restore_verify.sh`. Every archive produced by the backup script is age-encrypted by default; there is no plaintext backup mode in the normal backup workflow.
 
 The backup script requires:
 - `SAAS_DATABASE_URL`: the dedicated SaaS database connection.
 - `SAAS_EXPECTED_DB_NAME`: exact result expected from `SELECT current_database()`.
 - `SAAS_BACKUP_DIR`: private directory outside the Git checkout.
 
-The scripts require `psql`, `pg_dump`, `pg_restore` and `sha256sum`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. The backup script writes a custom-format archive and SHA-256 sidecar with owner-only permissions. It does not encrypt the archive itself.
+The scripts require `psql`, `pg_dump`, `pg_restore`, `sha256sum` and `age`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. The backup script requires an `SAAS_BACKUP_AGE_RECIPIENT` public key, writes a custom-format `.dump.age` archive and SHA-256 sidecar with owner-only permissions, and never reads the private identity. Store the private `age` identity only in a secret manager or offline recovery vault.
 
 Run backup from a trusted host and transfer both files to encrypted, access-controlled, off-host storage. Set cadence, retention, immutability and RPO/RTO based on the business recovery requirement. No remote backup-storage integration or retention deletion job is included.
 
 For restore verification, use a pre-created, empty PostgreSQL database on a separately confirmed non-production cluster. Required variables:
-- `SAAS_BACKUP_FILE`
-- `SAAS_RESTORE_VERIFY_DATABASE_URL`
-- `SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME`
-- `SAAS_PRODUCTION_DB_NAME`
+- `SAAS_BACKUP_FILE` (the `.dump.age` archive).
+- `SAAS_BACKUP_AGE_IDENTITY` (the protected private identity that matches the recipient key).
+- `SAAS_RESTORE_VERIFY_DATABASE_URL`.
+- `SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME`.
+- `SAAS_PRODUCTION_DB_NAME`.
+- `TMPDIR` should point to a private temporary directory with sufficient free space for the decrypted dump.
 
-The script checks the checksum and archive, rejects a database name equal to the configured production name, refuses a non-empty target schema, and restores in a single transaction without DROP/CLEAN. It then checks required core SaaS tables. The name check cannot prove that a different DB name is not on the production cluster: the operator must independently verify the target host/cluster. Never run the verification script against production.
+The script verifies the checksum of the encrypted archive, decrypts it using the protected identity, checks the custom-format archive, rejects a database name equal to the configured production name, refuses a non-empty target schema, and restores in a single transaction without DROP/CLEAN. Unencrypted `.dump` files are refused unless `SAAS_BACKUP_ALLOW_UNENCRYPTED=true` is explicitly set for a controlled local test. It then checks required core SaaS tables. The name check cannot prove that a different DB name is not on the production cluster: the operator must independently verify the target host/cluster. Never run the verification script against production.
 
 ### Verified CI rehearsal
 
-The Phase 9 CI workflow now provisions a disposable PostgreSQL 16 service, applies all migrations, creates a custom-format backup, restores it into a separate empty database, and verifies the restored schema. The workflow uses PostgreSQL 16 client tools to match the service version. This validates the script path in a clean ephemeral environment; it is **not** evidence of encrypted off-host backups, production credentials, long-term retention or a real disaster-recovery drill.
+The Phase 9 CI workflow now provisions a disposable PostgreSQL 16 service, applies all migrations, generates an ephemeral `age` key pair, creates an encrypted custom-format backup, restores it into a separate empty database using the private test identity, and verifies the restored schema. The workflow uses PostgreSQL 16 client tools to match the service version. This validates encryption/decryption and restore in a clean ephemeral environment; it is **not** evidence of off-host storage, production key custody, long-term retention or a real disaster-recovery drill.
 
 After a real restore drill, also compare expected row counts, sample critical records, validate payment/wallet invariants and record measured recovery time.
 
