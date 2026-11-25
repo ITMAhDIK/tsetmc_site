@@ -124,6 +124,23 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests(
  bank_account_token TEXT NOT NULL, requested_at TIMESTAMPTZ NOT NULL DEFAULT now(), reviewed_at TIMESTAMPTZ,
  reviewed_by UUID REFERENCES users(id) ON DELETE RESTRICT, paid_at TIMESTAMPTZ, review_note TEXT
 );
+-- Durable outbox: provider failures/retries must not duplicate business rewards.
+CREATE TABLE IF NOT EXISTS notification_outbox(
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ user_id UUID REFERENCES users(id) ON DELETE RESTRICT,
+ channel VARCHAR(12) NOT NULL CHECK(channel IN ('sms','email')),
+ template_code VARCHAR(80) NOT NULL,
+ destination_token TEXT NOT NULL,
+ payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+ idempotency_key VARCHAR(140) NOT NULL UNIQUE,
+ status VARCHAR(12) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sent','failed')),
+ attempts SMALLINT NOT NULL DEFAULT 0,
+ next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ sent_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending ON notification_outbox(status,next_attempt_at);
+
 CREATE TABLE IF NOT EXISTS referral_codes(
  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT, code VARCHAR(24) NOT NULL UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -195,6 +212,21 @@ SELECT user_id,
  COALESCE(SUM(amount_toman) FILTER(WHERE bucket='gift'),0)::BIGINT AS gift_balance_toman,
  COALESCE(SUM(amount_toman),0)::BIGINT AS total_balance_toman
 FROM wallet_ledger_entries GROUP BY user_id;
+
+-- Pending/approved withdrawals reserve cash and reduce the amount that can
+-- be requested again. Gift credit never enters this view.
+CREATE OR REPLACE VIEW wallet_withdrawable_balances AS
+SELECT b.user_id,
+       b.cash_balance_toman,
+       COALESCE(r.reserved_toman,0)::BIGINT AS reserved_toman,
+       GREATEST(b.cash_balance_toman-COALESCE(r.reserved_toman,0),0)::BIGINT AS available_to_withdraw_toman
+FROM wallet_balances b
+LEFT JOIN (
+ SELECT user_id,SUM(amount_toman) AS reserved_toman
+ FROM withdrawal_requests WHERE status IN ('requested','approved')
+ GROUP BY user_id
+) r ON r.user_id=b.user_id;
+
 
 -- App services must lock rows and atomically reserve pending withdrawals,
 -- verify/settle provider payments and post all ledger entries with idempotency.
