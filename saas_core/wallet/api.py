@@ -31,10 +31,11 @@ def ledger(limit:int=50,user=Depends(current_user),conn=Depends(get_conn)):
         raise HTTPException(status_code=422,detail=str(exc))
 
 @router.post("/withdrawals",status_code=201)
-def withdrawal(body:WithdrawalBody,user=Depends(current_user),conn=Depends(get_conn)):
+def withdrawal(body:WithdrawalBody,idempotency_key:str=Header(alias="Idempotency-Key",min_length=8,max_length=120),
+               user=Depends(current_user),conn=Depends(get_conn)):
     try:
         row=request_withdrawal(conn,user_id=user["id"],amount_toman=body.amount_toman,
-                               bank_account_id=body.bank_account_id)
+                               bank_account_id=body.bank_account_id,idempotency_key=idempotency_key)
         return {"withdrawal":row}
     except PermissionError as exc:
         raise HTTPException(status_code=403,detail=str(exc))
