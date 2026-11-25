@@ -9,7 +9,7 @@ from .repository import (authenticate_session, consume_phone_otp, login_password
     register_password_user, request_phone_otp, revoke_session, create_session)
 from .service import AuthenticationError
 
-app = FastAPI(title="Tloomberg SaaS API", version="0.3.0")
+app = FastAPI(title="Tloomberg SaaS API", version="0.4.0")
 bearer = HTTPBearer(auto_error=False)
 COOKIE_NAME = "tloomberg_session"
 COOKIE_SECURE = os.getenv("SAAS_COOKIE_SECURE","true").lower() == "true"
@@ -104,10 +104,9 @@ def logout(request:Request,response:Response,credentials:HTTPAuthorizationCreden
     response.delete_cookie(COOKIE_NAME,path="/",httponly=True,secure=COOKIE_SECURE,samesite="lax")
     return {"authenticated":False}
 
-# Imported after auth dependencies are defined to avoid circular initialization.
 from saas_core.account.api import router as account_router
-app.include_router(account_router)
-
-# Payment endpoints share the same isolated SaaS connection and session policy.
 from saas_core.payments.api import router as payments_router
+from saas_core.wallet.api import router as wallet_router
+app.include_router(account_router)
 app.include_router(payments_router)
+app.include_router(wallet_router)
