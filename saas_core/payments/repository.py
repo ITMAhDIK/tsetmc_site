@@ -124,12 +124,18 @@ def mark_attempt_failed(conn, *, attempt_id: UUID, failure_code: str, failure_me
 
 def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider: str,
                             verified, payload_sha256: str):
-    """Atomically deduplicate provider event, mark paid and activate one subscription."""
+    """Settle once; accept only an exact replay of the already-processed provider event."""
+    import re
+
+    if not isinstance(payload_sha256,str) or not re.fullmatch(r"[0-9a-fA-F]{64}",payload_sha256):
+        raise ValueError("payload_sha256 must be a 64-character SHA-256 hex digest")
+
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT o.id,o.user_id,o.plan_id,o.amount_toman,o.status,
-                          p.duration_days,a.provider,a.provider_order_id,a.status AS attempt_status
+                          p.duration_days,a.provider,a.provider_order_id,a.amount_toman AS attempt_amount_toman,
+                          a.status AS attempt_status
                    FROM payment_orders o
                    JOIN plans p ON p.id=o.plan_id
                    JOIN payment_attempts a ON a.order_id=o.id
@@ -141,8 +147,37 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                 raise LookupError("payment attempt not found")
             if row["provider_order_id"] != verified.provider_order_id:
                 raise PaymentRejected("provider order reference mismatch")
+
+            # A retry is successful only when it is byte-for-byte bound to the
+            # same provider event, order and payload digest. Reusing an event ID
+            # with different content is a hard rejection, not a silent dedupe.
+            cur.execute(
+                """SELECT order_id,event_type,payload_sha256,processing_status
+                   FROM gateway_events WHERE provider=%s AND provider_event_id=%s""",
+                (provider,verified.provider_event_id),
+            )
+            prior_event = cur.fetchone()
+            if prior_event:
+                same_event = (
+                    prior_event["order_id"] == order_id
+                    and prior_event["event_type"] == "payment.verified"
+                    and prior_event["payload_sha256"].strip() == payload_sha256
+                )
+                if not same_event:
+                    raise PaymentRejected("provider event ID was reused with different event data")
+                if prior_event["processing_status"] == "processed":
+                    return {"already_processed":True,"order_id":order_id}
+                raise PaymentRejected("provider event was already received and needs reconciliation")
+
+            if row["status"] == "paid":
+                raise PaymentRejected("order is already settled by a different provider event")
+            if row["status"] not in {"created","pending"}:
+                raise PaymentRejected("order is not eligible for settlement")
             if row["attempt_status"] != "pending":
                 raise PaymentRejected("payment attempt is not awaiting verification")
+            if row["attempt_amount_toman"] != row["amount_toman"]:
+                raise PaymentRejected("payment attempt amount does not match the order")
+
             validate_verified_payment(expected_amount_toman=row["amount_toman"],verified=verified)
             cur.execute(
                 """INSERT INTO gateway_events
@@ -153,24 +188,23 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
             )
             event = cur.fetchone()
             if not event:
+                # This can occur when the same provider event is concurrently
+                # delivered for another order. Re-read and verify the exact tuple.
                 cur.execute(
-                    "SELECT processing_status FROM gateway_events WHERE provider=%s AND provider_event_id=%s",
+                    """SELECT order_id,event_type,payload_sha256,processing_status
+                       FROM gateway_events WHERE provider=%s AND provider_event_id=%s""",
                     (provider,verified.provider_event_id),
                 )
                 duplicate = cur.fetchone()
-                if duplicate and duplicate["processing_status"] == "processed":
-                    return {"already_processed": True, "order_id": order_id}
+                if (duplicate and duplicate["order_id"] == order_id
+                        and duplicate["event_type"] == "payment.verified"
+                        and duplicate["payload_sha256"].strip() == payload_sha256
+                        and duplicate["processing_status"] == "processed"):
+                    return {"already_processed":True,"order_id":order_id}
                 raise PaymentRejected("provider event was already received and needs reconciliation")
-            if row["status"] == "paid":
-                cur.execute(
-                    "UPDATE gateway_events SET processing_status='processed',processed_at=now() WHERE id=%s",
-                    (event["id"],),
-                )
-                return {"already_processed": True, "order_id": order_id}
-            if row["status"] not in {"created","pending"}:
-                raise PaymentRejected("order is not eligible for settlement")
+
             cur.execute(
-                "UPDATE payment_attempts SET status='verified',verified_at=now() WHERE id=%s",
+                "UPDATE payment_attempts SET status='verified',verified_at=now(),settled_at=now() WHERE id=%s",
                 (attempt_id,),
             )
             cur.execute(
@@ -201,7 +235,7 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                 "UPDATE gateway_events SET processing_status='processed',processed_at=now() WHERE id=%s",
                 (event["id"],),
             )
-            return {"already_processed": False, "order_id": order_id}
+            return {"already_processed":False,"order_id":order_id}
 
 
 def find_attempt_by_provider_order(conn, *, provider: str, provider_order_id: str):

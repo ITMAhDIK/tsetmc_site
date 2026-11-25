@@ -426,13 +426,36 @@ def adjust_wallet(conn, *, actor_id: UUID, user_id: UUID, bucket: str,
     reason=reason.strip()
     if not 3<=len(reason)<=500:
         raise ValueError("reason must contain 3-500 characters")
+    if not idempotency_key or len(idempotency_key)>120:
+        raise ValueError("valid idempotency key is required")
+    entry_type="admin_credit" if amount_toman>0 else "admin_debit"
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute("SELECT status FROM users WHERE id=%s FOR UPDATE",(user_id,))
             if not cur.fetchone():
                 raise LookupError("user not found")
         _lock_wallet(conn,user_id)
+
+        # Resolve exact retries before checking the post-debit balance. Otherwise
+        # a previously successful debit could appear unaffordable when replayed.
         with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id,user_id,bucket,entry_type,amount_toman,reference_type,
+                          reference_id,description
+                   FROM wallet_ledger_entries WHERE idempotency_key=%s FOR UPDATE""",
+                (idempotency_key,),
+            )
+            existing=cur.fetchone()
+            if existing:
+                expected=(user_id,bucket,entry_type,amount_toman,
+                          "admin_adjustment",None,reason)
+                actual=tuple(existing[key] for key in
+                    ("user_id","bucket","entry_type","amount_toman",
+                     "reference_type","reference_id","description"))
+                if actual!=expected:
+                    raise ValueError("idempotency key was reused with different wallet adjustment data")
+                return existing
+
             cur.execute(
                 """SELECT COALESCE(SUM(amount_toman),0)::bigint AS balance
                    FROM wallet_ledger_entries WHERE user_id=%s AND bucket=%s""",
@@ -441,9 +464,10 @@ def adjust_wallet(conn, *, actor_id: UUID, user_id: UUID, bucket: str,
             balance=cur.fetchone()["balance"]
             if balance+amount_toman<0:
                 raise ValueError("adjustment cannot make the wallet bucket negative")
+
             entry=post_ledger_entry(
                 conn,user_id=user_id,bucket=bucket,
-                entry_type="admin_credit" if amount_toman>0 else "admin_debit",
+                entry_type=entry_type,
                 amount_toman=amount_toman,idempotency_key=idempotency_key,
                 reference_type="admin_adjustment",reference_id=None,
                 description=reason,

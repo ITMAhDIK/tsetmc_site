@@ -1,0 +1,137 @@
+services:
+  saas-migrate:
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
+    command:
+      - python
+      - scripts/manage_saas_migrations.py
+      - --apply
+      - --grant-role
+      - ${SAAS_APP_DATABASE_ROLE:?Set SAAS_APP_DATABASE_ROLE to the pre-created low-privilege runtime role}
+    environment:
+      APP_ENV: production
+      SAAS_MIGRATION_DATABASE_URL: ${SAAS_MIGRATION_DATABASE_URL:?Set a dedicated migration-owner connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  saas-api:
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
+    command:
+      - uvicorn
+      - saas_core.auth.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${SAAS_WEB_WORKERS:-2}
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - 172.31.240.10
+    environment:
+      APP_ENV: production
+      SAAS_DATABASE_URL: ${SAAS_DATABASE_URL:?Set the separate low-privilege runtime database connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+      SAAS_COOKIE_SECURE: "true"
+      SAAS_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public API hostnames}
+      SAAS_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS browser origins}
+      SAAS_OTP_HMAC_SECRET: ${SAAS_OTP_HMAC_SECRET:?Set a dedicated random OTP HMAC secret}
+      SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set a dedicated Fernet key}
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+      SAAS_DB_POOL_MIN: ${SAAS_DB_POOL_MIN:-1}
+      SAAS_DB_POOL_MAX: ${SAAS_DB_POOL_MAX:-8}
+      SAAS_DB_POOL_TIMEOUT_SECONDS: ${SAAS_DB_POOL_TIMEOUT_SECONDS:-5}
+    depends_on:
+      saas-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 200
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+      interval: 20s
+      timeout: 4s
+      start_period: 25s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.20
+
+  saas-edge:
+    image: caddy:2-alpine
+    environment:
+      SAAS_DOMAIN: ${SAAS_DOMAIN:?Set the public API domain with DNS pointing to this host}
+    depends_on:
+      saas-api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.saas:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 100
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1
+      interval: 20s
+      timeout: 4s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.10
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  saas-backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24

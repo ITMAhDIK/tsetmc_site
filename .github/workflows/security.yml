@@ -1,0 +1,185 @@
+name: SaaS security checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-security-${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install dependency auditor
+        run: python -m pip install --upgrade pip pip-audit
+      - name: Audit declared SaaS dependencies
+        run: pip-audit --requirement requirements-saas.txt
+
+  static-analysis:
+    name: High-severity Python security analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install static analyzer
+        run: python -m pip install --upgrade pip bandit
+      - name: Scan SaaS backend
+        run: bandit --recursive saas_core scripts --severity-level high --confidence-level high
+      - name: Validate operational shell scripts
+        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh
+      - name: Compile Python service and operations tools
+        run: python -m compileall -q saas_core scripts
+      - name: Build the non-root SaaS API image
+        run: |
+          docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-saas-api:ci)"
+          test "$image_user" = "10001:10001"
+      - name: Validate production Compose configuration
+        env:
+          SAAS_API_IMAGE: tloomberg-saas-api:ci
+          SAAS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_DATABASE_URL: postgresql://runtime:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas
+          SAAS_APP_DATABASE_ROLE: saas_runtime
+          SAAS_DOMAIN: api.example.com
+          SAAS_TRUSTED_HOSTS: api.example.com
+          SAAS_ALLOWED_ORIGINS: https://app.example.com
+          SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
+          SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: |
+          docker compose -f docker-compose.saas.production.yml config --quiet
+          docker run --rm \
+            -e SAAS_DOMAIN=api.example.com \
+            -v "$GITHUB_WORKSPACE/Caddyfile.saas:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  backup-restore-drill:
+    name: PostgreSQL backup and isolated restore drill
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tloomberg_saas_backup_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tloomberg_saas_backup_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      PGPASSWORD: postgres
+      SAAS_BACKUP_DATABASE_URL: postgresql://saas_backup@127.0.0.1:5432/tloomberg_saas_backup_test
+      SAAS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_saas_backup_test
+      SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas_backup_test
+      SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Set up Python for the migration runner
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install PostgreSQL driver for migration runner
+        run: python -m pip install "psycopg[binary]>=3.2,<4"
+      - name: Install age encryption tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+      - name: Generate ephemeral age identity for the backup drill
+        run: |
+          age-keygen -o "$RUNNER_TEMP/saas-backup-age-identity.txt"
+          echo "SAAS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/saas-backup-age-identity.txt")" >> "$GITHUB_ENV"
+          echo "SAAS_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/saas-backup-age-identity.txt" >> "$GITHUB_ENV"
+      - name: Install PostgreSQL 16 client wrappers matching the server
+        run: |
+          mkdir -p "$RUNNER_TEMP/postgres16-bin"
+          for tool in psql pg_dump pg_restore createdb; do
+            cat > "$RUNNER_TEMP/postgres16-bin/$tool" <<EOF
+          #!/usr/bin/env bash
+          exec docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            -e PGPASSWORD \
+            postgres:16-alpine $tool "\$@"
+          EOF
+            chmod 700 "$RUNNER_TEMP/postgres16-bin/$tool"
+          done
+          echo "$RUNNER_TEMP/postgres16-bin" >> "$GITHUB_PATH"
+      - name: Build the disposable SaaS schema with migration checksums
+        run: |
+          python scripts/manage_saas_migrations.py --apply
+          python scripts/manage_saas_migrations.py --check
+      - name: Create dedicated read-only backup role
+        run: |
+          psql "$SAAS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE saas_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_saas_backup_test TO saas_backup; GRANT USAGE ON SCHEMA public TO saas_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO saas_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO saas_backup;"
+          backup_grants="$(psql "$SAAS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 \
+            -c "SELECT has_table_privilege('saas_backup','public.users','SELECT') AND NOT has_table_privilege('saas_backup','public.users','INSERT') AND NOT has_table_privilege('saas_backup','public.users','UPDATE') AND NOT has_table_privilege('saas_backup','public.users','DELETE') AND NOT has_schema_privilege('saas_backup','public','CREATE')")"
+          test "$backup_grants" = "t"
+      - name: Verify remote backup connections reject unverified TLS
+        env:
+          SAAS_BACKUP_DATABASE_URL: postgresql://saas_backup@db.example.invalid:5432/tloomberg_saas
+          SAAS_EXPECTED_DB_NAME: tloomberg_saas
+          SAAS_BACKUP_DIR: ${{ runner.temp }}/saas-backup-tls-negative
+        run: |
+          if bash scripts/saas_db_backup.sh >"$RUNNER_TEMP/backup-tls-negative.log" 2>&1; then
+            echo "Backup script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/backup-tls-negative.log"
+      - name: Create checksum-verified backup
+        run: |
+          export SAAS_BACKUP_DIR="$RUNNER_TEMP/saas-backups"
+          bash scripts/saas_db_backup.sh
+      - name: Verify remote restore targets reject unverified TLS
+        env:
+          SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_saas_restore_verify
+          SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
+          SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
+          SAAS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/saas-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          if SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh >"$RUNNER_TEMP/restore-tls-negative.log" 2>&1; then
+            echo "Restore script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/restore-tls-negative.log"
+      - name: Create isolated restore target
+        run: createdb --host=127.0.0.1 --username=postgres tloomberg_saas_restore_verify
+      - name: Restore and verify the backup
+        env:
+          SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify
+          SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
+          SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
+          SAAS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/saas-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh
+      - name: Verify restored schema and data boundary
+        run: |
+          psql "postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify" \
+            -X -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.users'), to_regclass('public.payment_orders'), to_regclass('public.wallet_ledger_entries'), to_regclass('public.admin_audit_logs')"
