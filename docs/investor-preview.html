@@ -139,10 +139,10 @@
   <div class="wrap">
     <header class="top">
       <div>
-        <div class="eyebrow">TSETMC · نسخه آزمایشی داده‌محور</div>
+        <div class="eyebrow">TLOOMBERG · پوستهٔ آمادهٔ اتصال به سرور</div>
         <h1>تاریخچه و گرایش سرمایه‌گذار</h1>
-        <div class="sub">این صفحه خروجی واقعی پردازش ۱۴ فایل اکسلِ بارگذاری‌شده را نمایش می‌دهد: جستجوی شناسه، شرکت‌های مشاهده‌شده، دفتر تغییرات مالکیت و نقشهٔ حرارتی علاقه‌مندی در گروه‌های بورسی.</div>
-        <div class="scope" id="scopePills"><span class="pill">در حال بارگذاری اطلاعات…</span></div>
+        <div class="sub">محیط بررسی تاریخچهٔ ارزش پرتفوی، تغییرات مالکیت و گرایش سرمایه‌گذار به گروه‌های بورسی. این رابط فعلاً بدون داده اجرا می‌شود و در مرحلهٔ بعد به سرور متصل خواهد شد.</div>
+        <div class="scope" id="scopePills"><span class="pill">بدون دادهٔ متصل</span><span class="pill">آمادهٔ اتصال به سرور</span></div>
       </div>
       <div class="top-actions">
         <a class="btn" href="./index.html">بازگشت به داشبورد اصلی</a>
@@ -172,12 +172,12 @@
             <option value="date">مرتب‌سازی: آخرین تاریخ</option>
           </select>
         </div>
-        <div id="investorList" class="list"><div class="loading">در حال خواندن داده‌ها…</div></div>
-        <div class="status" id="listStatus">—</div>
+        <div id="investorList" class="list"><div class="loading">فهرست سرمایه‌گذاران پس از اتصال به سرور در این قسمت نمایش داده می‌شود.</div></div>
+        <div class="status" id="listStatus">در انتظار دادهٔ سرور</div>
       </aside>
 
       <main class="detail" id="detail">
-        <section class="panel empty">یک سرمایه‌گذار را از فهرست سمت راست انتخاب کنید تا تاریخچه و ماتریس علاقه‌مندی او نمایش داده شود.</section>
+        <section class="panel empty">این بخش آماده است، اما هنوز داده‌ای به آن متصل نشده است. پس از آماده‌شدن سرویس سمت سرور، با انتخاب شناسهٔ سرمایه‌گذار تاریخچه و گرایش او در همین صفحه نمایش داده می‌شود.</section>
       </main>
     </div>
   </div>
@@ -290,8 +290,10 @@
         <div class="person-meta"><span class="num">${safe(displayId(p))}</span><span>${fa(p.n_companies)} شرکت</span></div>
         <div class="person-meta"><span>${symbols || "—"}<br><span class="small-muted">ارزش تا ${safe(p.portfolio_value_date || "بدون ارزش‌گذاری")}</span></span><strong class="num">${money(p.current_portfolio_value_rial)}</strong></div>
       </div>`;
-    }).join("") : '<div class="loading">موردی مطابق جستجو پیدا نشد.</div>';
-    $("listStatus").textContent = `${fa(rows.length)} از ${fa(data?.investors?.length || 0)} شناسه`;
+    }).join("") : '<div class="loading">هنوز داده‌ای برای این فهرست بارگذاری نشده است؛ اطلاعات بعداً از سرور تأمین می‌شود.</div>';
+    $("listStatus").textContent = (data?.investors || []).length
+      ? `${fa(rows.length)} از ${fa(data.investors.length)} شناسه`
+      : "در انتظار اتصال داده";
     $("investorList").querySelectorAll("[data-id]").forEach(node => {
       node.addEventListener("click", () => {
         pushViewState();
@@ -652,7 +654,7 @@ function enableNetworkCanvases(root=$("detail")){root.querySelectorAll("svg[data
     if (selectedGroupCode) { renderSelectedGroupDetail((data?.investors||[]).find(p=>p.id===selectedId),selectedGroupCode); return; }
     const person = (data?.investors || []).find(p => p.id === selectedId);
     if (!person) {
-      $("detail").innerHTML = '<section class="panel empty">یک سرمایه‌گذار را از فهرست انتخاب کنید.</section>';
+      $("detail").innerHTML = '<section class="panel empty">هنوز داده‌ای برای نمایش وجود ندارد. پس از اتصال سرور، جزئیات سرمایه‌گذار در این بخش قرار می‌گیرد.</section>';
       return;
     }
     const affinity = person.sector_affinity || {};
@@ -781,39 +783,27 @@ function enableNetworkCanvases(root=$("detail")){root.querySelectorAll("svg[data
     enableNetworkCanvases();
   }
 
-  async function init() {
-    try {
-      const response = await fetch("./data/investor_demo.json", {cache:"no-store"});
-      if (!response.ok) throw new Error("HTTP "+response.status);
-      data = await response.json();
-      const m = data.summary || {};
-      $("scopePills").innerHTML = [
-        `<span class="pill">${fa(m.workbook_count)} فایل اکسل</span>`,
-        `<span class="pill">${fa(m.symbol_count)} نماد</span>`,
-        `<span class="pill">${fa(m.investor_count)} شناسهٔ ترکیبی</span>`,
-        `<span class="pill">${fa(m.history_rows_with_composite_id_and_date)} رکورد تاریخچه</span>`,
-        `<span class="pill">${safe(m.earliest_observation_date)} تا ${safe(m.latest_observation_date)}</span>`
-      ].join("");
-      const groupOptions = new Map();
-      for (const person of (data.investors || [])) for (const group of (person.sector_affinity?.official_groups || [])) {
-        if (!groupOptions.has(String(group.code))) groupOptions.set(String(group.code),group.label||String(group.code));
-      }
-      $("groupFilter").innerHTML = '<option value="">همهٔ گروه‌ها</option>' + [...groupOptions.entries()].sort((a,b)=>a[1].localeCompare(b[1],"fa")).map(([code,label])=>'<option value="'+safe(code)+'">'+safe(label)+' · '+safe(code)+'</option>').join("");
-      $("search").addEventListener("input",renderList);
-      $("groupFilter").addEventListener("change",renderList);
-      $("typeFilter").addEventListener("change",renderList);
-      $("sortFilter").addEventListener("change",renderList);
-      if(history.state?.investorPreview) restoreViewState(history.state);
-      else {
-        history.replaceState({investorPreview:currentViewState()},"");
-        renderList();
-        const initial=getFiltered()[0];
-        if(initial){selectedId=initial.id;renderList();renderDetail();}
-      }
-    } catch(error) {
-      $("scopePills").innerHTML='<span class="pill">خطا در دریافت دادهٔ آزمایشی</span>';
-      $("investorList").innerHTML='<div class="loading">فایل دادهٔ ایستا بارگذاری نشد: '+safe(error.message)+'</div>';
-      $("detail").innerHTML='<section class="panel empty">خروجی داده در دسترس نیست. وضعیت انتشار GitHub Actions را بررسی کنید.</section>';
+  function init() {
+    // Deliberately start with an empty data model. This tab is a UI shell;
+    // its investor history will be supplied by the local API/server later.
+    data = { summary: {}, investors: [], companies: {}, official_universe: [] };
+    $("scopePills").innerHTML =
+      '<span class="pill">بدون دادهٔ متصل</span>' +
+      '<span class="pill">آمادهٔ اتصال به سرور</span>';
+    $("groupFilter").innerHTML = '<option value="">همهٔ گروه‌ها</option>';
+    $("investorList").innerHTML =
+      '<div class="loading">فهرست سرمایه‌گذاران پس از اتصال به سرور در این قسمت نمایش داده می‌شود.</div>';
+    $("listStatus").textContent = "در انتظار دادهٔ سرور";
+    $("search").addEventListener("input", renderList);
+    $("groupFilter").addEventListener("change", renderList);
+    $("typeFilter").addEventListener("change", renderList);
+    $("sortFilter").addEventListener("change", renderList);
+    if (history.state?.investorPreview) {
+      restoreViewState(history.state);
+    } else {
+      history.replaceState({investorPreview:currentViewState()}, "");
+      renderList();
+      renderDetail();
     }
   }
   init();
