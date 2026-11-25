@@ -107,7 +107,7 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
                 ('{"otp":"' + otp + '","purpose":"' + purpose + '"}').encode("utf-8")
             ).decode("ascii")
             cur.execute("""INSERT INTO notification_outbox(channel,template_code,destination_token,payload,idempotency_key)
-                VALUES ('sms','phone_otp',%s,jsonb_build_object('encrypted_payload',%s),%s)""",
+                VALUES ('sms','phone_otp',%s,jsonb_build_object('encrypted_payload',%s::text),%s)""",
                 (encrypted_phone,encrypted_payload,f"otp:{phone}:{purpose}:{digest[:16]}"))
 
 def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login"):
