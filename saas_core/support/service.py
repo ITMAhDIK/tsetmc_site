@@ -9,7 +9,7 @@ from uuid import UUID
 
 TICKET_STATUSES = {"open", "waiting", "answered", "closed"}
 TICKET_PRIORITIES = {"low", "normal", "high", "urgent"}
-MAX_OPEN_TICKETS_PER_DAY = 10
+MAX_TICKETS_PER_DAY = 10
 
 
 def clean_text(value: str, *, field: str, minimum: int = 1, maximum: int = 10_000) -> str:
@@ -50,7 +50,7 @@ def create_ticket(conn, *, user_id: UUID, subject: str, body: str, category: str
                    WHERE user_id=%s AND created_at >= now() - interval '24 hours'""",
                 (user_id,),
             )
-            if cur.fetchone()["total"] >= MAX_OPEN_TICKETS_PER_DAY:
+            if cur.fetchone()["total"] >= MAX_TICKETS_PER_DAY:
                 raise PermissionError("daily ticket creation limit reached")
             cur.execute(
                 """INSERT INTO tickets(user_id,subject,category,status,priority)
