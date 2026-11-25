@@ -427,11 +427,12 @@ def adjust_wallet(conn, *, actor_id: UUID, user_id: UUID, bucket: str,
     if not 3<=len(reason)<=500:
         raise ValueError("reason must contain 3-500 characters")
     with conn.transaction():
-        _lock_wallet(conn,user_id)
         with conn.cursor() as cur:
             cur.execute("SELECT status FROM users WHERE id=%s FOR UPDATE",(user_id,))
             if not cur.fetchone():
                 raise LookupError("user not found")
+        _lock_wallet(conn,user_id)
+        with conn.cursor() as cur:
             cur.execute(
                 """SELECT COALESCE(SUM(amount_toman),0)::bigint AS balance
                    FROM wallet_ledger_entries WHERE user_id=%s AND bucket=%s""",
