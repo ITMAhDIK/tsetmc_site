@@ -90,7 +90,7 @@ jobs:
           --health-retries 20
     env:
       PGPASSWORD: postgres
-      SAAS_BACKUP_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_backup_test
+      SAAS_BACKUP_DATABASE_URL: postgresql://saas_backup@127.0.0.1:5432/tloomberg_saas_backup_test
       SAAS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_saas_backup_test
       SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas_backup_test
       SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
@@ -131,6 +131,17 @@ jobs:
         run: |
           python scripts/manage_saas_migrations.py --apply
           python scripts/manage_saas_migrations.py --check
+      - name: Create dedicated read-only backup role
+        run: |
+          psql "$SAAS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE saas_backup LOGIN PASSWORD 'postgres';
+          GRANT CONNECT ON DATABASE tloomberg_saas_backup_test TO saas_backup;
+          GRANT USAGE ON SCHEMA public TO saas_backup;
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO saas_backup;
+          GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO saas_backup;
+          SQL
+          psql "$SAAS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 \
+            -c "SELECT NOT has_table_privilege('saas_backup','public.users','INSERT') AND has_table_privilege('saas_backup','public.users','SELECT')"
       - name: Create checksum-verified backup
         run: |
           export SAAS_BACKUP_DIR="$RUNNER_TEMP/saas-backups"
