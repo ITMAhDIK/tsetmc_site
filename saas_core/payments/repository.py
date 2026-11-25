@@ -78,6 +78,13 @@ def create_payment_attempt(conn, *, order_id: UUID, provider: str):
                 # would roll the cancellation back. Expiry is handled by a worker. 
                 raise ValueError("order has expired")
             cur.execute(
+                """SELECT id FROM payment_attempts
+                   WHERE order_id=%s AND status IN ('initiated','pending')
+                   LIMIT 1 FOR UPDATE""", (order_id,)
+            )
+            if cur.fetchone():
+                raise ValueError("an active checkout already exists for this order")
+            cur.execute(
                 """INSERT INTO payment_attempts(order_id,provider,amount_toman,currency,status)
                    VALUES (%s,%s,%s,'toman','initiated')
                    RETURNING id,order_id,provider,amount_toman,status""",
