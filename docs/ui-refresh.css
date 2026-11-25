@@ -285,6 +285,150 @@ body { font-size:14px; line-height:1.75; }
   .portfolio-apply-button { width:100%; }
 }
 
-/* Tloomberg brand identity */
+/* Unified light/dark theme behavior */
+.app-shell {
+  color-scheme: dark;
+  transition: background-color .2s ease, color .2s ease;
+}
+.app-shell.theme-light {
+  color-scheme: light;
+}
+.theme-light .app-header,
+.theme-light .app-main,
+.theme-light .app-main .bg-\[var\(--bg-panel\)\],
+.theme-light .app-main .bg-\[var\(--bg-elevated\)\] {
+  color: var(--text-primary);
+}
+.theme-light .app-main .bg-slate-800\/50,
+.theme-light .app-main .bg-slate-700\/60 {
+  background: var(--bg-elevated) !important;
+}
+.theme-light .app-main .text-slate-300,
+.theme-light .app-main .text-slate-400 {
+  color: var(--text-secondary) !important;
+}
+.theme-light .app-main .border-slate-500\/30 {
+  border-color: var(--border-subtle) !important;
+}
+.theme-light .app-main input,
+.theme-light .app-main select,
+.theme-light .app-main textarea,
+.theme-light .app-header input {
+  color-scheme: light;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell, .app-shell * { transition-duration: .01ms !important; }
+}
+
+/* Integrated investor history tab — shares the dashboard shell and theme */
+.investor-history-page { display:grid; gap:16px; min-width:0; }
+.investor-history-hero {
+  padding:clamp(19px,2.7vw,30px);
+  border:1px solid color-mix(in srgb,var(--accent) 28%,var(--border-subtle));
+  border-radius:19px;
+  background:
+    radial-gradient(ellipse at 8% 0%,color-mix(in srgb,var(--accent) 17%,transparent),transparent 25rem),
+    linear-gradient(120deg,color-mix(in srgb,var(--bg-panel) 94%,var(--accent)),var(--bg-panel));
+  box-shadow:0 12px 34px rgba(0,0,0,.10);
+}
+.investor-history-eyebrow {
+  color:var(--accent); font-size:10px; font-weight:900; letter-spacing:1.1px;
+  direction:ltr; text-align:right;
+}
+.investor-history-hero-row {
+  display:flex; align-items:flex-end; justify-content:space-between; gap:18px; margin-top:9px;
+}
+.investor-history-hero h1 { margin:0; color:var(--text-primary); font-size:clamp(20px,2.4vw,27px); font-weight:900; }
+.investor-history-hero p { margin:7px 0 0; color:var(--text-secondary); font-size:12px; line-height:1.9; }
+.investor-history-status,.investor-history-tag {
+  display:inline-flex; align-items:center; gap:7px; flex:0 0 auto;
+  border:1px solid color-mix(in srgb,var(--up) 33%,var(--border-subtle));
+  border-radius:999px; padding:6px 11px; color:var(--up);
+  background:color-mix(in srgb,var(--up) 7%,var(--bg-panel)); font-size:10px; font-weight:800;
+}
+.investor-history-status i { width:7px; height:7px; border-radius:50%; background:var(--up); box-shadow:0 0 0 4px color-mix(in srgb,var(--up) 14%,transparent); }
+.investor-history-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px; }
+.investor-history-metric,.investor-history-panel {
+  min-width:0; border:1px solid var(--border-subtle); border-radius:15px;
+  background:var(--bg-panel); box-shadow:0 7px 23px rgba(0,0,0,.07);
+}
+.investor-history-metric { display:grid; gap:5px; padding:15px 17px; }
+.investor-history-metric span { color:var(--text-secondary); font-size:10px; font-weight:700; }
+.investor-history-metric strong { color:var(--text-primary); font-size:22px; line-height:1.3; }
+.investor-history-metric small { color:var(--text-muted); font-size:9px; }
+.investor-history-layout { display:grid; grid-template-columns:minmax(235px,.72fr) minmax(0,2fr); gap:13px; align-items:start; }
+.investor-history-search { padding:16px; }
+.investor-history-panel-heading {
+  display:flex; justify-content:space-between; align-items:flex-start; gap:10px; padding:16px 17px;
+  border-bottom:1px solid var(--border-subtle);
+}
+.investor-history-panel-heading h2 { margin:0; color:var(--text-primary); font-size:13px; font-weight:900; }
+.investor-history-panel-heading p { margin:5px 0 0; color:var(--text-secondary); font-size:10px; line-height:1.8; }
+.investor-history-tag {
+  border-color:var(--border-subtle); color:var(--text-secondary);
+  background:var(--bg-elevated); font-size:9px;
+}
+.investor-history-search .investor-history-panel-heading { padding:0 0 14px; }
+.investor-history-search-placeholder {
+  display:flex; align-items:center; gap:9px; min-height:43px; margin-top:15px; padding:8px 11px;
+  border:1px solid var(--border-subtle); border-radius:10px; background:var(--bg-canvas);
+  color:var(--text-muted); font-size:10px;
+}
+.investor-history-search-placeholder span:first-child { color:var(--accent); font-size:19px; }
+.investor-history-empty-message {
+  margin-top:12px; padding:13px; border:1px dashed var(--border-subtle); border-radius:11px;
+  background:color-mix(in srgb,var(--bg-elevated) 72%,transparent);
+  color:var(--text-secondary); font-size:10px; line-height:2;
+}
+.investor-history-source {
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding-top:12px; margin-top:12px; border-top:1px solid var(--border-subtle); font-size:10px;
+}
+.investor-history-source span { color:var(--text-muted); }
+.investor-history-source strong { color:var(--text-secondary); font-size:10px; }
+.investor-history-content { display:grid; gap:13px; min-width:0; }
+.investor-history-chart-placeholder {
+  position:relative; min-height:270px; margin:15px; overflow:hidden;
+  border:1px dashed var(--border-subtle); border-radius:12px; background:var(--bg-canvas);
+}
+.investor-history-chart-grid {
+  position:absolute; inset:0; opacity:.8;
+  background-image:
+    linear-gradient(to bottom,color-mix(in srgb,var(--border-subtle) 55%,transparent) 1px,transparent 1px),
+    linear-gradient(to left,color-mix(in srgb,var(--border-subtle) 45%,transparent) 1px,transparent 1px);
+  background-size:100% 25%,20% 100%;
+}
+.investor-history-chart-empty {
+  position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:8px; padding:20px; text-align:center;
+}
+.investor-history-chart-empty span { color:var(--accent); font-size:30px; opacity:.8; }
+.investor-history-chart-empty strong { color:var(--text-secondary); font-size:11px; }
+.investor-history-chart-empty small { color:var(--text-muted); font-size:9px; }
+.investor-history-secondary-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; }
+.investor-history-mini-panel { overflow:hidden; }
+.investor-history-mini-empty {
+  display:flex; align-items:center; gap:10px; min-height:105px; padding:17px;
+  color:var(--text-muted); font-size:10px;
+}
+.investor-history-mini-empty span { color:var(--accent); font-size:21px; }
+.investor-history-footnote { margin:0; color:var(--text-muted); font-size:10px; line-height:1.9; }
+.theme-light .investor-history-hero { box-shadow:0 12px 28px rgba(26,54,90,.06); }
+.theme-light .investor-history-metric,
+.theme-light .investor-history-panel { box-shadow:0 5px 18px rgba(26,54,90,.045); }
+
+@media(max-width:900px) {
+  .investor-history-layout { grid-template-columns:minmax(0,1fr); }
+  .investor-history-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:600px) {
+  .investor-history-hero-row { align-items:flex-start; flex-direction:column; }
+  .investor-history-secondary-grid { grid-template-columns:minmax(0,1fr); }
+  .investor-history-chart-placeholder { min-height:220px; margin:10px; }
+  .investor-history-metric { padding:12px; }
+  .investor-history-metric strong { font-size:19px; }
+}
+
+/* Tloomberg V2 brand asset */
 .app-brand-logo{width:30px;height:30px;object-fit:contain;display:block;flex:0 0 auto;border-radius:8px}
 @media(max-width:680px){.app-brand-logo{width:27px;height:27px}}
