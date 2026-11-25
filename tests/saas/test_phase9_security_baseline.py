@@ -82,3 +82,30 @@ def test_phone_normalization_accepts_e164_and_rejects_invalid_values():
 def test_otp_verification_rejects_wrong_digest(monkeypatch):
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "s" * 48)
     assert verify_otp_hash("0" * 64, "+989121234567", "login", "123456") is False
+
+
+def test_migration_history_rejects_checksum_drift_and_unknown_versions():
+    from scripts.manage_saas_migrations import MigrationError, _validate_history
+
+    migrations = [
+        ("001_initial", "a" * 64, "SELECT 1;"),
+        ("002_payments", "b" * 64, "SELECT 2;"),
+    ]
+
+    assert _validate_history(migrations, {"001_initial": "a" * 64}) == [
+        ("002_payments", "b" * 64, "SELECT 2;")
+    ]
+
+    with pytest.raises(MigrationError, match="changed after application"):
+        _validate_history(migrations, {"001_initial": "c" * 64})
+
+    with pytest.raises(MigrationError, match="unknown migration versions"):
+        _validate_history(migrations, {"099_unknown": "d" * 64})
+
+
+def test_migration_role_name_allow_list_rejects_sql_fragments():
+    from scripts.manage_saas_migrations import MigrationError, ROLE_NAME
+
+    assert ROLE_NAME.fullmatch("saas_runtime") is not None
+    for value in ('saas_runtime; DROP ROLE postgres', "Runtime", "x" * 63, ""):
+        assert ROLE_NAME.fullmatch(value) is None
