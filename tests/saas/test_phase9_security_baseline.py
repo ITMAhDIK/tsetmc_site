@@ -26,7 +26,7 @@ def test_password_hash_is_argon2id_and_verifies_without_storing_plaintext():
     "password",
     [
         "short",
-        "leading space password",
+        " leading space password",
         "trailing space password ",
         "x" * 257,
     ],
