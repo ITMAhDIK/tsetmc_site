@@ -650,3 +650,46 @@ def test_access_log_uses_route_template_and_never_records_query_string(db, clien
     assert "phone" not in entries[-1]
     assert "token" not in entries[-1]
     assert "do-not-log" not in json.dumps(entries)
+
+
+def test_standard_user_is_denied_every_staff_and_admin_read_route(db, client):
+    user, token = _new_user(db, "phase9_rbac_route_matrix")
+    from saas_core.auth.api import app
+
+    denied_prefixes = ("/admin/", "/analytics/admin/", "/support/manage/")
+    protected_get_routes = sorted(
+        path
+        for path, methods in app.openapi()["paths"].items()
+        if path.startswith(denied_prefixes) and "get" in methods
+    )
+    assert protected_get_routes
+
+    path_ids = {
+        "user_id": str(uuid4()),
+        "ticket_id": str(uuid4()),
+        "subscription_id": str(uuid4()),
+        "order_id": str(uuid4()),
+        "withdrawal_id": str(uuid4()),
+        "plan_id": str(uuid4()),
+    }
+
+    checked = []
+    for template in protected_get_routes:
+        path = template
+        for name, value in path_ids.items():
+            path = path.replace("{" + name + "}", value)
+        params = {}
+        if template == "/analytics/admin/heatmap":
+            params["page_path"] = "/"
+        elif template == "/analytics/admin/funnel":
+            params["steps"] = ["page_view", "click"]
+        response = client.get(path, headers=_auth(token), params=params)
+        assert response.status_code == 403, (
+            f"Standard user unexpectedly accessed {template}: "
+            f"{response.status_code} {response.text[:200]}"
+        )
+        checked.append(template)
+
+    # Keep a visible test assertion that the full current protected GET surface
+    # was exercised, so newly added routes automatically enter this matrix.
+    assert len(checked) == len(protected_get_routes)
