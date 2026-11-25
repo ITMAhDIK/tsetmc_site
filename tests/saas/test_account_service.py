@@ -99,19 +99,17 @@ def test_single_session_revocation_is_scoped_to_user_and_session():
 
 
 def test_account_routes_are_registered_on_saas_api():
-    routes = {
-        (route.path, tuple(sorted(route.methods or [])))
-        for route in app.routes
-    }
+    # Inspect the generated OpenAPI contract instead of FastAPI internals.
+    paths = app.openapi()["paths"]
     expected = {
-        ("/account/profile", ("GET",)),
-        ("/account/profile", ("PATCH",)),
-        ("/account/preferences", ("GET",)),
-        ("/account/preferences", ("PATCH",)),
-        ("/account/sessions", ("GET",)),
-        ("/account/sessions/{session_id}", ("DELETE",)),
-        ("/account/sessions/revoke-others", ("POST",)),
-        ("/account/subscriptions", ("GET",)),
-        ("/account/features", ("GET",)),
+        "/account/profile": {"get", "patch"},
+        "/account/preferences": {"get", "patch"},
+        "/account/sessions": {"get"},
+        "/account/sessions/{session_id}": {"delete"},
+        "/account/sessions/revoke-others": {"post"},
+        "/account/subscriptions": {"get"},
+        "/account/features": {"get"},
     }
-    assert expected <= routes
+    for path, methods in expected.items():
+        assert path in paths
+        assert methods <= set(paths[path])
