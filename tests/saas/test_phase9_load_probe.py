@@ -138,3 +138,21 @@ def test_load_probe_reports_http_failures_without_exposing_response_bodies(monke
     assert result["status_counts"] == {"200": 2, "503": 2}
     assert result["network_or_server_failures"] == 2
     assert "private" not in json.dumps(result)
+
+
+def test_load_probe_drops_overdue_requests_instead_of_creating_a_burst():
+    import time
+    from scripts.saas_staging_load_probe import _request_once
+
+    class NeverCallOpener:
+        def open(self, *_args, **_kwargs):
+            pytest.fail("overdue work must not be dispatched")
+
+    result = _request_once(
+        NeverCallOpener(),
+        "https://staging-api.example.com/health",
+        time.monotonic() - 5,
+        max_lateness_seconds=0.1,
+    )
+    assert result.status_code == 0
+    assert result.error_type == "schedule_overrun"
