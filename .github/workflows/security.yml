@@ -55,11 +55,17 @@ jobs:
           SAAS_DATABASE_URL: postgresql://runtime:placeholder@db.internal:5432/tloomberg_saas
           SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas
           SAAS_APP_DATABASE_ROLE: saas_runtime
+          SAAS_DOMAIN: api.example.com
           SAAS_TRUSTED_HOSTS: api.example.com
           SAAS_ALLOWED_ORIGINS: https://app.example.com
           SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
           SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-        run: docker compose -f docker-compose.saas.production.yml config --quiet
+        run: |
+          docker compose -f docker-compose.saas.production.yml config --quiet
+          docker run --rm \
+            -e SAAS_DOMAIN=api.example.com \
+            -v "$GITHUB_WORKSPACE/Caddyfile.saas:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   backup-restore-drill:
     name: PostgreSQL backup and isolated restore drill
