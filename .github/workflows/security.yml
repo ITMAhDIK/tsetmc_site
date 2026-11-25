@@ -45,3 +45,56 @@ jobs:
         run: bandit --recursive saas_core --severity-level high --confidence-level high
       - name: Validate operational shell scripts
         run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh
+
+  backup-restore-drill:
+    name: PostgreSQL backup and isolated restore drill
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tloomberg_saas_backup_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tloomberg_saas_backup_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      PGPASSWORD: postgres
+      SAAS_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_backup_test
+      SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
+      SAAS_BACKUP_DIR: ${{ runner.temp }}/saas-backups
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+      - name: Build the disposable SaaS schema
+        run: |
+          for migration in saas_core/schema/*.sql; do
+            echo "Applying $migration"
+            psql "$SAAS_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Create checksum-verified backup
+        run: bash scripts/saas_db_backup.sh
+      - name: Create isolated restore target
+        run: createdb --host=127.0.0.1 --username=postgres tloomberg_saas_restore_verify
+      - name: Restore and verify the backup
+        env:
+          SAAS_BACKUP_FILE: ${{ runner.temp }}/saas-backups
+          SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify
+          SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
+          SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
+        run: |
+          dump_file="$(find "$SAAS_BACKUP_FILE" -maxdepth 1 -type f -name '*.dump' -print -quit)"
+          test -n "$dump_file"
+          SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh
+      - name: Verify restored schema and data boundary
+        run: |
+          psql "postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify" \
+            -X -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.users'), to_regclass('public.payment_orders'), to_regclass('public.wallet_ledger_entries'), to_regclass('public.admin_audit_logs')"
