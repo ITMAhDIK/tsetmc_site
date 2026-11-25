@@ -119,7 +119,7 @@ def test_production_configuration_requires_explicit_https_hosts_and_separate_sec
     monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
     monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["api.example.com"])
     monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
-    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas")
+    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas?sslmode=verify-full")
     monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "tloomberg_saas")
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
@@ -138,7 +138,7 @@ def test_production_configuration_rejects_wildcard_hosts_and_shared_secrets(monk
     monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
     monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["*"])
     monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
-    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas")
+    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas?sslmode=verify-full")
     monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "tloomberg_saas")
     shared_key = Fernet.generate_key().decode("ascii")
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", shared_key)
@@ -183,3 +183,20 @@ def test_production_database_connection_fails_closed_without_lifespan_pool(monke
         next(auth_api.get_conn())
     assert exc.value.status_code == 503
     assert "pool is not ready" in exc.value.detail
+
+
+def test_production_configuration_requires_verified_postgres_tls(monkeypatch):
+    from cryptography.fernet import Fernet
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
+    monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["api.example.com"])
+    monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
+    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas")
+    monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "tloomberg_saas")
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+
+    with pytest.raises(ConfigurationError, match="sslmode=verify-full"):
+        auth_api.validate_production_configuration()
