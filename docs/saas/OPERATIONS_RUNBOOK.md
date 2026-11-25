@@ -12,6 +12,7 @@ Use separate PostgreSQL identities:
 
 - **Migration owner:** can create/alter the SaaS schema, migrations ledger and triggers. Its URL is supplied only to the one-shot migration service as `SAAS_MIGRATION_DATABASE_URL`.
 - **Runtime application role:** a pre-created, non-owner LOGIN role with only SaaS application DML/sequence permissions. Its URL is supplied to the API as `SAAS_DATABASE_URL`.
+- **Backup role:** a separate read-only role with only CONNECT, schema USAGE, table SELECT and sequence SELECT privileges. Its URL is supplied to the backup utility as `SAAS_BACKUP_DATABASE_URL`.
 
 Never run the web process as PostgreSQL superuser, database owner or migration owner. Create the runtime role out-of-band using your database administration/secret-management process; do not embed its password in this repository or in shell history.
 
@@ -26,6 +27,7 @@ python scripts/manage_saas_migrations.py --check
 
 The runner:
 - requires `SAAS_MIGRATION_DATABASE_URL` and an exact `SAAS_EXPECTED_DATABASE_NAME` match;
+- requires remote database connection strings to explicitly use `sslmode=verify-full` (loopback-only local tests may omit TLS);
 - serializes migration runs with a PostgreSQL advisory lock;
 - applies migrations in filename/version order, one transaction per migration;
 - records SHA-256 checksums and application timestamps in `saas_schema_migrations`;
@@ -94,7 +96,7 @@ The backup script requires:
 - `SAAS_EXPECTED_DB_NAME`: exact result expected from `SELECT current_database()`.
 - `SAAS_BACKUP_DIR`: private directory outside the Git checkout.
 
-The scripts require `psql`, `pg_dump`, `pg_restore`, `sha256sum` and `age`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. The backup script requires `SAAS_BACKUP_DATABASE_URL` for a dedicated read-only backup role and an `SAAS_BACKUP_AGE_RECIPIENT` public key, writes a custom-format `.dump.age` archive and SHA-256 sidecar with owner-only permissions, and never reads the private identity. Store the private `age` identity only in a secret manager or offline recovery vault.
+The scripts require `psql`, `pg_dump`, `pg_restore`, `sha256sum` and `age`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. For non-loopback database hosts, include `sslmode=verify-full` in each runtime, migration, backup and restore connection string; provide the provider CA via `sslrootcert` when it is not in the system trust store. The backup script requires `SAAS_BACKUP_DATABASE_URL` for a dedicated read-only backup role and an `SAAS_BACKUP_AGE_RECIPIENT` public key, writes a custom-format `.dump.age` archive and SHA-256 sidecar with owner-only permissions, and never reads the private identity. Store the private `age` identity only in a secret manager or offline recovery vault.
 
 Run backup from a trusted host and transfer both files to encrypted, access-controlled, off-host storage. Set cadence, retention, immutability and RPO/RTO based on the business recovery requirement. No remote backup-storage integration or retention deletion job is included.
 
