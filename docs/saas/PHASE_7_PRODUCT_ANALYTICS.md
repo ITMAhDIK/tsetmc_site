@@ -10,7 +10,7 @@
 - Only allow-listed, low-risk fields are stored. Query strings, fragments, full URLs and free-form text are rejected or ignored. Numeric/UUID path segments are normalized to :id.
 - Aggregate reports include overview KPIs, top pages, click heatmap bins, sequential event funnels, and weekly D1/D7/D30-style retention cohorts (D7 and D30 use the day-7/day-30 activity windows).
 - Aggregate reports suppress page/funnel/heatmap groups with fewer than five distinct users.
-- Aggregate reporting requires analytics.read. User-level event history is separate and requires analytics.users.read; the migration grants this permission only to superadmin.
+- Aggregate reporting requires analytics.read. User-level event history requires analytics.users.read, and retention cleanup requires analytics.retention.manage; both elevated permissions are granted only to superadmin.
 - A retention purge helper is included; a trusted scheduler/operator must invoke it according to SAAS_ANALYTICS_RETENTION_DAYS (default 365 days).
 
 ## API routes
