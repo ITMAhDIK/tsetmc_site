@@ -101,7 +101,6 @@ jobs:
           age-keygen -o "$RUNNER_TEMP/saas-backup-age-identity.txt"
           echo "SAAS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/saas-backup-age-identity.txt")" >> "$GITHUB_ENV"
           echo "SAAS_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/saas-backup-age-identity.txt" >> "$GITHUB_ENV"
-          echo "SAAS_BACKUP_ENCRYPTION_REQUIRED=true" >> "$GITHUB_ENV"
       - name: Install PostgreSQL 16 client wrappers matching the server
         run: |
           mkdir -p "$RUNNER_TEMP/postgres16-bin"
@@ -134,6 +133,7 @@ jobs:
           SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
           SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
           SAAS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/saas-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
         run: |
           dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
           test -n "$dump_file"
