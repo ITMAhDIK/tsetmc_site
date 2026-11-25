@@ -82,7 +82,7 @@
     .table-wrap{overflow:auto;border:1px solid #263249;border-radius:9px}
     table{width:100%;table-layout:fixed;border-collapse:collapse;white-space:normal;font-size:11px;direction:rtl}
     th{background:#1a202c;color:#aebbd0;text-align:right;font-weight:600;white-space:normal;line-height:1.7;overflow-wrap:anywhere}
-    td,th{padding:10px 9px;border-bottom:1px solid #263044;vertical-align:middle;overflow-wrap:anywhere}
+    td,th{padding:10px 9px;border-bottom:1px solid #263044;vertical-align:middle;overflow-wrap:anywhere;text-align:right}
     td.num{white-space:nowrap;overflow-wrap:normal}
     td .symbol-btn{white-space:nowrap}
     .table-wrap td,.table-wrap th{min-width:0}
@@ -526,7 +526,7 @@
         <div class="company-kpis"><div class="company-kpi"><span>نمادهای رسمی گروه</span><strong>${fa(universe.length)}</strong></div><div class="company-kpi"><span>نمادهای این گروه در پرتفوی</span><strong>${fa(positions.length)}</strong></div><div class="company-kpi"><span>امتیاز علاقه‌مندی</span><strong>${group?pct(group.interest_score):"—"}</strong></div><div class="company-kpi"><span>کد گروه</span><strong class="num">${safe(code)}</strong></div></div>
         <div class="table-wrap"><table><thead><tr><th>نماد</th><th>زیرگروه رسمی</th><th>وضعیت در پرتفوی</th><th>تعداد سهامداران</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="empty-cell">نمادی برای این گروه در رجیستری موجود نیست.</td></tr>'}</tbody></table></div>
       </section>`;
-    $("backToInvestorGraph")?.addEventListener("click",()=>{renderDetail();$("ownershipGraphSection")?.scrollIntoView({behavior:"smooth",block:"start"});});
+    $("backToInvestorGraph")?.addEventListener("click",()=>{selectedGroupCode=null;renderDetail();$("ownershipGraphSection")?.scrollIntoView({behavior:"smooth",block:"start"});commitViewState();});
     $("detail").querySelectorAll("[data-company]").forEach(btn=>btn.addEventListener("click",()=>{
       pushViewState();selectedCompanyCode=btn.getAttribute("data-company");renderCompanyDetail(selectedCompanyCode);window.scrollTo(0,0);commitViewState();
     }));
