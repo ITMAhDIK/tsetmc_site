@@ -98,6 +98,27 @@ The Phase 9 CI workflow now provisions a disposable PostgreSQL 16 service, appli
 
 After a real restore drill, also compare expected row counts, sample critical records, validate payment/wallet invariants and record measured recovery time.
 
+## Staging performance probe
+
+A bounded, read-only load probe is available at `scripts/saas_staging_load_probe.py`. It is intended for an explicitly approved staging deployment only. It refuses HTTP URLs, local/private IPs, internal/test-only hostnames, path/query-bearing URLs, an unconfirmed hostname or missing non-production attestation. At runtime it resolves DNS and refuses any non-public address.
+
+Required protected environment:
+
+- `SAAS_LOAD_TEST_BASE_URL`: bare HTTPS origin, e.g. `https://staging-api.example.com`.
+- `SAAS_LOAD_TEST_CONFIRM_HOST`: exact lowercase hostname from the URL.
+- `SAAS_LOAD_TEST_APPROVAL=I_CONFIRM_NON_PRODUCTION_STAGING`: explicit operator attestation.
+- Optional bounds: `SAAS_LOAD_TEST_DURATION_SECONDS` (1–120), `SAAS_LOAD_TEST_REQUESTS_PER_SECOND` (1–10) and `SAAS_LOAD_TEST_CONCURRENCY` (1–25).
+
+Run:
+
+```bash
+python scripts/saas_staging_load_probe.py
+```
+
+It sends only GET requests to `/health` and `/ready`, does not follow redirects, and reports response counts plus p50/p95/max latency. It never prints response bodies, query strings, tokens or request headers. Any non-2xx response or network failure makes the command return non-zero.
+
+This harness is a safe first-pass availability/latency check, not a benchmark or a full load/soak/failure test. Run only in a change-approved staging window, start with low limits, monitor database connections and host resources, and record the build, host, test bounds, observed latency and errors. Do not infer production capacity, SLOs or autoscaling thresholds from this probe.
+
 ## Monitoring and alerting requirements
 
 No monitoring provider or alert destination has been selected. The following telemetry is required before public traffic:
