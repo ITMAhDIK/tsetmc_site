@@ -1,0 +1,417 @@
+"""PostgreSQL-backed integration tests for the complete SaaS schema and critical flows.
+
+These tests run only when SAAS_TEST_DATABASE_URL and SAAS_TEST_DATABASE_NAME point
+at an explicitly named disposable database. GitHub Actions provisions a fresh
+PostgreSQL 16 service and applies every migration before running pytest.
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4
+
+import psycopg
+import pytest
+from fastapi.testclient import TestClient
+from psycopg.rows import dict_row
+
+from saas_core.auth.repository import create_session, register_password_user
+from saas_core.auth.service import hash_session_token
+from saas_core.admin.service import adjust_wallet
+from saas_core.wallet.wallet_repository import post_ledger_entry
+from saas_core.payments.domain import PaymentRejected, PaymentNotConfigured, PaymentRequest, VerifiedPayment
+from saas_core.payments.gateways import get_gateway
+from saas_core.payments.repository import (
+    attach_provider_checkout,
+    create_payment_attempt,
+    create_subscription_order,
+    settle_verified_payment,
+)
+
+_DSN = os.environ.get("SAAS_TEST_DATABASE_URL", "").strip()
+_EXPECTED_DB = os.environ.get("SAAS_TEST_DATABASE_NAME", "").strip()
+
+pytestmark = pytest.mark.skipif(
+    not _DSN or not _EXPECTED_DB,
+    reason="PostgreSQL integration tests require an explicitly named disposable SAAS_TEST_DATABASE_URL",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def verify_disposable_saas_database():
+    if not _DSN or not _EXPECTED_DB:
+        pytest.skip("disposable PostgreSQL database is not configured")
+    with psycopg.connect(_DSN, row_factory=dict_row) as conn:
+        current = conn.execute("SELECT current_database() AS name").fetchone()["name"]
+        if current != _EXPECTED_DB:
+            pytest.fail(
+                "Refusing to run integration tests: connected database name does not match "
+                "SAAS_TEST_DATABASE_NAME"
+            )
+        required = ("users", "sessions", "payment_orders", "wallet_ledger_entries",
+                    "tickets", "analytics_events", "payment_reconciliation_notes")
+        row = conn.execute(
+            "SELECT " + ", ".join(
+                f"to_regclass('public.{name}') IS NOT NULL AS {name}" for name in required
+            )
+        ).fetchone()
+        missing = [name for name in required if not row[name]]
+        if missing:
+            pytest.fail(
+                "SaaS migrations are incomplete in the disposable integration database: "
+                + ", ".join(missing)
+            )
+
+
+@pytest.fixture()
+def db(verify_disposable_saas_database):
+    conn = psycopg.connect(_DSN, row_factory=dict_row)
+    # Truncate user-owned application data between tests. Reference tables
+    # (roles, permissions and plans) and their seeded rows remain in place.
+    conn.execute("TRUNCATE TABLE users CASCADE")
+    conn.commit()
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+@pytest.fixture()
+def client(verify_disposable_saas_database):
+    from saas_core.auth.api import app, get_conn
+
+    def test_connection():
+        with psycopg.connect(_DSN, row_factory=dict_row) as conn:
+            yield conn
+
+    previous = app.dependency_overrides.get(get_conn)
+    app.dependency_overrides[get_conn] = test_connection
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_conn, None)
+        else:
+            app.dependency_overrides[get_conn] = previous
+
+
+def _new_user(conn, username: str):
+    user = register_password_user(
+        conn,
+        username,
+        "integration-test-password-2026",
+        display_name=username.title(),
+    )
+    token, _expires = create_session(conn, user["id"])
+    conn.commit()
+    return user, token
+
+
+def _grant_role(conn, user_id, role_code: str):
+    conn.execute(
+        """INSERT INTO user_roles(user_id,role_id)
+           SELECT %s,id FROM roles WHERE code=%s
+           ON CONFLICT DO NOTHING""",
+        (user_id, role_code),
+    )
+    conn.commit()
+
+
+def _auth(token: str):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_real_postgres_authentication_session_hash_and_revocation(db, client):
+    from saas_core.auth.repository import revoke_session
+
+    user, token = _new_user(db, "phase9_auth_user")
+
+    with db.cursor() as cur:
+        cur.execute("SELECT token_hash FROM sessions WHERE user_id=%s", (user["id"],))
+        stored_hash = cur.fetchone()["token_hash"]
+    assert stored_hash == hash_session_token(token)
+    assert token not in stored_hash
+
+    response = client.get("/auth/me", headers=_auth(token))
+    assert response.status_code == 200
+    assert response.json()["user"]["id"] == str(user["id"])
+
+    revoke_session(db, token)
+    db.commit()
+    response = client.get("/auth/me", headers=_auth(token))
+    assert response.status_code == 401
+
+
+def test_rbac_support_internal_note_isolation_and_account_ownership(db, client):
+    customer, customer_token = _new_user(db, "phase9_customer")
+    outsider, outsider_token = _new_user(db, "phase9_outsider")
+    support, support_token = _new_user(db, "phase9_support")
+    superadmin, superadmin_token = _new_user(db, "phase9_superadmin")
+    _grant_role(db, support["id"], "support")
+    _grant_role(db, superadmin["id"], "superadmin")
+
+    opened = client.post(
+        "/support/tickets",
+        headers=_auth(customer_token),
+        json={"subject": "Account access problem", "message": "I cannot access my account."},
+    )
+    assert opened.status_code == 201
+    ticket_id = opened.json()["ticket"]["id"]
+
+    note = client.post(
+        f"/support/manage/tickets/{ticket_id}/internal-notes",
+        headers=_auth(support_token),
+        json={"message": "Internal investigation note - never show to customer."},
+    )
+    assert note.status_code == 201
+
+    customer_view = client.get(
+        f"/support/tickets/{ticket_id}", headers=_auth(customer_token)
+    )
+    assert customer_view.status_code == 200
+    customer_bodies = [item["body"] for item in customer_view.json()["messages"]]
+    assert "Internal investigation note - never show to customer." not in customer_bodies
+
+    outsider_view = client.get(
+        f"/support/tickets/{ticket_id}", headers=_auth(outsider_token)
+    )
+    assert outsider_view.status_code == 404
+
+    staff_view = client.get(
+        f"/support/manage/tickets/{ticket_id}", headers=_auth(support_token)
+    )
+    assert staff_view.status_code == 200
+    assert any(
+        message["is_internal_note"]
+        for message in staff_view.json()["messages"]
+    )
+
+    # The support role alone is never sufficient to enter the separate
+    # superadmin console, even though it can access support management.
+    assert client.get("/admin/dashboard", headers=_auth(support_token)).status_code == 403
+    assert client.get("/admin/dashboard", headers=_auth(customer_token)).status_code == 403
+    assert client.get("/admin/dashboard", headers=_auth(superadmin_token)).status_code == 200
+
+
+def test_analytics_requires_consent_deduplicates_and_limits_user_history(db, client):
+    user, token = _new_user(db, "phase9_analytics_user")
+    superadmin, superadmin_token = _new_user(db, "phase9_analytics_admin")
+    _grant_role(db, superadmin["id"], "superadmin")
+
+    event_id = str(uuid4())
+    event = {
+        "client_event_id": event_id,
+        "event_name": "page_view",
+        "page_path": f"/company/{123456}",
+        "component_id": "company-summary",
+        "element_role": "region",
+        "typed_text": "this must never be stored",
+    }
+
+    denied = client.post(
+        "/analytics/events", headers=_auth(token), json={"events": [event]}
+    )
+    assert denied.status_code == 403
+
+    consent = client.put(
+        "/analytics/consent",
+        headers=_auth(token),
+        json={"product_analytics": True},
+    )
+    assert consent.status_code == 200
+    assert consent.json()["consent"]["product_analytics"] is True
+
+    first = client.post(
+        "/analytics/events", headers=_auth(token), json={"events": [event]}
+    )
+    assert first.status_code == 200
+    assert first.json() == {"received": 1, "inserted": 1, "duplicates": 0}
+
+    duplicate = client.post(
+        "/analytics/events", headers=_auth(token), json={"events": [event]}
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json() == {"received": 1, "inserted": 0, "duplicates": 1}
+
+    regular_history = client.get(
+        f"/analytics/admin/users/{user['id']}/events", headers=_auth(token)
+    )
+    assert regular_history.status_code == 403
+    admin_history = client.get(
+        f"/analytics/admin/users/{user['id']}/events", headers=_auth(superadmin_token)
+    )
+    assert admin_history.status_code == 200
+    assert len(admin_history.json()["events"]) == 1
+
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT page_path,metadata FROM analytics_events WHERE user_id=%s",
+            (user["id"],),
+        )
+        stored = cur.fetchone()
+    assert stored["page_path"] == "/company/:id"
+    assert "typed_text" not in stored["metadata"]
+
+    revoked = client.put(
+        "/analytics/consent",
+        headers=_auth(token),
+        json={"product_analytics": False},
+    )
+    assert revoked.status_code == 200
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS total FROM analytics_events WHERE user_id=%s", (user["id"],))
+        assert cur.fetchone()["total"] == 0
+
+
+def test_payment_order_settlement_and_gateway_event_replay_are_idempotent(db):
+    user, _token = _new_user(db, "phase9_payer")
+    db.execute(
+        "UPDATE users SET phone_e164=%s,phone_verified_at=now() WHERE id=%s",
+        ("+989121234567", user["id"]),
+    )
+    db.commit()
+
+    order = create_subscription_order(
+        db, user_id=user["id"], plan_code="premium_monthly",
+        idempotency_key="phase9-order-idempotency-1",
+    )
+    duplicate_order = create_subscription_order(
+        db, user_id=user["id"], plan_code="premium_monthly",
+        idempotency_key="phase9-order-idempotency-1",
+    )
+    assert duplicate_order["id"] == order["id"]
+    with pytest.raises(ValueError):
+        create_subscription_order(
+            db, user_id=user["id"], plan_code="premium_quarterly",
+            idempotency_key="phase9-order-idempotency-1",
+        )
+
+    attempt = create_payment_attempt(db, order_id=order["id"], provider="snappay")
+    with pytest.raises(ValueError):
+        create_payment_attempt(db, order_id=order["id"], provider="snappay")
+    attach_provider_checkout(
+        db,
+        attempt_id=attempt["id"],
+        provider_order_id="sandbox-order-phase9",
+        redirect_url="https://sandbox.invalid/checkout",
+        request_ref="phase9-request",
+    )
+
+    amount = int(order["amount_toman"])
+    verified = VerifiedPayment(
+        provider_event_id="phase9-provider-event-1",
+        provider_order_id="sandbox-order-phase9",
+        amount_toman=amount,
+        success=True,
+    )
+    wrong_amount = VerifiedPayment(
+        provider_event_id="phase9-provider-event-bad",
+        provider_order_id="sandbox-order-phase9",
+        amount_toman=amount - 1,
+        success=True,
+    )
+    payload_hash = hashlib.sha256(b"verified-provider-payload").hexdigest()
+    with pytest.raises(PaymentRejected):
+        settle_verified_payment(
+            db, order_id=order["id"], attempt_id=attempt["id"],
+            provider="snappay", verified=wrong_amount, payload_sha256=payload_hash,
+        )
+
+    with db.cursor() as cur:
+        cur.execute("SELECT status FROM payment_orders WHERE id=%s", (order["id"],))
+        assert cur.fetchone()["status"] == "pending"
+        cur.execute("SELECT COUNT(*) AS total FROM subscriptions WHERE payment_order_id=%s", (order["id"],))
+        assert cur.fetchone()["total"] == 0
+
+    settled = settle_verified_payment(
+        db, order_id=order["id"], attempt_id=attempt["id"],
+        provider="snappay", verified=verified, payload_sha256=payload_hash,
+    )
+    assert settled["already_processed"] is False
+
+    replay = settle_verified_payment(
+        db, order_id=order["id"], attempt_id=attempt["id"],
+        provider="snappay", verified=verified, payload_sha256=payload_hash,
+    )
+    assert replay["already_processed"] is True
+
+    changed_payload = hashlib.sha256(b"same event id but different body").hexdigest()
+    with pytest.raises(PaymentRejected):
+        settle_verified_payment(
+            db, order_id=order["id"], attempt_id=attempt["id"],
+            provider="snappay", verified=verified, payload_sha256=changed_payload,
+        )
+
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS total FROM subscriptions WHERE payment_order_id=%s", (order["id"],))
+        assert cur.fetchone()["total"] == 1
+        cur.execute("SELECT processing_status FROM gateway_events WHERE provider_event_id=%s",
+                    ("phase9-provider-event-1",))
+        assert cur.fetchone()["processing_status"] == "processed"
+
+
+def test_gateway_adapters_fail_closed_without_official_provider_configuration():
+    gateway = get_gateway("snappay")
+    with pytest.raises(PaymentNotConfigured):
+        gateway.initiate(
+            PaymentRequest(
+                order_id=uuid4(),
+                amount_toman=100_000,
+                callback_url="https://example.invalid/callback",
+                description="integration test",
+            )
+        )
+
+
+def test_wallet_debit_race_cannot_overdraw_cash_and_ledger_is_immutable(db):
+    actor, _actor_token = _new_user(db, "phase9_wallet_admin")
+    target, _target_token = _new_user(db, "phase9_wallet_target")
+    _grant_role(db, actor["id"], "superadmin")
+
+    credit = post_ledger_entry(
+        db, user_id=target["id"], bucket="cash", entry_type="topup",
+        amount_toman=100, idempotency_key="phase9-initial-credit",
+    )
+    duplicate = post_ledger_entry(
+        db, user_id=target["id"], bucket="cash", entry_type="topup",
+        amount_toman=100, idempotency_key="phase9-initial-credit",
+    )
+    assert duplicate["id"] == credit["id"]
+    db.commit()
+
+    def debit(key: str):
+        with psycopg.connect(_DSN, row_factory=dict_row) as conn:
+            try:
+                adjust_wallet(
+                    conn, actor_id=actor["id"], user_id=target["id"], bucket="cash",
+                    amount_toman=-70, reason="Concurrent debit test",
+                    idempotency_key=key,
+                )
+                return "accepted"
+            except ValueError:
+                return "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(debit, ("phase9-debit-a", "phase9-debit-b")))
+    assert sorted(outcomes) == ["accepted", "rejected"]
+
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT COALESCE(SUM(amount_toman),0)::bigint AS balance,
+                      COUNT(*) FILTER (WHERE entry_type='admin_debit') AS debits
+               FROM wallet_ledger_entries WHERE user_id=%s AND bucket='cash'""",
+            (target["id"],),
+        )
+        result = cur.fetchone()
+    assert result["balance"] == 30
+    assert result["debits"] == 1
+
+    with pytest.raises(psycopg.errors.RaiseException):
+        with db.transaction():
+            db.execute(
+                "UPDATE wallet_ledger_entries SET amount_toman=999 WHERE id=%s",
+                (credit["id"],),
+            )
