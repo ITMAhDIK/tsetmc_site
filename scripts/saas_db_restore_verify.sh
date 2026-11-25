@@ -78,6 +78,30 @@ esac
 
 pg_restore --list "$restore_archive" >/dev/null
 
+# Remote PostgreSQL restore targets must verify both the CA chain and hostname.
+# Loopback-only disposable/local test databases may omit TLS.
+dsn_host=""
+if [[ "$SAAS_RESTORE_VERIFY_DATABASE_URL" =~ ^postgres(ql)?://([^/@?]+@)?(\[[^]]+\]|[^:/?]+) ]]; then
+  dsn_host="${BASH_REMATCH[3]}"
+  dsn_host="${dsn_host#[}"
+  dsn_host="${dsn_host%]}"
+elif [[ "$SAAS_RESTORE_VERIFY_DATABASE_URL" =~ (^|[[:space:]])host=([^[:space:]]+) ]]; then
+  dsn_host="${BASH_REMATCH[2]}"
+else
+  dsn_host="localhost"
+fi
+for host in ${dsn_host//,/ }; do
+  case "$host" in
+    localhost|127.0.0.1|::1) ;;
+    *)
+      if [[ "$SAAS_RESTORE_VERIFY_DATABASE_URL" != *"sslmode=verify-full"* ]]; then
+        printf 'Remote restore target connections must explicitly use sslmode=verify-full.\n' >&2
+        exit 4
+      fi
+      ;;
+  esac
+done
+
 target_db="$(psql "$SAAS_RESTORE_VERIFY_DATABASE_URL" -X -A -t -q -c 'SELECT current_database()')"
 if [[ "$target_db" != "$SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME" ]]; then
   printf 'Restore target database name does not match the expected verification database.\n' >&2
