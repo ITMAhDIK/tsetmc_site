@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>تاریخچه و گرایش سرمایه‌گذار | تلومبرگ</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1220;
+      --panel: #101d30;
+      --panel-soft: #14243a;
+      --border: #2a3d58;
+      --text: #edf4ff;
+      --muted: #9aacc3;
+      --accent: #62a0ff;
+      --gold: #e7bb62;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; padding: clamp(16px, 3vw, 30px);
+      color: var(--text); background:
+        radial-gradient(ellipse at 85% 0%, rgba(65,125,205,.13), transparent 38rem),
+        var(--bg);
+      font-family: Tahoma, "Segoe UI", sans-serif;
+      line-height: 1.8;
+    }
+    .wrap { width: min(1120px, 100%); margin: 0 auto; }
+    .hero, .panel {
+      border: 1px solid var(--border); border-radius: 18px;
+      background: rgba(16,29,48,.94);
+      box-shadow: 0 16px 42px rgba(0,0,0,.16);
+    }
+    .hero { padding: clamp(20px, 3vw, 32px); }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; }
+    h1 { margin: 8px 0 4px; font-size: clamp(20px, 3vw, 28px); }
+    .sub { color: var(--muted); font-size: 13px; margin: 0; }
+    .status {
+      display: inline-flex; align-items: center; gap: 7px; margin-top: 18px;
+      padding: 5px 11px; border: 1px solid rgba(231,187,98,.35);
+      border-radius: 999px; color: var(--gold); background: rgba(231,187,98,.08);
+      font-size: 11px; font-weight: 700;
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); }
+    .message {
+      display: flex; gap: 14px; align-items: flex-start; margin-top: 22px;
+      padding: 17px; border-radius: 14px; border: 1px solid rgba(98,160,255,.25);
+      background: rgba(98,160,255,.07);
+    }
+    .message-icon {
+      flex: 0 0 38px; width: 38px; height: 38px; display: grid; place-items: center;
+      border-radius: 12px; color: var(--accent); background: rgba(98,160,255,.13);
+      font-size: 21px;
+    }
+    .message strong { display: block; margin-bottom: 3px; font-size: 14px; }
+    .message p { margin: 0; color: var(--muted); font-size: 12px; }
+    .section-title { margin: 26px 2px 12px; font-size: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .panel { min-height: 180px; padding: 17px; background: var(--panel); box-shadow: none; }
+    .panel-icon {
+      width: 34px; height: 34px; display: grid; place-items: center;
+      border-radius: 10px; color: var(--accent); background: var(--panel-soft);
+      font-size: 17px;
+    }
+    .panel h2 { margin: 12px 0 4px; font-size: 13px; }
+    .panel p { margin: 0; color: var(--muted); font-size: 11px; }
+    .empty-chart {
+      height: 46px; margin-top: 15px; border: 1px dashed #344c6b;
+      border-radius: 9px; display: flex; align-items: center; justify-content: center;
+      color: #778da9; font-size: 10px; background:
+        repeating-linear-gradient(135deg, transparent 0 9px, rgba(98,160,255,.025) 9px 18px);
+    }
+    .foot {
+      margin-top: 14px; padding: 12px 15px; border: 1px solid var(--border);
+      border-radius: 12px; color: var(--muted); font-size: 10px;
+      background: rgba(16,29,48,.55);
+    }
+    @media (max-width: 720px) {
+      body { padding: 12px; }
+      .grid { grid-template-columns: 1fr; }
+      .panel { min-height: 150px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">TLOOMBERG · تحلیل رفتار سرمایه‌گذار</div>
+      <h1>تاریخچه و گرایش سرمایه‌گذار</h1>
+      <p class="sub">نمایی برای بررسی مسیر سرمایه، تغییر ترکیب پرتفوی و گرایش به گروه‌های بورسی</p>
+      <div class="status"><span class="status-dot"></span> آمادهٔ اتصال به سرور</div>
+      <div class="message">
+        <div class="message-icon" aria-hidden="true">↗</div>
+        <div>
+          <strong>این بخش فعلاً بدون داده نمایش داده می‌شود.</strong>
+          <p>در حال حاضر هیچ درخواست اطلاعاتی از API ارسال نمی‌شود. ساخت و اتصال داده‌ها در مرحلهٔ بعد، از طریق سرور انجام خواهد شد.</p>
+        </div>
+      </div>
+    </section>
+
+    <h2 class="section-title">بخش‌هایی که در ادامه تکمیل می‌شوند</h2>
+    <section class="grid" aria-label="قابلیت‌های در دست توسعه">
+      <article class="panel">
+        <div class="panel-icon" aria-hidden="true">⌁</div>
+        <h2>تاریخچهٔ ارزش پرتفوی</h2>
+        <p>روند زمانی ارزش سرمایه‌گذاری‌ها و تغییرات آن در بازه‌های مختلف</p>
+        <div class="empty-chart">نمودار پس از آماده‌شدن داده‌ها</div>
+      </article>
+      <article class="panel">
+        <div class="panel-icon" aria-hidden="true">◫</div>
+        <h2>تغییر ترکیب سرمایه‌گذاری</h2>
+        <p>مشاهدهٔ ورود، خروج و تغییر وزن شرکت‌ها در پرتفوی سرمایه‌گذار</p>
+        <div class="empty-chart">ترکیب پرتفوی پس از آماده‌شدن داده‌ها</div>
+      </article>
+      <article class="panel">
+        <div class="panel-icon" aria-hidden="true">◎</div>
+        <h2>گرایش به گروه‌های بورسی</h2>
+        <p>مقایسهٔ تمرکز سرمایه و تغییر گرایش در صنایع و گروه‌های مختلف</p>
+        <div class="empty-chart">تحلیل گروهی پس از آماده‌شدن داده‌ها</div>
+      </article>
+    </section>
+
+    <div class="foot">این صفحه در حال حاضر فقط پوستهٔ رابط کاربری است؛ اعداد نمونه یا دادهٔ ساختگی در آن نمایش داده نمی‌شود.</div>
+  </main>
+</body>
+</html>
