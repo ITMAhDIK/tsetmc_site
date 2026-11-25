@@ -415,3 +415,35 @@ def test_wallet_debit_race_cannot_overdraw_cash_and_ledger_is_immutable(db):
                 "UPDATE wallet_ledger_entries SET amount_toman=999 WHERE id=%s",
                 (credit["id"],),
             )
+
+
+def test_readiness_probe_and_security_headers_report_real_database_state(db, client):
+    ready = client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json() == {"status": "ready", "service": "saas-api"}
+
+    health = client.get("/health", headers={"X-Request-ID": "unsafe request id"})
+    assert health.status_code == 200
+    assert health.headers["x-content-type-options"] == "nosniff"
+    assert health.headers["x-frame-options"] == "DENY"
+    assert health.headers["cache-control"] == "no-store"
+    assert health.headers["content-security-policy"].startswith("default-src 'none'")
+    assert health.headers["x-request-id"] != "unsafe request id"
+
+
+def test_cookie_authenticated_state_changes_require_same_origin(db, client):
+    _user, token = _new_user(db, "phase9_cookie_csrf")
+    client.cookies.set("tloomberg_session", token)
+
+    without_origin = client.post(
+        "/support/tickets",
+        json={"subject": "Cookie request test", "message": "This must be blocked without an origin."},
+    )
+    assert without_origin.status_code == 403
+
+    with_same_origin = client.post(
+        "/support/tickets",
+        headers={"Origin": "http://testserver"},
+        json={"subject": "Cookie request test", "message": "This same-origin request is allowed."},
+    )
+    assert with_same_origin.status_code == 201
