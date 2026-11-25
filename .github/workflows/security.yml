@@ -92,6 +92,16 @@ jobs:
           python-version: "3.12"
       - name: Install PostgreSQL driver for migration runner
         run: python -m pip install "psycopg[binary]>=3.2,<4"
+      - name: Install age encryption tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+      - name: Generate ephemeral age identity for the backup drill
+        run: |
+          age-keygen -o "$RUNNER_TEMP/saas-backup-age-identity.txt"
+          echo "SAAS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/saas-backup-age-identity.txt")" >> "$GITHUB_ENV"
+          echo "SAAS_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/saas-backup-age-identity.txt" >> "$GITHUB_ENV"
+          echo "SAAS_BACKUP_ENCRYPTION_REQUIRED=true" >> "$GITHUB_ENV"
       - name: Install PostgreSQL 16 client wrappers matching the server
         run: |
           mkdir -p "$RUNNER_TEMP/postgres16-bin"
@@ -123,8 +133,9 @@ jobs:
           SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify
           SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
           SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
+          SAAS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/saas-backup-age-identity.txt
         run: |
-          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump' -print -quit)"
+          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
           test -n "$dump_file"
           SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh
       - name: Verify restored schema and data boundary
