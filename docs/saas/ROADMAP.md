@@ -1,23 +1,25 @@
 # Tloomberg SaaS Delivery Roadmap
 
-## Phase 1 — Foundation (this branch)
-- Define isolated market, SaaS and analytics data boundaries.
-- Add PostgreSQL schema and seed subscription plans.
-- Define identity, RBAC, payments, wallet, referrals, support, consent and audit.
-- Implement and test cash/gift wallet policy.
-- Keep existing market API/database untouched.
+## Phase 1 — Foundation
+- Isolated market, SaaS and analytics data boundaries.
+- SaaS PostgreSQL schema and core identity, RBAC, payments, wallet, referrals, support, consent and audit structures.
+- Cash/gift wallet policy and tests.
+- Existing market API/database remain separate.
 
-## Phase 2 — Authentication and authorization (in progress)
-Implemented on feat/tloomberg-saas-auth-phase2: username/password with Argon2id,
-phone OTP challenge persistence, encrypted SMS outbox, per-phone OTP request
-throttling, revocable opaque sessions, and server-side role/entitlement policy.
-Remaining before production: Google OAuth, verified identity linking, password
-reset, IP/distributed rate limiting, CSRF/CORS hardening, superadmin bootstrap,
-SMS worker, PostgreSQL integration tests and deployment security review.
+## Phase 2 — Authentication and authorization (foundation integrated; hardening remains)
+- Argon2id password registration/login, opaque revocable sessions and secure cookies.
+- Phone OTP challenge persistence, encrypted SMS outbox and per-phone request throttling.
+- Server-side role, permission and subscription-entitlement policy.
+- Initial combined branch CI: static Pages validation passed; 83 tests passed.
+- Not production-ready: Google OAuth/verified linking, password reset/email verification, IP/distributed rate limiting, CSRF/CORS/security headers, superadmin bootstrap, SMS delivery worker, PostgreSQL integration tests and deployment security review remain.
 
-## Phase 3 — Account and dashboard UX
-Menu, profile, preferences, sessions, account/subscription history and feature
-gates. Finalize the free-tier access matrix before implementation.
+## Phase 3 — Account and dashboard API (implemented; integration validation pending)
+- Authenticated profile read/update (display name only).
+- Allow-listed theme, calendar, currency and locale preferences.
+- Active session listing, single-other-session revocation and revoke-all-others; current session is protected.
+- Subscription history read model and server-resolved feature entitlements.
+- No market-data schema, database, collector or API changes.
+- Dashboard frontend and PostgreSQL integration tests remain.
 
 ## Phase 4 — Subscriptions and payments
 SnapPay/DigiPay adapters, merchant onboarding, sandbox tests, verified phone,
