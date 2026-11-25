@@ -1,8 +1,11 @@
 """FastAPI authentication API; deploy separately from GitHub Pages."""
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -36,6 +39,8 @@ ALLOWED_ORIGINS = [
 ]
 _SAFE_REQUEST_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 _DB_POOL: ConnectionPool | None = None
+_ACCESS_LOG = logging.getLogger("tloomberg.saas.access")
+_ACCESS_LOG.setLevel(logging.INFO)
 _REQUIRED_SCHEMA_TABLES = (
     "users", "sessions", "roles", "permissions", "role_permissions",
     "plans", "subscriptions", "payment_orders", "payment_attempts",
@@ -120,6 +125,15 @@ async def lifespan(_app: FastAPI):
         )
         try:
             pool.open(wait=True, timeout=5)
+            with pool.connection(timeout=timeout) as conn:
+                actual_database = conn.execute(
+                    "SELECT current_database() AS database_name"
+                ).fetchone()["database_name"]
+            expected_database = os.getenv("SAAS_EXPECTED_DATABASE_NAME", "").strip()
+            if expected_database and actual_database != expected_database:
+                raise ConfigurationError(
+                    "connected PostgreSQL database does not match SAAS_EXPECTED_DATABASE_NAME"
+                )
             _DB_POOL = pool
             yield
         finally:
@@ -150,21 +164,40 @@ if ALLOWED_ORIGINS:
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    """Add API security headers and a safe request correlation identifier."""
+    """Add security headers and log only non-sensitive route-level timing metadata."""
     supplied_id = request.headers.get("X-Request-ID", "")
     request_id = supplied_id if re.fullmatch(r"[A-Za-z0-9._-]{1,80}", supplied_id) else str(uuid4())
     request.state.request_id = request_id
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request_id
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-    response.headers["Cache-Control"] = "no-store"
-    if request.url.scheme == "https":
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    return response
+    started = time.perf_counter()
+    response = None
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+        response.headers["Cache-Control"] = "no-store"
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+    finally:
+        route = request.scope.get("route")
+        route_template = getattr(route, "path", "/unmatched")
+        record = {
+            "event": "http_request",
+            "request_id": request_id,
+            "method": request.method,
+            "route": route_template,
+            "status_code": response.status_code if response is not None else 500,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        }
+        log_line = json.dumps(record, separators=(",", ":"), ensure_ascii=True)
+        if response is not None and response.status_code < 500:
+            _ACCESS_LOG.info(log_line)
+        else:
+            _ACCESS_LOG.error(log_line)
 
 
 def get_conn():
