@@ -1,0 +1,47 @@
+name: SaaS security checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependency auditor
+        run: python -m pip install --upgrade pip pip-audit
+      - name: Audit declared SaaS dependencies
+        run: pip-audit --requirement requirements-saas.txt
+
+  static-analysis:
+    name: High-severity Python security analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install static analyzer
+        run: python -m pip install --upgrade pip bandit
+      - name: Scan SaaS backend
+        run: bandit --recursive saas_core --severity-level high --confidence-level high
+      - name: Validate operational shell scripts
+        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh
