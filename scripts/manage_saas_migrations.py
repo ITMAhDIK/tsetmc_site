@@ -15,6 +15,7 @@ from pathlib import Path
 
 import psycopg
 from psycopg import sql
+from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_DIR = ROOT / "saas_core" / "schema"
@@ -59,7 +60,7 @@ def _connect():
     dsn = os.getenv("SAAS_MIGRATION_DATABASE_URL", "").strip()
     if not dsn:
         raise MigrationError("SAAS_MIGRATION_DATABASE_URL is required; do not use the runtime app role")
-    conn = psycopg.connect(dsn, connect_timeout=5, autocommit=True)
+    conn = psycopg.connect(dsn, connect_timeout=5, autocommit=True, row_factory=dict_row)
     actual = conn.execute("SELECT current_database() AS name").fetchone()["name"]
     expected = _expected_database_name()
     if actual != expected:
