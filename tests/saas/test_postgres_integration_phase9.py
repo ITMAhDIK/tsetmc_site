@@ -593,7 +593,7 @@ def test_production_connection_pool_opens_checks_database_identity_and_serves_re
     from cryptography.fernet import Fernet
     import saas_core.auth.api as auth_api
 
-    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "APP_ENV", "staging")
     monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
     monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["testserver"])
     monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
@@ -616,7 +616,7 @@ def test_production_connection_pool_refuses_wrong_database_name(db, monkeypatch)
     from cryptography.fernet import Fernet
     import saas_core.auth.api as auth_api
 
-    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "APP_ENV", "staging")
     monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
     monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["testserver"])
     monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
