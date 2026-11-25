@@ -143,10 +143,36 @@ jobs:
           backup_grants="$(psql "$SAAS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 \
             -c "SELECT has_table_privilege('saas_backup','public.users','SELECT') AND NOT has_table_privilege('saas_backup','public.users','INSERT') AND NOT has_table_privilege('saas_backup','public.users','UPDATE') AND NOT has_table_privilege('saas_backup','public.users','DELETE') AND NOT has_schema_privilege('saas_backup','public','CREATE')")"
           test "$backup_grants" = "t"
+      - name: Verify remote backup connections reject unverified TLS
+        env:
+          SAAS_BACKUP_DATABASE_URL: postgresql://saas_backup@db.example.invalid:5432/tloomberg_saas
+          SAAS_EXPECTED_DB_NAME: tloomberg_saas
+          SAAS_BACKUP_DIR: ${{ runner.temp }}/saas-backup-tls-negative
+        run: |
+          if bash scripts/saas_db_backup.sh >"$RUNNER_TEMP/backup-tls-negative.log" 2>&1; then
+            echo "Backup script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/backup-tls-negative.log"
       - name: Create checksum-verified backup
         run: |
           export SAAS_BACKUP_DIR="$RUNNER_TEMP/saas-backups"
           bash scripts/saas_db_backup.sh
+      - name: Verify remote restore targets reject unverified TLS
+        env:
+          SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_saas_restore_verify
+          SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
+          SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
+          SAAS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/saas-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          if SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh >"$RUNNER_TEMP/restore-tls-negative.log" 2>&1; then
+            echo "Restore script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/restore-tls-negative.log"
       - name: Create isolated restore target
         run: createdb --host=127.0.0.1 --username=postgres tloomberg_saas_restore_verify
       - name: Restore and verify the backup
