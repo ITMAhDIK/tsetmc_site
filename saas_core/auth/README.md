@@ -8,7 +8,7 @@ SaaS PostgreSQL database, never the market-data database.
 - Random opaque sessions; only SHA-256 token hashes are stored in PostgreSQL.
 - HttpOnly, SameSite=Lax cookies (Secure by default), expiry and revocation.
 - Phone OTP challenge storage with five-minute expiry, one-time use and attempt cap.
-- OTP values are HMAC-SHA256 hashed using SAAS_OTP_HMAC_SECRET.
+- OTP values are HMAC-SHA256 hashed using SAAS_OTP_HMAC_SECRET and SAAS_OUTBOX_FERNET_KEY.
 - OTP delivery is queued to notification_outbox; no SMS provider is called inline.
 - Minimal /auth/me and /health endpoints.
 
