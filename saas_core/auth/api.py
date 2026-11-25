@@ -9,7 +9,7 @@ from .repository import (authenticate_session, consume_phone_otp, login_password
     register_password_user, request_phone_otp, revoke_session, create_session)
 from .service import AuthenticationError
 
-app = FastAPI(title="Tloomberg SaaS API", version="0.4.0")
+app = FastAPI(title="Tloomberg SaaS API", version="0.5.0")
 bearer = HTTPBearer(auto_error=False)
 COOKIE_NAME = "tloomberg_session"
 COOKIE_SECURE = os.getenv("SAAS_COOKIE_SECURE","true").lower() == "true"
