@@ -400,7 +400,7 @@
       </section>`;
     $("detail").querySelector("[data-back-investor]")?.addEventListener("click",()=>{selectedCompanyCode=null;renderDetail();window.scrollTo(0,0);commitViewState();});
     $("detail").querySelectorAll("[data-investor-id]").forEach(btn=>btn.addEventListener("click",()=>{
-      selectedId=btn.getAttribute("data-investor-id");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();
+      pushViewState();selectedId=btn.getAttribute("data-investor-id");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();window.scrollTo(0,0);commitViewState();
     }));
   }
 
@@ -537,8 +537,8 @@
     $("detail").querySelectorAll("[data-group]").forEach(btn => {
       btn.addEventListener("click", () => {pushViewState();selectedGroupCode=btn.getAttribute("data-group");renderDetail();commitViewState();});
     });
-    $("detail").querySelectorAll("[data-network-group]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedGroupCode=btn.getAttribute("data-network-group");renderDetail();}));
-    $("detail").querySelectorAll("[data-network-investor]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedId=btn.getAttribute("data-network-investor");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();}));
+    $("detail").querySelectorAll("[data-network-group]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedGroupCode=btn.getAttribute("data-network-group");renderDetail();commitViewState();}));
+    $("detail").querySelectorAll("[data-network-investor]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedId=btn.getAttribute("data-network-investor");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();window.scrollTo(0,0);commitViewState();}));
     $("detail").querySelectorAll("[data-company]").forEach(btn => {
       btn.addEventListener("click", () => {pushViewState();selectedCompanyCode=btn.getAttribute("data-company");renderCompanyDetail(selectedCompanyCode);window.scrollTo(0,0);commitViewState();});
     });
