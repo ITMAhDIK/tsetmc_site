@@ -169,3 +169,17 @@ def test_database_pool_configuration_rejects_unbounded_values(monkeypatch):
     monkeypatch.setenv("SAAS_DB_POOL_MAX", "101")
     with pytest.raises(ConfigurationError, match="1 <= min <= max"):
         auth_api._database_pool_config()
+
+
+def test_production_database_connection_fails_closed_without_lifespan_pool(monkeypatch):
+    from fastapi import HTTPException
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "_DB_POOL", None)
+    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:placeholder@db.example/tloomberg_saas")
+
+    with pytest.raises(HTTPException) as exc:
+        next(auth_api.get_conn())
+    assert exc.value.status_code == 503
+    assert "pool is not ready" in exc.value.detail
