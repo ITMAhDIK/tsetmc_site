@@ -57,8 +57,9 @@ This threat model is a working engineering document, not an independent threat a
 
 ### Automated evidence
 - CI provisions PostgreSQL 16 and applies all SaaS migrations from a clean disposable database using the migration runner.
-- PostgreSQL-backed integration tests cover authentication/session revocation, support-note isolation, cross-account ticket reads, RBAC boundaries, analytics consent/deduplication/deletion, payment amount mismatch/event replay, fail-closed gateways, wallet concurrency/idempotency, OTP concurrency and append-only triggers.
-- A second PostgreSQL 16 CI job builds a custom-format backup, verifies its SHA-256, restores to a separate empty database and checks the restored schema.
+- PostgreSQL-backed integration tests cover authentication/session revocation, support-note isolation, cross-account ticket reads, every current staff/admin/analytics-admin GET route denied to a standard user, RBAC boundaries, analytics consent/deduplication/deletion, payment amount mismatch/event replay, fail-closed gateways, wallet concurrency/idempotency, OTP concurrency and append-only triggers.
+- Production configuration tests require verified TLS for remote database connections; migration, backup and restore tools reject remote PostgreSQL connections without `sslmode=verify-full`.
+- A second PostgreSQL 16 CI job provisions a separate read-only backup role (asserting it cannot INSERT/UPDATE/DELETE or CREATE), builds an age-encrypted custom-format backup, verifies its SHA-256, rejects remote backup/restore DSNs without verified TLS, decrypts/restores to a separate empty database and checks the restored schema.
 - Security CI runs pip-audit, Bandit high-severity/high-confidence scanning, Python compilation, operational shell syntax checks, Docker build and production Compose configuration validation.
 - Dependabot checks Python dependencies and GitHub Actions weekly.
 
@@ -85,14 +86,16 @@ This threat model is a working engineering document, not an independent threat a
 ## Exit checklist
 
 - [x] Fresh-install SaaS migrations run on disposable PostgreSQL 16 in CI with checksum history.
+- [x] Full Python suite: 166 passed on verified Phase 9 head.
+- [x] Dependency audit, high-severity/high-confidence Bandit, shell syntax, Python compilation, non-root image build, Compose and Caddy validation pass on the verified Phase 9 head.
 - [x] PostgreSQL-backed integration tests cover the explicitly listed critical flows.
-- [x] Age-encrypted backup/restore script rehearsal passes on an isolated disposable PostgreSQL 16 cluster in CI.
+- [x] Age-encrypted backup/restore script rehearsal passes on an isolated disposable PostgreSQL 16 cluster in CI, using a separately provisioned read-only backup role and explicit TLS negative tests.
 - [x] TLS reverse-proxy and production Compose templates are validated in CI.
 - [x] A bounded read-only staging probe is available with explicit non-production safeguards.
 - [x] Dependency audit and high-severity/high-confidence SAST workflow pass on the verified CI head.
 - [x] Non-root Docker image and hardened production Compose template are present and validated by CI.
 - [ ] Existing production database baseline adoption is reviewed and tested.
-- [ ] Complete route-level RBAC and object isolation matrix passes.
+- [ ] Complete route-level RBAC and object isolation matrix passes (standard-user denial coverage now includes all current staff/admin/analytics-admin GET routes; mutating-route and full role matrix still need additional coverage).
 - [ ] Official provider sandbox, callback, refund and bank payout tests pass.
 - [ ] Edge/IP/device/distributed rate limits and perimeter security are implemented and tested.
 - [ ] Independent penetration/security review completed; findings remediated.
