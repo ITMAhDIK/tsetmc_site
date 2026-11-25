@@ -199,7 +199,10 @@ def overview(conn, *, days: int):
                WHERE user_id IS NOT NULL AND occurred_at >= now()-(%s * interval '1 day')""",
             (days,),
         )
-        return cur.fetchone()
+        row=cur.fetchone()
+    if row["active_users"] < MIN_ANALYTICS_COHORT:
+        return {"suppressed":True,"minimum_cohort":MIN_ANALYTICS_COHORT}
+    return {"suppressed":False,**row}
 
 
 def top_pages(conn, *, days: int, limit: int = 20):
@@ -244,51 +247,70 @@ def heatmap(conn, *, page_path: str, days: int):
 
 
 def funnel(conn, *, steps: list[str], days: int):
+    """Measure an ordered user journey while suppressing small step counts."""
     days=_window_days(days)
     if not 2 <= len(steps) <= 5 or any(step not in ALLOWED_EVENT_NAMES for step in steps):
         raise ValueError("funnel must contain 2-5 supported event names")
     if len(set(steps)) != len(steps):
         raise ValueError("funnel steps must be unique")
-    with conn.cursor() as cur:
-        cur.execute(
-            """WITH RECURSIVE requested_steps AS (
-                 SELECT event_name,ordinality::integer AS step_no
-                 FROM unnest(%s::text[]) WITH ORDINALITY AS s(event_name,ordinality)
-               ),
-               first_events AS (
-                 SELECT DISTINCT ON (e.user_id) e.user_id,e.occurred_at
-                 FROM analytics_events e
-                 WHERE e.user_id IS NOT NULL
-                   AND e.event_name=(SELECT event_name FROM requested_steps WHERE step_no=1)
-                   AND e.occurred_at >= now()-(%s * interval '1 day')
-                 ORDER BY e.user_id,e.occurred_at
-               ),
-               walk(user_id,step_no,step_at) AS (
-                 SELECT user_id,1::integer,occurred_at FROM first_events
-                 UNION ALL
-                 SELECT w.user_id,s.step_no,nxt.occurred_at
-                 FROM walk w
-                 JOIN requested_steps s ON s.step_no=w.step_no+1
+
+    # Build only the fixed CTE aliases; every event name remains a bound parameter.
+    ctes=[
+        """requested_steps AS (
+             SELECT event_name,ordinality::integer AS step_no
+             FROM unnest(%s::text[]) WITH ORDINALITY AS s(event_name,ordinality)
+           )""",
+        """step_1 AS (
+             SELECT DISTINCT ON (e.user_id) e.user_id,e.occurred_at AS step_at
+             FROM analytics_events e
+             WHERE e.user_id IS NOT NULL
+               AND e.event_name=(SELECT event_name FROM requested_steps WHERE step_no=1)
+               AND e.occurred_at >= now()-(%s * interval '1 day')
+             ORDER BY e.user_id,e.occurred_at
+           )""",
+    ]
+    for step_no in range(2,len(steps)+1):
+        previous=f"step_{step_no-1}"
+        current=f"step_{step_no}"
+        ctes.append(
+            f"""{current} AS (
+                 SELECT prior.user_id,next_event.occurred_at AS step_at
+                 FROM {previous} prior
                  JOIN LATERAL (
                    SELECT e.occurred_at FROM analytics_events e
-                   WHERE e.user_id=w.user_id AND e.event_name=s.event_name
-                     AND e.occurred_at>=w.step_at
+                   WHERE e.user_id=prior.user_id
+                     AND e.event_name=(SELECT event_name FROM requested_steps WHERE step_no={step_no})
+                     AND e.occurred_at>=prior.step_at
                    ORDER BY e.occurred_at LIMIT 1
-                 ) nxt ON TRUE
-               )
-               SELECT s.step_no,s.event_name,COUNT(DISTINCT w.user_id)::bigint AS users
-               FROM requested_steps s LEFT JOIN walk w ON w.step_no=s.step_no
-               GROUP BY s.step_no,s.event_name ORDER BY s.step_no""",
-            (steps,days),
+                 ) next_event ON TRUE
+               )"""
         )
+    outputs=[]
+    for step_no in range(1,len(steps)+1):
+        outputs.append(
+            f"""SELECT {step_no}::integer AS step_no,
+                       (SELECT event_name FROM requested_steps WHERE step_no={step_no}) AS event_name,
+                       (SELECT COUNT(DISTINCT user_id) FROM step_{step_no})::bigint AS users"""
+        )
+    query="WITH "+",\n".join(ctes)+"\n"+" UNION ALL ".join(outputs)+" ORDER BY step_no"
+    with conn.cursor() as cur:
+        cur.execute(query,(steps,days))
         rows=cur.fetchall()
     cohort_size=rows[0]["users"] if rows else 0
     if cohort_size < MIN_ANALYTICS_COHORT:
         return {"suppressed":True,"minimum_cohort":MIN_ANALYTICS_COHORT,"steps":[]}
-    return {"suppressed":False,"steps":rows}
+    safe_steps=[]
+    for row in rows:
+        if row["users"] < MIN_ANALYTICS_COHORT:
+            safe_steps.append({"step_no":row["step_no"],"event_name":row["event_name"],
+                               "users":None,"suppressed":True})
+        else:
+            safe_steps.append({**row,"suppressed":False})
+    return {"suppressed":False,"minimum_cohort":MIN_ANALYTICS_COHORT,"steps":safe_steps}
 
 
 def retention(conn, *, days: int):
+    """Return weekly cohorts; suppress cohort or maturity counts below threshold."""
     days=_window_days(days)
     with conn.cursor() as cur:
         cur.execute(
@@ -338,20 +360,26 @@ def retention(conn, *, days: int):
         if row["cohort_size"] < MIN_ANALYTICS_COHORT:
             result.append({"cohort_week":row["cohort_week"],"suppressed":True})
             continue
+        eligible_7d=row["eligible_7d"]
+        eligible_30d=row["eligible_30d"]
+        show_7d=eligible_7d >= MIN_ANALYTICS_COHORT
+        show_30d=eligible_30d >= MIN_ANALYTICS_COHORT
         result.append({
-            **row,
+            "cohort_week":row["cohort_week"],
+            "cohort_size":row["cohort_size"],
             "suppressed":False,
+            "eligible_7d":eligible_7d if show_7d else None,
+            "retained_7d":row["retained_7d"] if show_7d else None,
             "retention_7d_rate":(
-                round(row["retained_7d"]/row["eligible_7d"],4)
-                if row["eligible_7d"] else None
+                round(row["retained_7d"]/eligible_7d,4) if show_7d else None
             ),
+            "eligible_30d":eligible_30d if show_30d else None,
+            "retained_30d":row["retained_30d"] if show_30d else None,
             "retention_30d_rate":(
-                round(row["retained_30d"]/row["eligible_30d"],4)
-                if row["eligible_30d"] else None
+                round(row["retained_30d"]/eligible_30d,4) if show_30d else None
             ),
         })
     return result
-
 
 def user_event_history(conn, *, user_id: UUID, limit: int = 100):
     if not 1 <= limit <= 200:
