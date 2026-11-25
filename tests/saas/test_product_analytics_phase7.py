@@ -101,9 +101,11 @@ def test_saas_application_mounts_product_analytics_routes():
     from saas_core.analytics.api import router as analytics_router
 
     router_paths={route.path for route in analytics_router.routes if hasattr(route,"path")}
-    paths={route.path for route in app.routes if hasattr(route,"path")}
+    # FastAPI 0.165 defers included-router expansion; OpenAPI is the stable
+    # public view of routes mounted on the application.
+    paths=set(app.openapi()["paths"])
     assert "/analytics/consent" in router_paths, sorted(router_paths)
-    assert "/analytics/consent" in paths, sorted(paths)
+    assert "/analytics/consent" in paths
     assert "/analytics/events" in paths
     assert "/analytics/admin/overview" in paths
     assert "/analytics/admin/users/{user_id}/events" in paths
