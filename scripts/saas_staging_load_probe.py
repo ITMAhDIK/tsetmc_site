@@ -84,7 +84,12 @@ def build_config(environ: dict[str, str] | None = None) -> LoadConfig:
     if not raw_url:
         raise LoadTestConfigurationError("SAAS_LOAD_TEST_BASE_URL is required")
 
-    parsed = urlsplit(raw_url)
+    try:
+        parsed = urlsplit(raw_url)
+        target_port = parsed.port
+    except ValueError as exc:
+        raise LoadTestConfigurationError("Target URL contains an invalid hostname or port") from exc
+
     if (
         parsed.scheme.lower() != "https"
         or not parsed.hostname
@@ -125,8 +130,8 @@ def build_config(environ: dict[str, str] | None = None) -> LoadConfig:
         )
 
     netloc = host
-    if parsed.port and parsed.port != 443:
-        netloc = f"{host}:{parsed.port}"
+    if target_port and target_port != 443:
+        netloc = f"{host}:{target_port}"
 
     return LoadConfig(
         base_url=f"https://{netloc}",
