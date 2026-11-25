@@ -31,9 +31,15 @@ adapters remain disabled pending official merchant integration packs and sandbox
 credentials. Refund execution, reconciliation, PostgreSQL concurrency tests and
 provider end-to-end tests remain.
 
-## Phase 5 — Wallet and referrals
-Ledger, top-ups, gift/cash balance, withdrawal reservations, bank verification,
-referral qualification, abuse controls and SMS outbox.
+## Phase 5 — Wallet and referrals (foundation started)
+Implemented on feat/tloomberg-saas-wallet-referrals-phase5: separate cash/gift
+ledger balances, append-only idempotent ledger posting, gift-first spending policy,
+cash-only withdrawal reservations, verified-bank-account gating, referral codes,
+verified-phone referral attachment, and reward issuance from the trusted paid
+subscription settlement path. Top-up checkout, bank onboarding/verification,
+admin withdrawal review, payout integration and advanced abuse controls remain
+blocked or deferred pending provider contracts and security work. No market-data
+database or service changes.
 
 ## Phase 6 — Support
 FAQ, ticket creation/replies, assignment, status and private internal notes.
