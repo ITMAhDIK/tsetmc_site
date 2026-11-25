@@ -60,6 +60,7 @@ case "$SAAS_BACKUP_FILE" in
       exit 2
     }
     tmp_dump="$(mktemp "${TMPDIR:-/tmp}/saas-restore.XXXXXX.dump")"
+    rm -f -- "$tmp_dump"
     age --decrypt --identity "$SAAS_BACKUP_AGE_IDENTITY" --output "$tmp_dump" "$SAAS_BACKUP_FILE"
     restore_archive="$tmp_dump"
     ;;
