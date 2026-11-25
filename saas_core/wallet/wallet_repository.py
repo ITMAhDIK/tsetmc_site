@@ -36,18 +36,15 @@ def get_wallet_balances(conn, user_id: UUID):
     return WalletBalances(row["cash"], row["gift"], reserved)
 
 
-def list_wallet_ledger(conn, user_id: UUID, *, limit: int = 50, before_id: UUID | None = None):
+def list_wallet_ledger(conn, user_id: UUID, *, limit: int = 50):
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
     with conn.cursor() as cur:
         cur.execute(
             """SELECT id,bucket,entry_type,amount_toman,reference_type,reference_id,
                       description,created_at
-               FROM wallet_ledger_entries
-               WHERE user_id=%s AND (%s IS NULL OR created_at <
-                 (SELECT created_at FROM wallet_ledger_entries WHERE id=%s AND user_id=%s))
-               ORDER BY created_at DESC,id DESC LIMIT %s""",
-            (user_id,before_id,before_id,user_id,limit),
+               FROM wallet_ledger_entries WHERE user_id=%s
+               ORDER BY created_at DESC,id DESC LIMIT %s""", (user_id,limit)
         )
         return cur.fetchall()
 
@@ -96,8 +93,22 @@ def request_withdrawal(conn, *, user_id: UUID, amount_toman: int,
                        bank_account_id: UUID, idempotency_key: str):
     if isinstance(amount_toman, bool) or not isinstance(amount_toman, int):
         raise TypeError("withdrawal amount must be integer Toman")
+    if not idempotency_key or len(idempotency_key) > 120:
+        raise ValueError("valid idempotency key is required")
     with conn.transaction():
         _lock_wallet(conn, user_id)
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id,user_id,amount_toman,bank_account_id,status
+                   FROM withdrawal_requests WHERE idempotency_key=%s FOR UPDATE""",
+                (idempotency_key,),
+            )
+            existing=cur.fetchone()
+            if existing:
+                if (existing["user_id"] != user_id or existing["amount_toman"] != amount_toman
+                        or existing["bank_account_id"] != bank_account_id):
+                    raise ValueError("idempotency key was reused with different withdrawal data")
+                return existing
         balances = get_wallet_balances(conn, user_id)
         validate_withdrawal(balances, amount_toman)
         with conn.cursor() as cur:
@@ -110,10 +121,11 @@ def request_withdrawal(conn, *, user_id: UUID, amount_toman: int,
                 raise PermissionError("a verified bank account is required")
             cur.execute(
                 """INSERT INTO withdrawal_requests
-                   (user_id,amount_toman,status,bank_account_token,bank_account_id)
-                   VALUES (%s,%s,'requested','vault-reference:%s',%s)
+                   (user_id,amount_toman,status,bank_account_token,bank_account_id,idempotency_key)
+                   VALUES (%s,%s,'requested',%s,%s,%s)
                    RETURNING id,user_id,amount_toman,status,requested_at""",
-                (user_id,amount_toman,str(bank_account_id),bank_account_id),
+                (user_id,amount_toman,"vault-reference:"+str(bank_account_id),
+                 bank_account_id,idempotency_key),
             )
             return cur.fetchone()
 
