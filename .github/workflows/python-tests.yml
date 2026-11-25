@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - "feat/**"
 
 concurrency:
   group: python-tests-${{ github.event.pull_request.head.ref || github.ref_name }}
