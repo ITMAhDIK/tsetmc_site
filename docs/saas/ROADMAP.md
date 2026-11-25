@@ -49,9 +49,14 @@ endpoint, role-gated FAQ management and audit records. Attachments, notification
 staff/customer UI, SLA and advanced anti-abuse controls remain. No market-data
 database or service changes.
 
-## Phase 7 — Product analytics
-Consent, click/navigation/scroll/active-time events, heatmaps, funnels, retention
-and permission-gated user-level analysis.
+## Phase 7 — Product analytics (foundation started)
+Implemented on feat/tloomberg-saas-product-analytics-phase7: versioned opt-in
+consent, authenticated consent-gated event batches, server-derived user/session
+identity, event deduplication, privacy-minimized page/click/scroll/active-time
+fields, aggregate overview/pages/heatmap/sequential funnels/retention reports,
+minimum-cohort suppression and separately permission-gated user-level event
+history. Anonymous tracking, frontend SDK/banner, dashboard UI and automatic
+retention scheduling remain. No market-data database or service changes.
 
 ## Phase 8 — Superadmin console
 Users, roles, subscriptions, payment reconciliation, wallets, withdrawals,
