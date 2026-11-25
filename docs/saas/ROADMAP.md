@@ -22,9 +22,14 @@ server-resolved feature access. Dashboard frontend and PostgreSQL integration
 tests remain. The current session cannot be revoked through the other-session
 route. No market-data database or service changes.
 
-## Phase 4 — Subscriptions and payments
-SnapPay/DigiPay adapters, merchant onboarding, sandbox tests, verified phone,
-idempotent order lifecycle, verification/settlement, refunds and reconciliation.
+## Phase 4 — Subscriptions and payments (lifecycle foundation started)
+Implemented on feat/tloomberg-saas-payments-phase4: server-priced idempotent
+subscription orders, verified-phone purchase gate, provider-neutral checkout and
+verification contracts, payment attempt tracking, atomic/idempotent settlement,
+subscription renewal extension, and refund-request schema. SnapPay/DigiPay live
+adapters remain disabled pending official merchant integration packs and sandbox
+credentials. Refund execution, reconciliation, PostgreSQL concurrency tests and
+provider end-to-end tests remain.
 
 ## Phase 5 — Wallet and referrals
 Ledger, top-ups, gift/cash balance, withdrawal reservations, bank verification,
