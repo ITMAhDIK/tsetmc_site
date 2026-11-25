@@ -186,3 +186,15 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                 (event["id"],),
             )
             return {"already_processed": False, "order_id": order_id}
+
+
+def find_attempt_by_provider_order(conn, *, provider: str, provider_order_id: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT a.id AS attempt_id,a.order_id,a.provider,a.provider_order_id,
+                      o.amount_toman,o.status AS order_status
+               FROM payment_attempts a JOIN payment_orders o ON o.id=a.order_id
+               WHERE a.provider=%s AND a.provider_order_id=%s""",
+            (provider,provider_order_id),
+        )
+        return cur.fetchone()
