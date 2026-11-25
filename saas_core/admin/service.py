@@ -125,6 +125,8 @@ def change_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reas
     reason=reason.strip()
     if not 3 <= len(reason) <= 500:
         raise ValueError("reason must contain 3-500 characters")
+    if actor_id == user_id:
+        raise ValueError("self-suspension/reactivation is not allowed")
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute("SELECT status FROM users WHERE id=%s FOR UPDATE",(user_id,))
@@ -139,6 +141,16 @@ def change_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reas
             )
             is_superadmin=cur.fetchone()["is_superadmin"]
             if is_superadmin and status=="suspended":
+                # Serialize all superadmin suspension decisions, not merely the
+                # target row, so two concurrent requests cannot remove the last
+                # active superadmins at the same time.
+                cur.execute(
+                    """SELECT u.id FROM users u
+                       JOIN user_roles ur ON ur.user_id=u.id
+                       JOIN roles r ON r.id=ur.role_id
+                       WHERE r.code='superadmin' ORDER BY u.id FOR UPDATE OF u"""
+                )
+                cur.fetchall()
                 cur.execute(
                     """SELECT COUNT(*)::integer AS total FROM users u
                        JOIN user_roles ur ON ur.user_id=u.id
@@ -168,7 +180,7 @@ def list_roles(conn):
     with conn.cursor() as cur:
         cur.execute(
             """SELECT r.code,r.title,COUNT(DISTINCT ur.user_id)::bigint AS assigned_users,
-                      COALESCE(array_agg(DISTINCT p.code) FILTER (WHERE p.code IS NOT NULL),'{{}}') AS permissions
+                      COALESCE(array_agg(DISTINCT p.code) FILTER (WHERE p.code IS NOT NULL),'{}') AS permissions
                FROM roles r LEFT JOIN user_roles ur ON ur.role_id=r.id
                LEFT JOIN role_permissions rp ON rp.role_id=r.id
                LEFT JOIN permissions p ON p.id=rp.permission_id
@@ -187,8 +199,11 @@ def change_user_role(conn, *, actor_id: UUID, user_id: UUID,
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute("SELECT status FROM users WHERE id=%s FOR UPDATE",(user_id,))
-            if not cur.fetchone():
+            target=cur.fetchone()
+            if not target:
                 raise LookupError("user not found")
+            if grant and target["status"]!="active":
+                raise ValueError("administrative roles can only be granted to active users")
             cur.execute("SELECT id FROM roles WHERE code=%s",(role_code,))
             role=cur.fetchone()
             if not role:
