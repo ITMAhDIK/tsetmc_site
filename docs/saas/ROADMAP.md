@@ -1,10 +1,10 @@
 # Tloomberg SaaS Delivery Roadmap
 
-## Phase 1 — Foundation (this branch)
+## Phase 1 — Foundation
 - Define isolated market, SaaS and analytics data boundaries.
 - Add PostgreSQL schema and seed subscription plans.
 - Define identity, RBAC, payments, wallet, referrals, support, consent and audit.
-- Implement and test cash/gift wallet policy.
+- Implement wallet policy.
 - Keep existing market API/database untouched.
 
 ## Phase 2 — Authentication and authorization (in progress)
@@ -15,9 +15,12 @@ Remaining before production: Google OAuth, verified identity linking, password
 reset, IP/distributed rate limiting, CSRF/CORS hardening, superadmin bootstrap,
 SMS worker, PostgreSQL integration tests and deployment security review.
 
-## Phase 3 — Account and dashboard UX
-Menu, profile, preferences, sessions, account/subscription history and feature
-gates. Finalize the free-tier access matrix before implementation.
+## Phase 3 — Account and dashboard UX (API foundation started)
+Implemented on feat/tloomberg-saas-account-phase3: profile read/update, allow-listed
+preferences, active session listing/revocation, subscription history and
+server-resolved feature access. Dashboard frontend and PostgreSQL integration
+tests remain. The current session cannot be revoked through the other-session
+route. No market-data database or service changes.
 
 ## Phase 4 — Subscriptions and payments
 SnapPay/DigiPay adapters, merchant onboarding, sandbox tests, verified phone,
