@@ -146,6 +146,11 @@ def settle_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID, idempoten
     """Record the cash debit only after an approved payout is confirmed paid."""
     with conn.transaction():
         with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM withdrawal_requests WHERE id=%s", (withdrawal_id,))
+            owner = cur.fetchone()
+            if not owner:
+                raise LookupError("withdrawal request not found")
+            _lock_wallet(conn,owner["user_id"])
             cur.execute(
                 """SELECT user_id,amount_toman,status FROM withdrawal_requests
                    WHERE id=%s FOR UPDATE""", (withdrawal_id,)
@@ -153,7 +158,6 @@ def settle_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID, idempoten
             request = cur.fetchone()
             if not request:
                 raise LookupError("withdrawal request not found")
-            _lock_wallet(conn,request["user_id"])
             if request["status"] != "approved":
                 raise ValueError("only approved withdrawals can be settled")
             post_ledger_entry(
