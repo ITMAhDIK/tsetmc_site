@@ -11,9 +11,8 @@ import concurrent.futures
 import ipaddress
 import json
 import os
-import statistics
+import socket
 import sys
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -177,8 +176,29 @@ def _request_once(opener, url: str, scheduled_at: float) -> RequestResult:
         )
 
 
+def _validate_public_dns(host: str) -> None:
+    """Reject hostnames resolving to loopback, private, link-local or reserved IPs."""
+    try:
+        records = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise LoadTestConfigurationError("Staging hostname did not resolve successfully") from exc
+    addresses = {record[4][0] for record in records}
+    if not addresses:
+        raise LoadTestConfigurationError("Staging hostname has no usable DNS records")
+    for raw_address in addresses:
+        try:
+            address = ipaddress.ip_address(raw_address)
+        except ValueError as exc:
+            raise LoadTestConfigurationError("Staging DNS returned an invalid IP address") from exc
+        if not address.is_global:
+            raise LoadTestConfigurationError(
+                "Staging hostname resolves to a non-public IP; refusing to probe it"
+            )
+
+
 def run_probe(config: LoadConfig) -> dict[str, object]:
     """Send only read-only health requests at the configured global rate."""
+    _validate_public_dns(config.host)
     request_count = config.duration_seconds * config.requests_per_second
     start_at = time.monotonic() + 0.5
     opener = urllib.request.build_opener(NoRedirectHandler())
@@ -209,7 +229,7 @@ def run_probe(config: LoadConfig) -> dict[str, object]:
         status_counts[key] = status_counts.get(key, 0) + 1
 
     failures = sum(
-        result.status_code == 0 or result.status_code >= 500 for result in results
+        result.status_code < 200 or result.status_code >= 300 for result in results
     )
     return {
         "target_host": config.host,
