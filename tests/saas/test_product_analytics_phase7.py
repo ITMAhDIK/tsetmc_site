@@ -92,3 +92,29 @@ def test_click_events_without_coordinates_are_allowed_for_component_analytics():
     event=validate_event(_event(event_name="click",component_id="subscribe_button"))
     assert event["component_id"] == "subscribe_button"
     assert event["x_pct"] is None
+
+
+def test_saas_application_mounts_product_analytics_routes():
+    # Import through the real application entrypoint so circular router imports
+    # and FastAPI route declaration errors are caught during test collection.
+    from saas_core.auth.api import app
+
+    paths={route.path for route in app.routes if hasattr(route,"path")}
+    assert "/analytics/consent" in paths
+    assert "/analytics/events" in paths
+    assert "/analytics/admin/overview" in paths
+    assert "/analytics/admin/users/{user_id}/events" in paths
+
+
+def test_api_rejects_boolean_values_for_numeric_analytics_fields():
+    from pydantic import ValidationError
+    from saas_core.auth.api import app  # Ensure the production entrypoint loads first.
+    from saas_core.analytics.api import EventInput
+
+    with pytest.raises(ValidationError):
+        EventInput(
+            client_event_id=uuid4(),
+            event_name="active_time",
+            page_path="/dashboard",
+            active_duration_ms=True,
+        )
