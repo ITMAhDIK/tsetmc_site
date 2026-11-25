@@ -84,7 +84,7 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
             # A plain COUNT followed by INSERT would allow parallel requests to
             # race past the per-phone request ceiling.
             cur.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s::text, 0::bigint))",
                 (phone,),
             )
             cur.execute("""SELECT count(*) AS recent_count FROM phone_verifications
