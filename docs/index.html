@@ -2475,6 +2475,13 @@
       const [, setDateModeTick] = useState(0);
       const [portfolioInvestor, setPortfolioInvestor] = useState('');
       const routeSnapshot = () => ({page, activeSymbol, portfolioInvestor, scrollY:window.scrollY});
+      const restoreAppScroll = (targetY, attempt = 0) => {
+        requestAnimationFrame(() => {
+          const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+          if (maxY >= targetY || attempt >= 12) window.scrollTo(0, Math.min(targetY,maxY));
+          else setTimeout(() => restoreAppScroll(targetY,attempt+1),100);
+        });
+      };
       const navigateTo = (nextPage, updates = {}) => {
         const previous = routeSnapshot();
         window.history.replaceState({...window.history.state, appRoute:previous}, '');
@@ -2494,7 +2501,7 @@
           setPage(route.page || 'market');
           setActiveSymbol(route.activeSymbol || '');
           setPortfolioInvestor(route.portfolioInvestor || '');
-          requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,Number(route.scrollY)||0)));
+          restoreAppScroll(Number(route.scrollY)||0);
         };
         window.addEventListener('popstate',onPopState);
         return ()=>window.removeEventListener('popstate',onPopState);
