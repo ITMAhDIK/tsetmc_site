@@ -8,6 +8,12 @@ set -Eeuo pipefail
 : "${SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME:?Set the expected restore-test database name}"
 : "${SAAS_PRODUCTION_DB_NAME:?Set the production SaaS database name for the no-target-equality guard}"
 
+# Do not expose a database password through command-line process arguments.
+if [[ "$SAAS_RESTORE_VERIFY_DATABASE_URL" == *"password="* || "$SAAS_RESTORE_VERIFY_DATABASE_URL" =~ ^[[:alpha:]][[:alnum:]+.-]*://[^/]*:[^/@]*@ ]]; then
+  printf 'Do not embed a database password in the connection string; use a protected .pgpass file.\n' >&2
+  exit 2
+fi
+
 for command_name in psql pg_restore sha256sum awk; do
   command -v "$command_name" >/dev/null 2>&1 || {
     printf 'Required command not found: %s\n' "$command_name" >&2
@@ -47,7 +53,7 @@ if [[ "$target_db" == "$SAAS_PRODUCTION_DB_NAME" ]]; then
 fi
 
 existing_objects="$(psql "$SAAS_RESTORE_VERIFY_DATABASE_URL" -X -A -t -q -c \
-  "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')")"
+  "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN ('r','p','v','m','S','f')")"
 if [[ "$existing_objects" != "0" ]]; then
   printf 'Restore target is not empty; no objects were changed.\n' >&2
   exit 6
