@@ -408,10 +408,86 @@ function svgLabelLines(value,maxChars=14,maxLines=2){const words=String(value||"
 
 function renderShareholderOrbit(company,centerX,centerY,highlightInvestorId=null){const holders=[...(company.shareholders||[])].sort((a,b)=>(Number(b.ownership_pct)||0)-(Number(a.ownership_pct)||0));const ringCapacity=18,edges=[],nodes=[];holders.forEach((holder,index)=>{const ring=Math.floor(index/ringCapacity),slot=index%ringCapacity,ringCount=Math.min(ringCapacity,holders.length-ring*ringCapacity),radius=155+ring*112,angle=-Math.PI/2+(slot/ringCount)*Math.PI*2,x=centerX+Math.cos(angle)*radius,y=centerY+Math.sin(angle)*radius,current=String(holder.investor_id)===String(highlightInvestorId),name=holder.shareholder_name||String(holder.investor_id||"شناسه نامشخص"),lines=svgLabelLines(name,15,2),labelY=y+34,tspans=lines.map((line,j)=>`<tspan x="${x.toFixed(1)}" y="${(labelY+j*14).toFixed(1)}">${safe(line)}</tspan>`).join(""),ownership=holder.ownership_pct==null?"درصد نامشخص":pct(holder.ownership_pct),metaY=labelY+lines.length*14,title=`${name} · ${holder.investor_id||"شناسه نامشخص"} · ${typeLabel(holder.shareholder_type)} · ${ownership}`;edges.push(`<line x1="${centerX}" y1="${centerY}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" class="shareholder-edge"/>`);nodes.push(`<g class="network-node" data-investor-id="${safe(holder.investor_id)}" tabindex="0" role="button" aria-label="${safe(title)}"><title>${safe(title)}</title><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="18" class="shareholder-node-circle ${current?"is-current":""}"/><text text-anchor="middle" class="shareholder-node-label">${tspans}</text><text x="${x.toFixed(1)}" y="${metaY.toFixed(1)}" text-anchor="middle" class="shareholder-node-meta">${safe(ownership)}</text></g>`);});return{edges:edges.join(""),nodes:nodes.join(""),count:holders.length};}
 
-function renderPortfolioShareholderNetwork(person){const holdings=(person.symbols||[]).filter(item=>item.exit_status==="currently_disclosed"),unique=new Map();holdings.forEach(item=>{const company=data?.companies?.[item.ins_code];if(company&&Array.isArray(company.shareholders)&&company.shareholders.length)unique.set(String(item.ins_code),{...company,ins_code:item.ins_code});});const companies=[...unique.values()];if(!companies.length)return`<div class="note">برای پوزیشن‌های باز این شناسه، فهرست سهامداران در snapshot موجود نیست؛ بنابراین گراف چندشرکتی قابل رسم نیست. فهرست سرمایه‌گذاری‌های خود شناسه در بخش‌های پایین صفحه در دسترس است.</div>`;const maxRings=Math.max(1,...companies.map(company=>Math.ceil((company.shareholders||[]).length/18))),maxOrbit=155+(maxRings-1)*112,cellSize=Math.max(520,(maxOrbit+88)*2),centers=companies.map((company,index)=>companies.length===1?{x:700,y:350}:{x:cellSize/2+28+(index%2)*cellSize,y:cellSize/2+28+Math.floor(index/2)*cellSize});const clusters=companies.map((company,index)=>{const center=centers[index],orbit=renderShareholderOrbit(company,center.x,center.y,person.id),symbol=company.symbol||holdings.find(x=>String(x.ins_code)===String(company.ins_code))?.symbol||"نماد",companyName=company.company_name||symbol;return`${orbit.edges}<g class="network-node" data-network-company="${safe(company.ins_code)}" tabindex="0" role="button" aria-label="نمایش شرکت ${safe(symbol)}"><title>${safe(companyName)} · ${safe(symbol)} · ${fa(orbit.count)} سهامدار در snapshot ${safe(company.shareholders_snapshot_date||"نامشخص")}</title><circle cx="${center.x}" cy="${center.y}" r="54" class="shareholder-company-circle"/><text x="${center.x}" y="${center.y+5}" text-anchor="middle" class="shareholder-company-label" direction="ltr">${safe(symbol)}</text><text x="${center.x}" y="${center.y+76}" text-anchor="middle" class="shareholder-company-meta">${fa(orbit.count)} سهامدار</text></g>${orbit.nodes}`;}).join(""),omitted=holdings.length-companies.length;return`<div class="network-wrap network-canvas"><svg class="network-svg" data-network-canvas viewBox="0 0 1400 700" role="img" aria-label="گراف چندمرکزی سهامداران شرکت‌های پرتفوی"><g data-network-viewport>${clusters}</g></svg></div><div class="network-instructions"><span><i class="network-dot company"></i> شرکتِ مرکز هر خوشه</span><span><i class="network-dot"></i> سهامداران و شناسه‌های آن شرکت</span><span>پس‌زمینه را با موس بکشید؛ چرخ ماوس برای بزرگ‌نمایی است؛ برای بازکردن جزئیات روی گره کلیک کنید.</span></div><div class="hint">هر شرکتِ دارای پوزیشن باز و فهرست سهامداری، یک گره مرکزی مستقل دارد؛ بنابراین اگر این شناسه سهامدار چند شرکت باشد، چند مرکز در یک بوم دوبعدی دیده می‌شود. گره‌های پیرامونی تمام شناسه‌های ثبت‌شده در آخرین snapshot موجود برای همان نماد را نشان می‌دهند. ${omitted?`${fa(omitted)} پوزیشن به‌دلیل نبود فهرست سهامداران در دادهٔ فعلی، گره مرکزی ندارند.`:""}</div>`;}
-
-function renderCompanyShareholderNetwork(company,highlightInvestorId=null){const holders=company.shareholders||[];if(!holders.length)return'<div class="note">فهرست سهامداران در snapshotهای موجود برای این شرکت ثبت نشده است؛ گراف مالکیت قابل ترسیم نیست.</div>';const orbit=renderShareholderOrbit(company,700,350,highlightInvestorId);return`<div class="network-wrap network-canvas"><svg class="network-svg" data-network-canvas viewBox="0 0 1400 700" role="img" aria-label="گراف سهامداران شرکت ${safe(company.symbol||"")}"><g data-network-viewport>${orbit.edges}<g><title>${safe(company.company_name||company.symbol||"شرکت")} · ${fa(orbit.count)} سهامدار</title><circle cx="700" cy="350" r="54" class="shareholder-company-circle"/><text x="700" y="355" text-anchor="middle" class="shareholder-company-label" direction="ltr">${safe(company.symbol||"شرکت")}</text><text x="700" y="426" text-anchor="middle" class="shareholder-company-meta">${fa(orbit.count)} سهامدار</text></g>${orbit.nodes}</g></svg></div><div class="network-instructions"><span><i class="network-dot company"></i> شرکت در مرکز</span><span><i class="network-dot"></i> شناسه‌های سهامداران شرکت</span><span>پس‌زمینه را با موس بکشید؛ چرخ ماوس برای بزرگ‌نمایی؛ کلیک روی هر سهامدار، صفحهٔ سرمایه‌گذاری همان شناسه را باز می‌کند.</span></div><div class="hint">تاریخ snapshot سهامداران: ${safe(company.shareholders_snapshot_date||"نامشخص")} · تعداد گره‌ها: ${fa(orbit.count)}. فهرست شامل تمام شناسه‌های ثبت‌شده در snapshot موجودِ فایل‌های داده است.</div>`;}
-
+function renderPortfolioShareholderNetwork(person){
+  const holdings=(person.symbols||[]).filter(item=>item.exit_status==="currently_disclosed");
+  const unique=new Map();
+  holdings.forEach(item=>{
+    const company=data?.companies?.[item.ins_code];
+    if(company&&Array.isArray(company.shareholders)&&company.shareholders.length){
+      unique.set(String(item.ins_code),{...company,ins_code:item.ins_code});
+    }
+  });
+  const companies=[...unique.values()];
+  if(!companies.length){
+    return `<div class="note">برای پوزیشن‌های باز این شناسه، فهرست سهامداران در snapshot موجود نیست؛ بنابراین گراف چندشرکتی قابل رسم نیست. فهرست سرمایه‌گذاری‌های خود شناسه در بخش‌های پایین صفحه در دسترس است.</div>`;
+  }
+  const maxRings=Math.max(1,...companies.map(company=>Math.ceil((company.shareholders||[]).length/18)));
+  const maxOrbit=155+(maxRings-1)*112;
+  const cellSize=Math.max(520,(maxOrbit+115)*2);
+  const columns=Math.max(1,Math.ceil(Math.sqrt(companies.length)));
+  const rows=Math.ceil(companies.length/columns);
+  const canvasWidth=columns*cellSize;
+  const canvasHeight=rows*cellSize;
+  const centers=companies.map((company,index)=>({
+    x:(index%columns)*cellSize+cellSize/2,
+    y:Math.floor(index/columns)*cellSize+cellSize/2
+  }));
+  const clusters=companies.map((company,index)=>{
+    const center=centers[index];
+    const orbit=renderShareholderOrbit(company,center.x,center.y,person.id);
+    const symbol=company.symbol||holdings.find(x=>String(x.ins_code)===String(company.ins_code))?.symbol||"نماد";
+    const companyName=company.company_name||symbol;
+    return `${orbit.edges}
+      <g class="network-node" data-network-company="${safe(company.ins_code)}" tabindex="0" role="button" aria-label="نمایش شرکت ${safe(symbol)}">
+        <title>${safe(companyName)} · ${safe(symbol)} · ${fa(orbit.count)} سهامدار در snapshot ${safe(company.shareholders_snapshot_date||"نامشخص")}</title>
+        <circle cx="${center.x}" cy="${center.y}" r="54" class="shareholder-company-circle"/>
+        <text x="${center.x}" y="${center.y+5}" text-anchor="middle" class="shareholder-company-label" direction="ltr">${safe(symbol)}</text>
+        <text x="${center.x}" y="${center.y+76}" text-anchor="middle" class="shareholder-company-meta">${fa(orbit.count)} سهامدار</text>
+      </g>
+      ${orbit.nodes}`;
+  }).join("");
+  const omitted=holdings.length-companies.length;
+  return `<div class="network-wrap network-canvas">
+    <svg class="network-svg" data-network-canvas viewBox="0 0 ${canvasWidth} ${canvasHeight}" role="img" aria-label="گراف چندمرکزی سهامداران شرکت‌های پرتفوی">
+      <g data-network-viewport>${clusters}</g>
+    </svg>
+  </div>
+  <div class="network-instructions">
+    <span><i class="network-dot company"></i> شرکتِ مرکز هر خوشه</span>
+    <span><i class="network-dot"></i> سهامداران و شناسه‌های آن شرکت</span>
+    <span>پس‌زمینه را با موس بکشید؛ چرخ ماوس برای بزرگ‌نمایی است؛ برای بازکردن جزئیات روی گره کلیک کنید.</span>
+  </div>
+  <div class="hint">هر شرکتِ دارای پوزیشن باز و فهرست سهامداری، یک گره مرکزی مستقل دارد؛ بنابراین اگر این شناسه سهامدار چند شرکت باشد، چند مرکز در یک بوم دوبعدی دیده می‌شود. گره‌های پیرامونی تمام شناسه‌های ثبت‌شده در آخرین snapshot موجود برای همان نماد را نشان می‌دهند. ${omitted?`${fa(omitted)} پوزیشن به‌دلیل نبود فهرست سهامداران در دادهٔ فعلی، گره مرکزی ندارند.`:""}</div>`;
+}
+function renderCompanyShareholderNetwork(company,highlightInvestorId=null){
+  const holders=company.shareholders||[];
+  if(!holders.length)return '<div class="note">فهرست سهامداران در snapshotهای موجود برای این شرکت ثبت نشده است؛ گراف مالکیت قابل ترسیم نیست.</div>';
+  const rings=Math.max(1,Math.ceil(holders.length/18));
+  const radius=155+(rings-1)*112;
+  const canvasSize=Math.max(700,(radius+115)*2);
+  const center=canvasSize/2;
+  const orbit=renderShareholderOrbit(company,center,center,highlightInvestorId);
+  return `<div class="network-wrap network-canvas">
+    <svg class="network-svg" data-network-canvas viewBox="0 0 ${canvasSize} ${canvasSize}" role="img" aria-label="گراف سهامداران شرکت ${safe(company.symbol||"")}">
+      <g data-network-viewport>
+        ${orbit.edges}
+        <g>
+          <title>${safe(company.company_name||company.symbol||"شرکت")} · ${fa(orbit.count)} سهامدار</title>
+          <circle cx="${center}" cy="${center}" r="54" class="shareholder-company-circle"/>
+          <text x="${center}" y="${center+5}" text-anchor="middle" class="shareholder-company-label" direction="ltr">${safe(company.symbol||"شرکت")}</text>
+          <text x="${center}" y="${center+76}" text-anchor="middle" class="shareholder-company-meta">${fa(orbit.count)} سهامدار</text>
+        </g>
+        ${orbit.nodes}
+      </g>
+    </svg>
+  </div>
+  <div class="network-instructions">
+    <span><i class="network-dot company"></i> شرکت در مرکز</span>
+    <span><i class="network-dot"></i> شناسه‌های سهامداران شرکت</span>
+    <span>پس‌زمینه را با موس بکشید؛ چرخ ماوس برای بزرگ‌نمایی؛ کلیک روی هر سهامدار، صفحهٔ سرمایه‌گذاری همان شناسه را باز می‌کند.</span>
+  </div>
+  <div class="hint">تاریخ snapshot سهامداران: ${safe(company.shareholders_snapshot_date||"نامشخص")} · تعداد گره‌ها: ${fa(orbit.count)}. فهرست شامل تمام شناسه‌های ثبت‌شده در snapshot موجودِ فایل‌های داده است.</div>`;
+}
 function renderSelectedInvestorInvestments(person){if(!person)return'<div class="note">شناسهٔ سرمایه‌گذار انتخاب‌شده مشخص نیست.</div>';const positions=[...(person.symbols||[])].sort((a,b)=>(Number(b.last_observation_market_value_rial)||0)-(Number(a.last_observation_market_value_rial)||0)),rows=positions.map(item=>`<tr><td><button class="symbol-btn" data-company="${safe(item.ins_code)}">${safe(item.symbol||"—")}</button></td><td>${safe(item.company_name||"—")}</td><td>${safe(item.group_label||"—")}</td><td class="num">${n(item.last_observation_shares)}</td><td class="num">${pct(item.last_observation_ownership_pct)}</td><td class="num">${money(item.last_observation_market_value_rial)}</td><td>${exitLabel(item.exit_status)}</td></tr>`).join("");return`<div class="section-head"><div><h2>سرمایه‌گذاری‌های شناسهٔ انتخاب‌شده</h2><div class="hint">${safe(person.shareholder_name)} · <span class="num">${safe(displayId(person))}</span> · ${typeLabel(person.shareholder_type)}. با کلیک روی هر نماد، گراف سهامداران همان شرکت باز می‌شود.</div></div><span class="tag">${fa(positions.length)} شرکت مشاهده‌شده</span></div><div class="table-wrap"><table><thead><tr><th>نماد</th><th>شرکت</th><th>گروه</th><th>تعداد سهم</th><th>مالکیت</th><th>ارزش مرجع</th><th>وضعیت</th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="empty-cell">برای این شناسه سرمایه‌گذاری ثبت نشده است.</td></tr>'}</tbody></table></div>`;}
 
 function enableNetworkCanvases(root=$("detail")){root.querySelectorAll("svg[data-network-canvas]").forEach(svg=>{const viewport=svg.querySelector("[data-network-viewport]");if(!viewport||svg.dataset.panReady==="1")return;svg.dataset.panReady="1";let tx=0,ty=0,scale=1,drag=null;const renderTransform=()=>viewport.setAttribute("transform",`translate(${tx.toFixed(2)} ${ty.toFixed(2)}) scale(${scale.toFixed(3)})`);svg.addEventListener("pointerdown",event=>{if(event.button!==0)return;if(event.target.closest(".network-node")&&!event.shiftKey)return;const point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;const start=point.matrixTransform(svg.getScreenCTM().inverse());drag={x:start.x,y:start.y,tx,ty};svg.setPointerCapture(event.pointerId);svg.classList.add("is-panning");});svg.addEventListener("pointermove",event=>{if(!drag)return;const point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;const current=point.matrixTransform(svg.getScreenCTM().inverse());tx=drag.tx+current.x-drag.x;ty=drag.ty+current.y-drag.y;renderTransform();});const endDrag=()=>{drag=null;svg.classList.remove("is-panning");};svg.addEventListener("pointerup",endDrag);svg.addEventListener("pointercancel",endDrag);svg.addEventListener("wheel",event=>{event.preventDefault();const point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;const cursor=point.matrixTransform(svg.getScreenCTM().inverse()),nextScale=Math.max(.35,Math.min(3.5,scale*(event.deltaY<0?1.12:.89))),ratio=nextScale/scale;tx=cursor.x-(cursor.x-tx)*ratio;ty=cursor.y-(cursor.y-ty)*ratio;scale=nextScale;renderTransform();},{passive:false});});}
