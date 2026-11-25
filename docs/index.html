@@ -526,7 +526,38 @@
       const [offset, setOffset] = useState(0);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState('');
+      const [sectorRegistry, setSectorRegistry] = useState(null);
+      const [selectedSector, setSelectedSector] = useState('');
+      const [sectorSearch, setSectorSearch] = useState('');
       const limit = 50;
+
+      useEffect(() => {
+        fetch('./data/instrument_sectors.json', {cache:'no-store'})
+          .then(res => { if (!res.ok) throw new Error('HTTP '+res.status); return res.json(); })
+          .then(setSectorRegistry)
+          .catch(() => setSectorRegistry(null));
+      }, []);
+
+      const sectorGroups = useMemo(() => {
+        const groups = new Map();
+        Object.values(sectorRegistry?.instruments || {}).forEach(item => {
+          const code = String(item.cSecVal || '').trim();
+          if (!code) return;
+          if (!groups.has(code)) groups.set(code, {code, label:item.lSecVal || code, instruments:[]});
+          groups.get(code).instruments.push(item);
+        });
+        return [...groups.values()].map(group => ({
+          ...group,
+          instruments: group.instruments.sort((a,b)=>String(a.symbol||'').localeCompare(String(b.symbol||''),'fa'))
+        })).sort((a,b)=>a.label.localeCompare(b.label,'fa'));
+      }, [sectorRegistry]);
+
+      const selectedSectorGroup = sectorGroups.find(group => group.code === selectedSector) || null;
+      const visibleSectorInstruments = (selectedSectorGroup?.instruments || []).filter(item => {
+        const q = sectorSearch.trim().toLowerCase();
+        return !q || String(item.symbol||'').toLowerCase().includes(q) ||
+          String(item.lSoSecVal||'').toLowerCase().includes(q);
+      });
 
       useEffect(() => {
         apiFetch('/api/v1/market/overview').then(setOverview).catch(e => setError(e.message));
@@ -588,6 +619,43 @@
               <div className="text-sm font-bold num mt-1">{sum.last_updated_at ? fmtDateTime(sum.last_updated_at) : '—'}</div>
               <div className="text-[11px] text-emerald-400 mt-1">منبع: SQLite محلی</div>
             </div>
+          </div>
+
+          <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
+            <div className="p-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold">گروه‌بندی رسمی نمادهای بازار</h2>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-1">فهرست اعضای هر گروه بر اساس طبقه‌بندی رسمی TSETMC؛ مستقل از اینکه تاریخچهٔ آن نماد در دیتابیس محلی وارد شده باشد.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <select value={selectedSector} onChange={e=>{setSelectedSector(e.target.value);setSectorSearch('');}} className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs min-w-56">
+                  <option value="">انتخاب گروه بورسی…</option>
+                  {sectorGroups.map(group=><option key={group.code} value={group.code}>{group.label} · {group.code} ({fmtNum(group.instruments.length)})</option>)}
+                </select>
+                {selectedSector && <input value={sectorSearch} onChange={e=>setSectorSearch(e.target.value)} placeholder="جستجو در نمادهای گروه…" className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs" />}
+              </div>
+            </div>
+            {!sectorRegistry ? (
+              <div className="p-4 text-xs text-[var(--text-secondary)]">رجیستری رسمی گروه‌ها بارگذاری نشد.</div>
+            ) : !selectedSectorGroup ? (
+              <div className="p-4 text-xs text-[var(--text-secondary)]">یک گروه را انتخاب کن تا تمام نمادهای ثبت‌شده در آن گروه نمایش داده شوند.</div>
+            ) : (
+              <div className="p-3">
+                <div className="flex flex-wrap justify-between gap-2 text-xs mb-3">
+                  <strong>{selectedSectorGroup.label} <span className="num text-[var(--text-secondary)]">({selectedSectorGroup.code})</span></strong>
+                  <span className="text-[var(--text-secondary)]">{fmtNum(visibleSectorInstruments.length)} از {fmtNum(selectedSectorGroup.instruments.length)} نماد رسمی</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7 gap-2">
+                  {visibleSectorInstruments.map(item=>(
+                    <button key={item.ins_code} onClick={()=>onOpenStock(item.symbol)} className="text-right rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-blue-500 p-2">
+                      <span className="block font-bold text-blue-400 text-xs">{item.symbol || '—'}</span>
+                      <span className="block text-[10px] text-[var(--text-secondary)] mt-1 truncate">{item.lSoSecVal || 'زیرگروه ثبت نشده'}</span>
+                      <span className="block text-[9px] text-[var(--text-muted)] mt-1">{item.ins_code && item.ins_code === ' ' ? '' : ''}{item.has_sample_detail ? 'تاریخچهٔ نمونه موجود' : 'عضو گروه رسمی'}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
@@ -2399,7 +2467,32 @@
       // does not trigger a render, which left tab-4 text dates stale).
       const [, setDateModeTick] = useState(0);
       const [portfolioInvestor, setPortfolioInvestor] = useState('');
-      const openInvestor = (id) => { setPortfolioInvestor(id); setPage('portfolio'); };
+      const routeSnapshot = () => ({page, activeSymbol, portfolioInvestor, scrollY:window.scrollY});
+      const navigateTo = (nextPage, updates = {}) => {
+        const previous = routeSnapshot();
+        window.history.replaceState({...window.history.state, appRoute:previous}, '');
+        const next = {...previous, ...updates, page:nextPage, scrollY:0};
+        window.history.pushState({appRoute:next}, '');
+        if (Object.prototype.hasOwnProperty.call(updates,'activeSymbol')) setActiveSymbol(updates.activeSymbol);
+        if (Object.prototype.hasOwnProperty.call(updates,'portfolioInvestor')) setPortfolioInvestor(updates.portfolioInvestor);
+        setPage(nextPage);
+        requestAnimationFrame(()=>window.scrollTo(0,0));
+      };
+      useEffect(() => {
+        if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+        if (!window.history.state?.appRoute) window.history.replaceState({appRoute:{page,activeSymbol,portfolioInvestor,scrollY:window.scrollY}}, '');
+        const onPopState = event => {
+          const route = event.state?.appRoute;
+          if (!route) { setPage('market'); setActiveSymbol(''); setPortfolioInvestor(''); window.scrollTo(0,0); return; }
+          setPage(route.page || 'market');
+          setActiveSymbol(route.activeSymbol || '');
+          setPortfolioInvestor(route.portfolioInvestor || '');
+          requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,Number(route.scrollY)||0)));
+        };
+        window.addEventListener('popstate',onPopState);
+        return ()=>window.removeEventListener('popstate',onPopState);
+      }, []);
+      const openInvestor = (id) => navigateTo('portfolio',{portfolioInvestor:id});
       const [plan, setPlan] = useState('premium');
       const [quickSearch, setQuickSearch] = useState('');
       const [searchResults, setSearchResults] = useState([]);
@@ -2433,8 +2526,7 @@
       }, [quickSearch]);
 
       const openStock = (sym) => {
-        setActiveSymbol(sym);
-        setPage('stock');
+        navigateTo('stock',{activeSymbol:sym});
         setQuickSearch('');
         setSearchResults([]);
       };
@@ -2443,7 +2535,7 @@
         <div className={`app-shell min-h-screen flex flex-col text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
           <header className="app-header">
             <div className="app-topbar-inner">
-              <button onClick={() => setPage('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
+              <button onClick={() => navigateTo('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
                 <span className="app-brand-mark" aria-hidden="true">ر</span>
                 <span className="app-brand-copy"><strong>ره‌نگار بورس</strong><small>تحلیل بازار و مالکیت سهام</small></span>
               </button>
@@ -2482,7 +2574,7 @@
             <div className="app-nav-wrap">
               <nav className="app-nav" aria-label="بخش‌های سامانه">
                 {NAV_PAGES.map(n => (
-                  <button key={n.id} onClick={() => setPage(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
+                  <button key={n.id} onClick={() => navigateTo(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
                     {n.label}
                   </button>
                 ))}
