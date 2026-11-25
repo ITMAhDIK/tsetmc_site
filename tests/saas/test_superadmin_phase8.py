@@ -35,8 +35,9 @@ def test_audit_pagination_is_bounded():
 
 
 def test_admin_roles_cannot_be_changed_by_user_themselves():
-    with pytest.raises(ValueError):
-        change_user_role(None,actor_id=uuid4(),user_id=uuid4(),
+    actor_id=uuid4()
+    with pytest.raises(ValueError,match="self role changes"):
+        change_user_role(None,actor_id=actor_id,user_id=actor_id,
                          role_code="support",grant=True)
 
 
