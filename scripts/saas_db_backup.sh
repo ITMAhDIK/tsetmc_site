@@ -17,8 +17,15 @@ done
 mkdir -p -- "$SAAS_BACKUP_DIR"
 backup_dir="$(cd -- "$SAAS_BACKUP_DIR" && pwd -P)"
 
+# Do not expose a database password through command-line process arguments.
+if [[ "$SAAS_DATABASE_URL" == *"password="* || "$SAAS_DATABASE_URL" =~ ^[[:alpha:]][[:alnum:]+.-]*://[^/]*:[^/@]*@ ]]; then
+  printf 'Do not embed a database password in the connection string; use a protected .pgpass file.\n' >&2
+  exit 2
+fi
+
 # Protect against accidentally committing database backups to this Git checkout.
-if repo_root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+if repo_root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; then
   repo_root="$(cd -- "$repo_root" && pwd -P)"
   case "$backup_dir/" in
     "$repo_root/"*)
