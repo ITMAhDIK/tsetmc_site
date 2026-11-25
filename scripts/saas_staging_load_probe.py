@@ -149,7 +149,7 @@ def _request_once(
     delay = scheduled_at - time.monotonic()
     if delay > 0:
         time.sleep(delay)
-    elif -delay > max_lateness_seconds:
+    if time.monotonic() - scheduled_at > max_lateness_seconds:
         # Drop overdue work instead of dispatching a burst after slow responses.
         return RequestResult(
             status_code=0,
