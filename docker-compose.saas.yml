@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: tloomberg_saas
       POSTGRES_USER: tloomberg_saas
-      POSTGRES_PASSWORD: \${SAAS_POSTGRES_PASSWORD:-local-development-only-change-me}
+      POSTGRES_PASSWORD: ${SAAS_POSTGRES_PASSWORD:?Set SAAS_POSTGRES_PASSWORD in your protected environment}
     ports:
       - "127.0.0.1:55432:5432"
     volumes:
