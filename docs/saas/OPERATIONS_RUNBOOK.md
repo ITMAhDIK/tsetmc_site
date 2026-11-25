@@ -41,14 +41,15 @@ Migrations are forward-only by default. A failed migration transaction rolls bac
 
 ## Container build and production-oriented Compose
 
-Build the API image from `Dockerfile.saas`. It:
+Build the API image from `Dockerfile.saas` in a controlled CI/release pipeline, scan it, and publish it to a private registry. Promote the exact image digest through staging and production; do not build mutable source independently on each production host. It:
 - uses Python 3.12;
 - runs as UID/GID 10001, not root;
 - includes only the SaaS backend and migration runner;
 - exposes the API on port 8000 and has a `/ready` health check.
 
-The production Compose template is `docker-compose.saas.production.yml`. Configure all required variables through a protected environment or secret manager, not a committed env file. Required values include:
+The production Compose template is `docker-compose.saas.production.yml`. It requires `SAAS_API_IMAGE` and uses the exact same image reference for the migration and API services. Prefer an immutable registry reference such as `registry.example.com/tloomberg/saas-api@sha256:...`; do not use floating tags such as `latest` or `release-candidate` in production. Configure all required variables through a protected environment or secret manager, not a committed env file. Required values include:
 
+- `SAAS_API_IMAGE`: approved API image reference, ideally pinned by digest.
 - `SAAS_MIGRATION_DATABASE_URL`: privileged migration-owner connection to the dedicated SaaS DB.
 - `SAAS_DATABASE_URL`: separate low-privilege runtime role connection.
 - `SAAS_EXPECTED_DATABASE_NAME`: exact database name used by both processes.
@@ -59,15 +60,30 @@ The production Compose template is `docker-compose.saas.production.yml`. Configu
 Example invocation after provisioning the database/roles and secrets:
 
 ```bash
+# Build, scan and publish the release image in CI; copy its immutable digest
+# into the protected environment file as SAAS_API_IMAGE.
 docker compose --env-file /secure/path/saas.production.env \
-  -f docker-compose.saas.production.yml up --build -d
+  -f docker-compose.saas.production.yml pull
+docker compose --env-file /secure/path/saas.production.env \
+  -f docker-compose.saas.production.yml up -d
 ```
+
 
 Compose runs the migration service first. The API service starts only after the migration container exits successfully. Caddy terminates TLS on host ports 80/443 and reverse-proxies to the API over the private Compose bridge. Set `SAAS_DOMAIN` to a public DNS name that resolves to the host; the Caddyfile uses automatic HTTPS. The read-only `/ready` endpoint is public but returns only a generic ready/not-ready status; it does not disclose the database name, schema details, secrets or customer data. The API has no published host port. PostgreSQL is external and is never published by this stack. The app container uses a read-only root filesystem, tmpfs for temporary files, dropped Linux capabilities, no-new-privileges, bounded PIDs and bounded JSON logs.
 
 Caddy is assigned static bridge IP `172.31.240.10`; the API is `172.31.240.20`. Uvicorn trusts forwarded headers only from the exact Caddy address, so do not change that IP without updating both the network and Uvicorn allow-list. Confirm that `172.31.240.0/24` does not overlap any host, VPN, cloud VPC or container network. The host firewall should expose only 80/443 (and administrative access from trusted networks), never PostgreSQL or the API container port. The Caddy admin API remains container-local.
 
 The deployment template does not configure a cloud load balancer, DNS, certificates, WAF, private network peering, secrets manager, backups, monitoring or autoscaling. Those are environment-specific release gates.
+
+### Deployment and rollback procedure
+
+1. Build one image from a reviewed commit and retain its commit SHA, SBOM and vulnerability-scan result.
+2. Publish it to a private registry and record the immutable digest in the release record.
+3. Deploy that same digest to staging. Run migration checks, API readiness, provider sandbox smoke tests, a bounded load probe and backup/restore checks.
+4. Promote the same digest to production after the release gates are approved. Do not rebuild between staging and production.
+5. Keep the previous known-good image digest and deployment environment record available for rollback.
+
+Application rollback and schema rollback are different operations. Prefer rolling the application back to a backward-compatible prior image while keeping the schema forward-compatible. The migration runner intentionally has no automatic down-migrations. If a schema change is destructive or incompatible, stop the rollout and use a separately reviewed recovery plan; do not edit migration history or delete ledger entries to force a downgrade. A production database restore is a disaster-recovery action that requires explicit approval, a verified backup, a maintenance window and reconciliation of payments/wallet transactions that occurred after the backup.
 
 ## Backup and restore
 
