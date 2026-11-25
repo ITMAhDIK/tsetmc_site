@@ -517,18 +517,19 @@
 
     // --- 4. Page 1: Multi-Stock Market Dashboard ---
     function MarketDashboardPage({ onOpenStock, onOpenInvestor, currency, dateMode }) {
+      const savedMarketState = window.history.state?.marketDashboard || {};
       const [overview, setOverview] = useState(null);
       const [watch, setWatch] = useState({ total: 0, rows: [] });
-      const [q, setQ] = useState('');
-      const [market, setMarket] = useState('ALL');
-      const [sortBy, setSortBy] = useState('disclosed_pct');
-      const [sortDir, setSortDir] = useState('DESC');
-      const [offset, setOffset] = useState(0);
+      const [q, setQ] = useState(savedMarketState.q || '');
+      const [market, setMarket] = useState(savedMarketState.market || 'ALL');
+      const [sortBy, setSortBy] = useState(savedMarketState.sortBy || 'disclosed_pct');
+      const [sortDir, setSortDir] = useState(savedMarketState.sortDir || 'DESC');
+      const [offset, setOffset] = useState(savedMarketState.offset || 0);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState('');
       const [sectorRegistry, setSectorRegistry] = useState(null);
-      const [selectedSector, setSelectedSector] = useState('');
-      const [sectorSearch, setSectorSearch] = useState('');
+      const [selectedSector, setSelectedSector] = useState(savedMarketState.selectedSector || '');
+      const [sectorSearch, setSectorSearch] = useState(savedMarketState.sectorSearch || '');
       const limit = 50;
 
       useEffect(() => {
@@ -558,6 +559,12 @@
         return !q || String(item.symbol||'').toLowerCase().includes(q) ||
           String(item.lSoSecVal||'').toLowerCase().includes(q);
       });
+
+      useEffect(() => {
+        window.history.replaceState({...window.history.state,marketDashboard:{
+          q,market,sortBy,sortDir,offset,selectedSector,sectorSearch
+        }},'');
+      }, [q,market,sortBy,sortDir,offset,selectedSector,sectorSearch]);
 
       useEffect(() => {
         apiFetch('/api/v1/market/overview').then(setOverview).catch(e => setError(e.message));
