@@ -3,11 +3,11 @@ import os
 from uuid import UUID
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from saas_core.auth.api import current_user, get_conn
 from saas_core.auth.authorization import AuthorizationDenied, require_permission
 from .service import (
-    ALLOWED_EVENT_NAMES, DEFAULT_RETENTION_DAYS, get_consent, heatmap, normalize_page_path,
+    DEFAULT_RETENTION_DAYS, get_consent, heatmap, normalize_page_path,
     funnel, overview, purge_expired_events, record_events, retention,
     top_pages, update_consent, user_event_history,
 )
@@ -39,6 +39,20 @@ class EventInput(BaseModel):
     active_duration_ms: int | None = Field(default=None,ge=0,le=180_000)
     x_pct: float | None = Field(default=None,ge=0,le=100)
     y_pct: float | None = Field(default=None,ge=0,le=100)
+
+    @field_validator("viewport_width","viewport_height","active_duration_ms",mode="before")
+    @classmethod
+    def reject_boolean_integers(cls,value):
+        if isinstance(value,bool):
+            raise ValueError("boolean values are not valid numeric measurements")
+        return value
+
+    @field_validator("scroll_depth_pct","x_pct","y_pct",mode="before")
+    @classmethod
+    def reject_boolean_percentages(cls,value):
+        if isinstance(value,bool):
+            raise ValueError("boolean values are not valid percentages")
+        return value
 
     @model_validator(mode="after")
     def coordinate_pair(self):
