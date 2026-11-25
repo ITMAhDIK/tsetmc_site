@@ -453,3 +453,103 @@ def test_database_migration_runner_reports_current_checksum_history():
     from scripts.manage_saas_migrations import run
 
     assert run(apply=False) == 0
+
+
+def test_otp_request_ceiling_is_serialized_under_concurrent_requests(db, monkeypatch):
+    from cryptography.fernet import Fernet
+    from saas_core.auth.repository import request_phone_otp
+
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase9-otp-hmac-secret-" + "x" * 32)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    phone = "+989" + f"{uuid4().int % 1_000_000_000:09d}"
+
+    def request_one(_index: int):
+        with psycopg.connect(_DSN, row_factory=dict_row) as conn:
+            try:
+                request_phone_otp(conn, phone, "login")
+                return "accepted"
+            except ValueError as exc:
+                assert "too many verification requests" in str(exc)
+                return "limited"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outcomes = list(pool.map(request_one, range(8)))
+
+    assert outcomes.count("accepted") == 3
+    assert outcomes.count("limited") == 5
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS total FROM phone_verifications WHERE phone_e164=%s",
+            (phone,),
+        )
+        assert cur.fetchone()["total"] == 3
+        cur.execute(
+            """SELECT COUNT(*) AS total FROM notification_outbox
+               WHERE channel='sms' AND template_code='phone_otp'
+                 AND idempotency_key LIKE %s""",
+            (f"otp:{phone}:login:%",),
+        )
+        assert cur.fetchone()["total"] == 3
+
+
+def test_wallet_admin_adjustment_exact_retry_returns_original_entry(db):
+    actor, _ = _new_user(db, "phase9_wallet_replay_admin")
+    target, _ = _new_user(db, "phase9_wallet_replay_target")
+
+    post_ledger_entry(
+        db, user_id=target["id"], bucket="cash", entry_type="topup",
+        amount_toman=100, idempotency_key="phase9-replay-opening-credit",
+    )
+    db.commit()
+
+    first = adjust_wallet(
+        db, actor_id=actor["id"], user_id=target["id"], bucket="cash",
+        amount_toman=-70, reason="Approved cash correction",
+        idempotency_key="phase9-replay-debit-key",
+    )
+    retry = adjust_wallet(
+        db, actor_id=actor["id"], user_id=target["id"], bucket="cash",
+        amount_toman=-70, reason="Approved cash correction",
+        idempotency_key="phase9-replay-debit-key",
+    )
+    assert retry["id"] == first["id"]
+
+    with pytest.raises(ValueError, match="idempotency key was reused"):
+        adjust_wallet(
+            db, actor_id=actor["id"], user_id=target["id"], bucket="cash",
+            amount_toman=-60, reason="Changed retry request",
+            idempotency_key="phase9-replay-debit-key",
+        )
+
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT COALESCE(SUM(amount_toman),0)::bigint AS balance,
+                      COUNT(*) FILTER (WHERE idempotency_key='phase9-replay-debit-key') AS adjustments
+               FROM wallet_ledger_entries WHERE user_id=%s AND bucket='cash'""",
+            (target["id"],),
+        )
+        row = cur.fetchone()
+    assert row["balance"] == 30
+    assert row["adjustments"] == 1
+
+
+def test_admin_audit_logs_are_append_only_in_postgresql(db):
+    actor, _ = _new_user(db, "phase9_audit_immutable")
+    db.execute(
+        """INSERT INTO admin_audit_logs(actor_user_id,action,target_type,target_id)
+           VALUES (%s,'phase9.test','user','target')""",
+        (actor["id"],),
+    )
+    db.commit()
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM admin_audit_logs WHERE actor_user_id=%s AND action='phase9.test'",
+            (actor["id"],),
+        )
+        audit_id = cur.fetchone()["id"]
+    with pytest.raises(psycopg.errors.RaiseException):
+        with db.transaction():
+            db.execute("UPDATE admin_audit_logs SET action='tampered' WHERE id=%s", (audit_id,))
+    with pytest.raises(psycopg.errors.RaiseException):
+        with db.transaction():
+            db.execute("DELETE FROM admin_audit_logs WHERE id=%s", (audit_id,))
