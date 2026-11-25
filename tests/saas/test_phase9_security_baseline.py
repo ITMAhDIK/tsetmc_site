@@ -200,3 +200,17 @@ def test_production_configuration_requires_verified_postgres_tls(monkeypatch):
 
     with pytest.raises(ConfigurationError, match="sslmode=verify-full"):
         auth_api.validate_production_configuration()
+
+
+def test_migration_runner_requires_hostname_verified_tls_for_remote_databases():
+    from scripts.manage_saas_migrations import MigrationError, validate_connection_tls
+
+    validate_connection_tls("postgresql://local@127.0.0.1:5432/tloomberg_saas")
+    validate_connection_tls("postgresql://local@localhost:5432/tloomberg_saas")
+
+    with pytest.raises(MigrationError, match="sslmode=verify-full"):
+        validate_connection_tls("postgresql://migrator@db.example:5432/tloomberg_saas")
+
+    validate_connection_tls(
+        "postgresql://migrator@db.example:5432/tloomberg_saas?sslmode=verify-full"
+    )
