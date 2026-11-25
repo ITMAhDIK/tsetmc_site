@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
+from psycopg.conninfo import conninfo_to_dict
 
 from .repository import (
     authenticate_session, consume_phone_otp, login_password,
@@ -63,6 +64,12 @@ def validate_production_configuration() -> None:
 
     if not dsn:
         raise ConfigurationError("SAAS_DATABASE_URL is required in production")
+    try:
+        database_connection = conninfo_to_dict(dsn)
+    except Exception as exc:
+        raise ConfigurationError("SAAS_DATABASE_URL is not a valid PostgreSQL connection string") from exc
+    if database_connection.get("sslmode", "prefer").lower() != "verify-full":
+        raise ConfigurationError("SAAS_DATABASE_URL must explicitly require sslmode=verify-full in production")
     if not expected_db:
         raise ConfigurationError("SAAS_EXPECTED_DATABASE_NAME is required in production")
     if len(otp_secret) < 32:
