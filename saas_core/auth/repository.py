@@ -75,6 +75,10 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
     expires = utc_now() + OTP_TTL
     with conn.transaction():
         with conn.cursor() as cur:
+            cur.execute("""SELECT count(*) AS recent_count FROM phone_verifications
+                WHERE phone_e164=%s AND created_at > now() - interval '15 minutes'""", (phone,))
+            if cur.fetchone()["recent_count"] >= 3:
+                raise ValueError("too many verification requests; try again later")
             cur.execute("""UPDATE phone_verifications SET consumed_at=now()
                 WHERE phone_e164=%s AND purpose=%s AND consumed_at IS NULL""", (phone,purpose))
             cur.execute("""INSERT INTO phone_verifications(phone_e164,purpose,otp_hash,expires_at)
