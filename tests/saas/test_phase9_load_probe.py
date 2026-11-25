@@ -39,6 +39,7 @@ def test_load_probe_requires_explicit_staging_approval():
         "https://db.internal",
         "https://staging-api.example.com/path",
         "https://staging-api.example.com/?token=secret",
+        "https://staging-api.example.com:bad",
         "https://user:pass@staging-api.example.com",
     ],
 )
