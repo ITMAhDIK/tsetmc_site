@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import psycopg
+from psycopg_pool import ConnectionPool, PoolTimeout
 from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +35,7 @@ ALLOWED_ORIGINS = [
     if item.strip()
 ]
 _SAFE_REQUEST_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+_DB_POOL: ConnectionPool | None = None
 _REQUIRED_SCHEMA_TABLES = (
     "users", "sessions", "roles", "permissions", "role_permissions",
     "plans", "subscriptions", "payment_orders", "payment_attempts",
@@ -82,11 +84,50 @@ def validate_production_configuration() -> None:
     except (ValueError, UnicodeEncodeError) as exc:
         raise ConfigurationError("SAAS_OUTBOX_FERNET_KEY must be a valid Fernet key") from exc
 
+    _database_pool_config()
+
+
+def _database_pool_config() -> tuple[int, int, float]:
+    """Validate per-worker connection-pool bounds before opening sockets."""
+    try:
+        minimum = int(os.getenv("SAAS_DB_POOL_MIN", "1"))
+        maximum = int(os.getenv("SAAS_DB_POOL_MAX", "10"))
+        timeout = float(os.getenv("SAAS_DB_POOL_TIMEOUT_SECONDS", "5"))
+    except ValueError as exc:
+        raise ConfigurationError("database pool settings must be numeric") from exc
+    if minimum < 1 or maximum < minimum or maximum > 100:
+        raise ConfigurationError("database pool bounds must satisfy 1 <= min <= max <= 100")
+    if not 0.1 <= timeout <= 60:
+        raise ConfigurationError("SAAS_DB_POOL_TIMEOUT_SECONDS must be between 0.1 and 60")
+    return minimum, maximum, timeout
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global _DB_POOL
     validate_production_configuration()
-    yield
+    dsn = os.getenv("SAAS_DATABASE_URL", "").strip()
+    if dsn:
+        minimum, maximum, timeout = _database_pool_config()
+        pool = ConnectionPool(
+            conninfo=dsn,
+            min_size=minimum,
+            max_size=maximum,
+            timeout=timeout,
+            kwargs={"row_factory": dict_row, "connect_timeout": 5},
+            open=False,
+            name="tloomberg-saas-api",
+        )
+        try:
+            pool.open(wait=True, timeout=5)
+            _DB_POOL = pool
+            yield
+        finally:
+            _DB_POOL = None
+            pool.close()
+    else:
+        # Enables liveness and route-unit tests without configuring a database.
+        yield
 
 
 app = FastAPI(title="Tloomberg SaaS API", version="0.8.0", lifespan=lifespan)
@@ -131,9 +172,16 @@ def get_conn():
     if not dsn:
         raise HTTPException(status_code=503, detail="SaaS database is not configured")
     try:
+        if _DB_POOL is not None:
+            _minimum, _maximum, timeout = _database_pool_config()
+            with _DB_POOL.connection(timeout=timeout) as conn:
+                yield conn
+            return
+        # Fallback is retained for dependency-level tools that call this
+        # generator outside the FastAPI lifespan; production uses the pool.
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as conn:
             yield conn
-    except psycopg.OperationalError as exc:
+    except (psycopg.OperationalError, PoolTimeout) as exc:
         raise HTTPException(status_code=503, detail="SaaS account service is unavailable") from exc
 
 
