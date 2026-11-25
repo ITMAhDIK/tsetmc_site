@@ -47,7 +47,7 @@ Required variables:
 
 Run: bash scripts/saas_db_restore_verify.sh
 
-The script verifies the SHA-256 sidecar and archive readability, confirms that the target database name matches the expected verification name and differs from the configured production name, refuses a target containing public-schema tables/views/sequences, and restores in a single transaction without clean or database-drop operations. It then checks for core SaaS tables.
+The script verifies the SHA-256 sidecar and archive readability, confirms that the target database name matches the expected verification name and differs from the configured production name, refuses a target containing user-schema tables/views/sequences, and restores in a single transaction without clean or database-drop operations. It then checks for core SaaS tables. The script cannot establish whether a different database name is hosted on the production cluster, so the operator must independently verify the target host/cluster is non-production before running it.
 
 A successful command is only a structural restore check. The operator must additionally run migrations/business invariants, compare expected row counts, sample critical records, check wallet/payment reconciliation and record the measured recovery time. A production restore must use a separately approved disaster-recovery procedure, never this verification script.
 
