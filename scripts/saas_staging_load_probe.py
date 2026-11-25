@@ -55,8 +55,12 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
-    raw = os.getenv(name, str(default)).strip()
+def _bounded_int(
+    name: str, default: int, minimum: int, maximum: int,
+    environ: dict[str, str] | None = None,
+) -> int:
+    source = os.environ if environ is None else environ
+    raw = source.get(name, str(default)).strip()
     try:
         value = int(raw)
     except ValueError as exc:
@@ -128,13 +132,13 @@ def build_config(environ: dict[str, str] | None = None) -> LoadConfig:
         base_url=f"https://{netloc}",
         host=host,
         duration_seconds=_bounded_int(
-            "SAAS_LOAD_TEST_DURATION_SECONDS", 30, 1, MAX_DURATION_SECONDS
+            "SAAS_LOAD_TEST_DURATION_SECONDS", 30, 1, MAX_DURATION_SECONDS, env
         ),
         requests_per_second=_bounded_int(
-            "SAAS_LOAD_TEST_REQUESTS_PER_SECOND", 2, 1, MAX_REQUESTS_PER_SECOND
+            "SAAS_LOAD_TEST_REQUESTS_PER_SECOND", 2, 1, MAX_REQUESTS_PER_SECOND, env
         ),
         concurrency=_bounded_int(
-            "SAAS_LOAD_TEST_CONCURRENCY", 4, 1, MAX_CONCURRENCY
+            "SAAS_LOAD_TEST_CONCURRENCY", 4, 1, MAX_CONCURRENCY, env
         ),
     )
 
