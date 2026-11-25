@@ -1,0 +1,87 @@
+services:
+  saas-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas
+    image: tloomberg-saas-api:release-candidate
+    command:
+      - python
+      - scripts/manage_saas_migrations.py
+      - --apply
+      - --grant-role
+      - ${SAAS_APP_DATABASE_ROLE:?Set SAAS_APP_DATABASE_ROLE to the pre-created low-privilege runtime role}
+    environment:
+      APP_ENV: production
+      SAAS_MIGRATION_DATABASE_URL: ${SAAS_MIGRATION_DATABASE_URL:?Set a dedicated migration-owner connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  saas-api:
+    image: tloomberg-saas-api:release-candidate
+    build:
+      context: .
+      dockerfile: Dockerfile.saas
+    command:
+      - uvicorn
+      - saas_core.auth.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${SAAS_WEB_WORKERS:-2}
+    environment:
+      APP_ENV: production
+      SAAS_DATABASE_URL: ${SAAS_DATABASE_URL:?Set the separate low-privilege runtime database connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+      SAAS_COOKIE_SECURE: "true"
+      SAAS_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public API hostnames}
+      SAAS_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS browser origins}
+      SAAS_OTP_HMAC_SECRET: ${SAAS_OTP_HMAC_SECRET:?Set a dedicated random OTP HMAC secret}
+      SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set a dedicated Fernet key}
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+    depends_on:
+      saas-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${SAAS_LOCAL_BIND_PORT:-8000}:8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 200
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+      interval: 20s
+      timeout: 4s
+      start_period: 25s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+networks:
+  saas-backend:
+    driver: bridge
