@@ -1,11 +1,12 @@
 """Authenticated customer support, staff queue and FAQ endpoints."""
 from uuid import UUID
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from saas_core.auth.api import current_user, get_conn
 from saas_core.auth.authorization import AuthorizationDenied, require_permission
 from .service import (
-    TICKET_STATUSES, add_internal_note, add_public_reply, assign_ticket,
+    add_internal_note, add_public_reply, assign_ticket,
     create_faq_article, create_ticket, get_ticket, list_faq,
     list_staff_tickets, list_ticket_messages, list_user_tickets, update_faq_article,
     update_ticket_status,
@@ -79,6 +80,8 @@ def open_ticket(body:CreateTicketBody,user=Depends(current_user),conn=Depends(ge
         raise HTTPException(status_code=422,detail=str(exc))
     except LookupError as exc:
         raise HTTPException(status_code=404,detail=str(exc))
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409,detail="FAQ slug is already in use") from exc
 
 
 @router.get("/tickets/{ticket_id}")
@@ -194,6 +197,8 @@ def add_faq(body:FAQCreateBody,user=Depends(current_user),conn=Depends(get_conn)
         return {"article":article}
     except (TypeError,ValueError) as exc:
         raise HTTPException(status_code=422,detail=str(exc))
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409,detail="FAQ slug is already in use") from exc
 
 
 @router.patch("/manage/faq/{article_id}")
