@@ -281,6 +281,7 @@ def funnel(conn, *, steps: list[str], days: int):
                    WHERE e.user_id=prior.user_id
                      AND e.event_name=(SELECT event_name FROM requested_steps WHERE step_no={step_no})
                      AND e.occurred_at>=prior.step_at
+                     AND e.occurred_at<prior.step_at+interval '30 days'
                    ORDER BY e.occurred_at LIMIT 1
                  ) next_event ON TRUE
                )"""
@@ -327,10 +328,10 @@ def retention(conn, *, days: int):
                )
                SELECT cohort_week,COUNT(*)::bigint AS cohort_size,
                  COUNT(*) FILTER (
-                   WHERE first_at <= now()-interval '7 days'
+                   WHERE first_at <= now()-interval '8 days'
                  )::bigint AS eligible_7d,
                  COUNT(*) FILTER (
-                   WHERE first_at <= now()-interval '7 days'
+                   WHERE first_at <= now()-interval '8 days'
                      AND EXISTS (
                        SELECT 1 FROM analytics_events e
                        WHERE e.user_id=cohort_users.user_id
@@ -339,10 +340,10 @@ def retention(conn, *, days: int):
                      )
                  )::bigint AS retained_7d,
                  COUNT(*) FILTER (
-                   WHERE first_at <= now()-interval '30 days'
+                   WHERE first_at <= now()-interval '31 days'
                  )::bigint AS eligible_30d,
                  COUNT(*) FILTER (
-                   WHERE first_at <= now()-interval '30 days'
+                   WHERE first_at <= now()-interval '31 days'
                      AND EXISTS (
                        SELECT 1 FROM analytics_events e
                        WHERE e.user_id=cohort_users.user_id
