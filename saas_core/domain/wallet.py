@@ -6,10 +6,13 @@ from dataclasses import dataclass
 class WalletBalances:
     cash_toman: int
     gift_toman: int
+    reserved_cash_toman: int = 0
 
     def __post_init__(self):
         if self.cash_toman < 0 or self.gift_toman < 0:
             raise ValueError("wallet bucket balances cannot be negative")
+        if self.reserved_cash_toman < 0 or self.reserved_cash_toman > self.cash_toman:
+            raise ValueError("reserved cash must be within the cash balance")
 
     @property
     def total_toman(self):
@@ -17,7 +20,7 @@ class WalletBalances:
 
     @property
     def withdrawable_toman(self):
-        return self.cash_toman
+        return self.cash_toman - self.reserved_cash_toman
 
 
 def validate_withdrawal(balances: WalletBalances, amount_toman: int) -> None:
