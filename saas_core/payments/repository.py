@@ -94,6 +94,10 @@ def create_payment_attempt(conn, *, order_id: UUID, provider: str):
 
 def attach_provider_checkout(conn, *, attempt_id: UUID, provider_order_id: str,
                              redirect_url: str, request_ref: str | None):
+    if not provider_order_id or len(provider_order_id) > 160:
+        raise ValueError("invalid provider order reference")
+    if not redirect_url.startswith("https://"):
+        raise ValueError("gateway checkout URL must use HTTPS")
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute(
@@ -139,6 +143,8 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                 raise LookupError("payment attempt not found")
             if row["provider_order_id"] != verified.provider_order_id:
                 raise PaymentRejected("provider order reference mismatch")
+            if row["attempt_status"] != "pending":
+                raise PaymentRejected("payment attempt is not awaiting verification")
             validate_verified_payment(expected_amount_toman=row["amount_toman"],verified=verified)
             cur.execute(
                 """INSERT INTO gateway_events
@@ -174,6 +180,9 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                 """UPDATE payment_orders SET status='paid',paid_at=now(),updated_at=now()
                    WHERE id=%s""", (order_id,)
             )
+            # Serialize subscription extension per user to avoid overlapping
+            # renewal windows when two separate orders settle concurrently.
+            cur.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (row["user_id"],))
             cur.execute(
                 """WITH next_start AS (
                        SELECT GREATEST(now(), COALESCE(MAX(ends_at), now())) AS starts_at
