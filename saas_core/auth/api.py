@@ -107,3 +107,7 @@ def logout(request:Request,response:Response,credentials:HTTPAuthorizationCreden
 # Imported after auth dependencies are defined to avoid circular initialization.
 from saas_core.account.api import router as account_router
 app.include_router(account_router)
+
+# Payment endpoints share the same isolated SaaS connection and session policy.
+from saas_core.payments.api import router as payments_router
+app.include_router(payments_router)
