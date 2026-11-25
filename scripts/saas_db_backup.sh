@@ -54,7 +54,8 @@ fi
 tmp_dump="$(mktemp "$backup_dir/.saas-backup.XXXXXX")"
 tmp_checksum="$tmp_dump.sha256"
 cleanup() {
-  rm -f -- "$tmp_dump" "$tmp_checksum"
+  [[ -z "$tmp_dump" ]] || rm -f -- "$tmp_dump"
+  [[ -z "$tmp_checksum" ]] || rm -f -- "$tmp_checksum"
 }
 trap cleanup EXIT
 
