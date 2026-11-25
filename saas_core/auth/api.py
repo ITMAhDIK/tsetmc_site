@@ -210,8 +210,12 @@ def get_conn():
             with _DB_POOL.connection(timeout=timeout) as conn:
                 yield conn
             return
-        # Fallback is retained for dependency-level tools that call this
-        # generator outside the FastAPI lifespan; production uses the pool.
+        if APP_ENV in {"prod", "production"}:
+            # Production must never bypass lifespan startup, pool sizing,
+            # or the expected-database identity check.
+            raise HTTPException(status_code=503, detail="SaaS database pool is not ready")
+        # Direct connections are retained only for local development and
+        # dependency-level tools that intentionally run outside app lifespan.
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as conn:
             yield conn
     except (psycopg.OperationalError, PoolTimeout) as exc:
