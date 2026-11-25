@@ -67,8 +67,16 @@ remain out-of-band; actual bank payout and provider payment overrides are not
 allowed. Frontend UI and database/security integration tests remain. No market
 data DB or service changes.
 
-## Phase 9 — Production readiness
-Threat model, security review, automated/load tests, backup/restore, monitoring,
-incident response, deployment automation and legal review.
+## Phase 9 — Production readiness (in progress)
+Phase 9 is a release-readiness programme for the complete Phase 1–8 chain.
+Phase 9A on feat/tloomberg-saas-production-readiness-phase9 adds a threat model
+and release gates, backup/restore runbook and guarded PostgreSQL backup plus
+isolated restore-verification scripts, additional authentication security tests,
+and automated dependency/SAST checks. These are engineering foundations only:
+scripts have not been exercised against a live PostgreSQL instance, and CI scans
+must be observed on the pull request. Database/RBAC/provider concurrency tests,
+independent penetration review, load/soak tests, encrypted off-host backups,
+monitoring/alerting, deployment/rollback automation and jurisdiction-specific
+legal review remain mandatory before public production.
 
 CRM is explicitly deferred.
