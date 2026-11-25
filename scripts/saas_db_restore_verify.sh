@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Restore a backup into a pre-created, empty verification database only.
-# This script never connects to the production database and never drops a database.
+# It rejects the configured production database name, never drops a database, and
+# requires the operator to supply a verified non-production database server.
 set -Eeuo pipefail
 
 : "${SAAS_BACKUP_FILE:?Set SAAS_BACKUP_FILE to the backup .dump file}"
