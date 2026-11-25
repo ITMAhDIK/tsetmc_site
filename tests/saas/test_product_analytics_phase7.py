@@ -62,3 +62,27 @@ def test_active_time_is_bounded(duration):
 def test_path_query_is_not_collected():
     with pytest.raises(ValueError):
         validate_event(_event(page_path="/billing?email=private@example.com"))
+
+
+def test_only_low_risk_event_fields_are_kept():
+    event=validate_event(_event(event_name="click",x_pct=25,y_pct=60))
+    assert event["x_pct"] == 25
+    assert event["y_pct"] == 60
+
+
+def test_scroll_and_active_duration_are_bound_to_matching_event_types():
+    with pytest.raises(ValueError,match="only valid for scroll"):
+        validate_event(_event(scroll_depth_pct=40))
+    with pytest.raises(ValueError,match="only valid for active_time"):
+        validate_event(_event(active_duration_ms=1000))
+
+
+def test_click_coordinates_are_not_accepted_for_page_view():
+    with pytest.raises(ValueError,match="only valid for click"):
+        validate_event(_event(x_pct=10,y_pct=20))
+
+
+def test_path_supports_html_routes_but_rejects_traversal():
+    assert normalize_page_path("/help/article.html") == "/help/article.html"
+    with pytest.raises(ValueError):
+        normalize_page_path("/../../secret")
