@@ -6,6 +6,9 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 _PASSWORDS = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2)
+# A random process-local Argon2id hash keeps unknown-user login attempts on the
+# same expensive verification path as known accounts.
+_DUMMY_PASSWORD_HASH = _PASSWORDS.hash(secrets.token_urlsafe(32))
 SESSION_TTL = timedelta(days=14)
 OTP_TTL = timedelta(minutes=5)
 OTP_MAX_ATTEMPTS = 5
