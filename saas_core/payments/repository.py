@@ -74,8 +74,6 @@ def create_payment_attempt(conn, *, order_id: UUID, provider: str):
             if order["status"] not in {"created","pending"}:
                 raise ValueError("order is not payable")
             if order["expires_at"] and order["expires_at"] <= datetime.now(timezone.utc):
-                # Do not mutate and then raise inside this transaction: the raise
-                # would roll the cancellation back. Expiry is handled by a worker. 
                 raise ValueError("order has expired")
             cur.execute(
                 """SELECT id FROM payment_attempts
@@ -150,8 +148,7 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                 """INSERT INTO gateway_events
                    (provider,provider_event_id,order_id,event_type,payload_sha256,processing_status)
                    VALUES (%s,%s,%s,'payment.verified',%s,'received')
-                   ON CONFLICT (provider,provider_event_id) DO NOTHING
-                   RETURNING id""",
+                   ON CONFLICT (provider,provider_event_id) DO NOTHING RETURNING id""",
                 (provider,verified.provider_event_id,order_id,payload_sha256),
             )
             event = cur.fetchone()
@@ -173,15 +170,13 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
             if row["status"] not in {"created","pending"}:
                 raise PaymentRejected("order is not eligible for settlement")
             cur.execute(
-                """UPDATE payment_attempts SET status='verified',verified_at=now()
-                   WHERE id=%s""", (attempt_id,)
+                "UPDATE payment_attempts SET status='verified',verified_at=now() WHERE id=%s",
+                (attempt_id,),
             )
             cur.execute(
-                """UPDATE payment_orders SET status='paid',paid_at=now(),updated_at=now()
-                   WHERE id=%s""", (order_id,)
+                "UPDATE payment_orders SET status='paid',paid_at=now(),updated_at=now() WHERE id=%s",
+                (order_id,),
             )
-            # Serialize subscription extension per user to avoid overlapping
-            # renewal windows when two separate orders settle concurrently.
             cur.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (row["user_id"],))
             cur.execute(
                 """WITH next_start AS (
@@ -196,6 +191,11 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                    FROM next_start
                    ON CONFLICT (payment_order_id) WHERE payment_order_id IS NOT NULL DO NOTHING""",
                 (row["user_id"],row["user_id"],row["plan_id"],row["duration_days"],order_id),
+            )
+            # Referral rewards are issued only from this trusted, verified settlement path.
+            from saas_core.wallet.referrals import qualify_and_reward_referral
+            qualify_and_reward_referral(
+                conn,referred_user_id=row["user_id"],payment_order_id=order_id
             )
             cur.execute(
                 "UPDATE gateway_events SET processing_status='processed',processed_at=now() WHERE id=%s",
