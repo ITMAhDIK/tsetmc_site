@@ -15,6 +15,7 @@ from pathlib import Path
 
 import psycopg
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,10 +57,30 @@ def _expected_database_name() -> str:
     return value
 
 
+def validate_connection_tls(dsn: str) -> None:
+    """Require hostname-verified TLS for remote database connections."""
+    try:
+        params = conninfo_to_dict(dsn)
+    except Exception as exc:
+        raise MigrationError("SAAS_MIGRATION_DATABASE_URL is not valid PostgreSQL connection info") from exc
+    hosts = [
+        item.strip().lower()
+        for item in params.get("host", "localhost").split(",")
+        if item.strip()
+    ]
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    if any(host not in local_hosts for host in hosts):
+        if params.get("sslmode", "prefer").lower() != "verify-full":
+            raise MigrationError(
+                "Remote SaaS migration connections must explicitly use sslmode=verify-full"
+            )
+
+
 def _connect():
     dsn = os.getenv("SAAS_MIGRATION_DATABASE_URL", "").strip()
     if not dsn:
         raise MigrationError("SAAS_MIGRATION_DATABASE_URL is required; do not use the runtime app role")
+    validate_connection_tls(dsn)
     conn = psycopg.connect(dsn, connect_timeout=5, autocommit=True, row_factory=dict_row)
     actual = conn.execute("SELECT current_database() AS name").fetchone()["name"]
     expected = _expected_database_name()
