@@ -85,6 +85,8 @@ def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login"):
     phone = normalize_phone(phone)
     if not otp.isdigit() or len(otp) != 6:
         raise AuthenticationError("invalid or expired verification code")
+    invalid = False
+    result = None
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute("""SELECT id,otp_hash,attempts FROM phone_verifications
@@ -92,29 +94,35 @@ def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login"):
                 ORDER BY created_at DESC LIMIT 1 FOR UPDATE""", (phone,purpose))
             challenge = cur.fetchone()
             if not challenge or challenge["attempts"] >= OTP_MAX_ATTEMPTS:
-                raise AuthenticationError("invalid or expired verification code")
-            if not verify_otp_hash(challenge["otp_hash"],phone,purpose,otp):
+                invalid = True
+            elif not verify_otp_hash(challenge["otp_hash"],phone,purpose,otp):
+                # Do not raise inside this transaction: that would roll back the
+                # failed-attempt counter and make online guessing unlimited.
                 cur.execute("UPDATE phone_verifications SET attempts=attempts+1 WHERE id=%s", (challenge["id"],))
-                raise AuthenticationError("invalid or expired verification code")
-            cur.execute("UPDATE phone_verifications SET consumed_at=now() WHERE id=%s", (challenge["id"],))
-            cur.execute("SELECT id,status FROM users WHERE phone_e164=%s FOR UPDATE", (phone,))
-            user = cur.fetchone()
-            if purpose == "signup" and user:
-                raise AuthenticationError("phone number is already registered")
-            if purpose == "login" and not user:
-                raise AuthenticationError("phone number is not registered")
-            if user and user["status"] != "active":
-                raise AuthenticationError("account is not active")
-            if not user:
-                cur.execute("""INSERT INTO users(public_id,phone_e164,phone_verified_at)
-                    VALUES ('usr_' || encode(gen_random_bytes(12),'hex'),%s,now()) RETURNING id""", (phone,))
-                user_id = cur.fetchone()["id"]
-                _ensure_user_role(cur,user_id)
-                cur.execute("INSERT INTO auth_identities(user_id,provider,provider_subject) VALUES (%s,'phone_otp',%s)", (user_id,phone))
-                cur.execute("INSERT INTO user_preferences(user_id) VALUES (%s)", (user_id,))
-                cur.execute("INSERT INTO wallet_accounts(user_id) VALUES (%s)", (user_id,))
+                invalid = True
             else:
-                user_id = user["id"]
-                cur.execute("UPDATE users SET phone_verified_at=COALESCE(phone_verified_at,now()),last_login_at=now() WHERE id=%s", (user_id,))
-            token, expires = create_session(conn,user_id)
-    return token, expires
+                cur.execute("UPDATE phone_verifications SET consumed_at=now() WHERE id=%s", (challenge["id"],))
+                cur.execute("SELECT id,status FROM users WHERE phone_e164=%s FOR UPDATE", (phone,))
+                user = cur.fetchone()
+                if purpose == "signup" and user:
+                    invalid = True
+                elif purpose == "login" and not user:
+                    invalid = True
+                elif user and user["status"] != "active":
+                    invalid = True
+                else:
+                    if not user:
+                        cur.execute("""INSERT INTO users(public_id,phone_e164,phone_verified_at)
+                            VALUES ('usr_' || encode(gen_random_bytes(12),'hex'),%s,now()) RETURNING id""", (phone,))
+                        user_id = cur.fetchone()["id"]
+                        _ensure_user_role(cur,user_id)
+                        cur.execute("INSERT INTO auth_identities(user_id,provider,provider_subject) VALUES (%s,'phone_otp',%s)", (user_id,phone))
+                        cur.execute("INSERT INTO user_preferences(user_id) VALUES (%s)", (user_id,))
+                        cur.execute("INSERT INTO wallet_accounts(user_id) VALUES (%s)", (user_id,))
+                    else:
+                        user_id = user["id"]
+                        cur.execute("UPDATE users SET phone_verified_at=COALESCE(phone_verified_at,now()),last_login_at=now() WHERE id=%s", (user_id,))
+                    result = create_session(conn,user_id)
+    if invalid or result is None:
+        raise AuthenticationError("invalid or expired verification code")
+    return result
