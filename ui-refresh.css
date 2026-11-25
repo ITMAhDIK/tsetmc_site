@@ -428,3 +428,8 @@ body { font-size:14px; line-height:1.75; }
   .investor-history-metric { padding:12px; }
   .investor-history-metric strong { font-size:19px; }
 }
+
+
+/* Tloomberg V2 brand asset */
+.app-brand-logo{width:30px;height:30px;object-fit:contain;display:block;flex:0 0 auto;border-radius:8px}
+@media(max-width:680px){.app-brand-logo{width:27px;height:27px}}
