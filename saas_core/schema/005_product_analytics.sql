@@ -32,3 +32,13 @@ SELECT r.id,p.id
 FROM roles r CROSS JOIN permissions p
 WHERE r.code='superadmin' AND p.code='analytics.users.read'
 ON CONFLICT DO NOTHING;
+
+INSERT INTO permissions(code,description)
+VALUES ('analytics.retention.manage','Run product analytics retention cleanup')
+ON CONFLICT(code) DO NOTHING;
+
+INSERT INTO role_permissions(role_id,permission_id)
+SELECT r.id,p.id
+FROM roles r CROSS JOIN permissions p
+WHERE r.code='superadmin' AND p.code='analytics.retention.manage'
+ON CONFLICT DO NOTHING;
