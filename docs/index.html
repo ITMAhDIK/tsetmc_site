@@ -657,7 +657,7 @@
                     <button key={item.ins_code} onClick={()=>onOpenStock(item.symbol)} className="text-right rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-blue-500 p-2">
                       <span className="block font-bold text-blue-400 text-xs">{item.symbol || '—'}</span>
                       <span className="block text-[10px] text-[var(--text-secondary)] mt-1 truncate">{item.lSoSecVal || 'زیرگروه ثبت نشده'}</span>
-                      <span className="block text-[9px] text-[var(--text-muted)] mt-1">{item.ins_code && item.ins_code === ' ' ? '' : ''}{item.has_sample_detail ? 'تاریخچهٔ نمونه موجود' : 'عضو گروه رسمی'}</span>
+                      <span className="block text-[9px] text-[var(--text-muted)] mt-1">عضو گروه رسمی</span>
                     </button>
                   ))}
                 </div>
