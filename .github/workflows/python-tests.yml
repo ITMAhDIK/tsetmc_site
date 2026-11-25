@@ -10,6 +10,23 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tloomberg_saas_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tloomberg_saas_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      SAAS_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_saas_test
+      SAAS_TEST_DATABASE_NAME: tloomberg_saas_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,5 +34,22 @@ jobs:
           python-version: "3.12"
       - name: Install SaaS test dependencies
         run: python -m pip install -r requirements-saas.txt
-      - name: Run test suite
+      - name: Apply all SaaS migrations to disposable PostgreSQL
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import psycopg
+
+          dsn = os.environ["SAAS_TEST_DATABASE_URL"]
+          migration_dir = Path("saas_core/schema")
+          migrations = sorted(migration_dir.glob("*.sql"))
+          if not migrations:
+              raise SystemExit("No SaaS schema migrations were found")
+          with psycopg.connect(dsn, autocommit=True) as conn:
+              for migration in migrations:
+                  print(f"Applying {migration}")
+                  conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+          PY
+      - name: Run complete test suite (including PostgreSQL integration tests)
         run: python -m pytest -q
