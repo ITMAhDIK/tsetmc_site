@@ -20,3 +20,9 @@ node_modules/
 *.dump
 *.dump.sha256
 *.backup
+
+*.dump.age
+*.dump.age.sha256
+*.agekey
+*age-identity*
+.pgpass
