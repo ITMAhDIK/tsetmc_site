@@ -90,11 +90,11 @@ Application rollback and schema rollback are different operations. Prefer rollin
 The repository includes `scripts/saas_db_backup.sh` and `scripts/saas_db_restore_verify.sh`. Every archive produced by the backup script is age-encrypted by default; there is no plaintext backup mode in the normal backup workflow.
 
 The backup script requires:
-- `SAAS_DATABASE_URL`: the dedicated SaaS database connection.
+- `SAAS_BACKUP_DATABASE_URL`: a dedicated read-only backup-role connection to the SaaS database.
 - `SAAS_EXPECTED_DB_NAME`: exact result expected from `SELECT current_database()`.
 - `SAAS_BACKUP_DIR`: private directory outside the Git checkout.
 
-The scripts require `psql`, `pg_dump`, `pg_restore`, `sha256sum` and `age`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. The backup script requires an `SAAS_BACKUP_AGE_RECIPIENT` public key, writes a custom-format `.dump.age` archive and SHA-256 sidecar with owner-only permissions, and never reads the private identity. Store the private `age` identity only in a secret manager or offline recovery vault.
+The scripts require `psql`, `pg_dump`, `pg_restore`, `sha256sum` and `age`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. The backup script requires `SAAS_BACKUP_DATABASE_URL` for a dedicated read-only backup role and an `SAAS_BACKUP_AGE_RECIPIENT` public key, writes a custom-format `.dump.age` archive and SHA-256 sidecar with owner-only permissions, and never reads the private identity. Store the private `age` identity only in a secret manager or offline recovery vault.
 
 Run backup from a trusted host and transfer both files to encrypted, access-controlled, off-host storage. Set cadence, retention, immutability and RPO/RTO based on the business recovery requirement. No remote backup-storage integration or retention deletion job is included.
 
