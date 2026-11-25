@@ -86,7 +86,9 @@ This threat model is a working engineering document, not an independent threat a
 
 - [x] Fresh-install SaaS migrations run on disposable PostgreSQL 16 in CI with checksum history.
 - [x] PostgreSQL-backed integration tests cover the explicitly listed critical flows.
-- [x] Backup/restore script rehearsal passes on an isolated disposable PostgreSQL 16 cluster in CI.
+- [x] Age-encrypted backup/restore script rehearsal passes on an isolated disposable PostgreSQL 16 cluster in CI.
+- [x] TLS reverse-proxy and production Compose templates are validated in CI.
+- [x] A bounded read-only staging probe is available with explicit non-production safeguards.
 - [x] Dependency audit and high-severity/high-confidence SAST workflow pass on the verified CI head.
 - [x] Non-root Docker image and hardened production Compose template are present and validated by CI.
 - [ ] Existing production database baseline adoption is reviewed and tested.
@@ -96,6 +98,7 @@ This threat model is a working engineering document, not an independent threat a
 - [ ] Independent penetration/security review completed; findings remediated.
 - [ ] Encrypted off-host backups, retention, measured RPO/RTO and production restore drill evidenced.
 - [ ] Monitoring, alert routing and incident-response rehearsal completed.
+- [ ] Staging load/soak/failure tests executed against a real approved staging host and results meet agreed targets.
 - [ ] Load/soak/failure tests meet agreed service targets.
 - [ ] Production host, TLS ingress, deployment and rollback process approved.
 - [ ] Jurisdiction-specific privacy/legal review completed.
