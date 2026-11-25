@@ -137,6 +137,7 @@ def _grant_runtime_role(conn, role_name: str) -> None:
             raise MigrationError(
                 f"Runtime role {role_name!r} must be created out-of-band before granting privileges"
             )
+        conn.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
         # Do not grant access to the migration ledger. Future migrations created
         # by this migration owner receive the same bounded DML grants.
         tables = conn.execute(
