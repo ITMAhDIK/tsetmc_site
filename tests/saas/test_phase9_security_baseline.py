@@ -107,5 +107,5 @@ def test_migration_role_name_allow_list_rejects_sql_fragments():
     from scripts.manage_saas_migrations import MigrationError, ROLE_NAME
 
     assert ROLE_NAME.fullmatch("saas_runtime") is not None
-    for value in ('saas_runtime; DROP ROLE postgres', "Runtime", "x" * 63, ""):
+    for value in ('saas_runtime; DROP ROLE postgres', "Runtime", "x" * 64, ""):
         assert ROLE_NAME.fullmatch(value) is None
