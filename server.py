@@ -4401,11 +4401,22 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isfile(target):
             self._send_json(404, {"detail": "فایل یافت نشد."})
             return
-        ctype = "text/html; charset=utf-8"
-        if target.endswith(".js"):
-            ctype = "text/javascript; charset=utf-8"
-        elif target.endswith(".css"):
-            ctype = "text/css; charset=utf-8"
+        extension = os.path.splitext(target)[1].lower()
+        content_types = {
+            ".html": "text/html; charset=utf-8",
+            ".htm": "text/html; charset=utf-8",
+            ".js": "text/javascript; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".webp": "image/webp",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".svg": "image/svg+xml",
+            ".ico": "image/x-icon",
+        }
+        ctype = content_types.get(extension, "application/octet-stream")
         with open(target, "rb") as f:
             body = f.read()
         self.send_response(200)
