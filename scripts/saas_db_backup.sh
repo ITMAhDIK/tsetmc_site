@@ -80,6 +80,7 @@ pg_dump --format=custom --no-owner --no-acl --file="$tmp_dump" "$SAAS_DATABASE_U
 pg_restore --list "$tmp_dump" >/dev/null
 
 if [[ "$encryption_required" == "true" ]]; then
+  rm -f -- "$tmp_archive"
   age --encrypt --recipient "$SAAS_BACKUP_AGE_RECIPIENT" --output "$tmp_archive" "$tmp_dump"
 else
   cp -- "$tmp_dump" "$tmp_archive"
