@@ -38,3 +38,13 @@ def test_admin_roles_cannot_be_changed_by_user_themselves():
     with pytest.raises(ValueError):
         change_user_role(None,actor_id=uuid4(),user_id=uuid4(),
                          role_code="support",grant=True)
+
+
+def test_superadmin_console_routes_are_mounted_on_application():
+    from saas_core.auth.api import app
+
+    paths=set(app.openapi()["paths"])
+    assert "/admin/dashboard" in paths
+    assert "/admin/users" in paths
+    assert "/admin/withdrawals" in paths
+    assert "/admin/audit-logs" in paths
