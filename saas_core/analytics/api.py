@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 from saas_core.auth.api import current_user, get_conn
 from saas_core.auth.authorization import AuthorizationDenied, require_permission
 from .service import (
-    ALLOWED_EVENT_NAMES, DEFAULT_RETENTION_DAYS, get_consent, heatmap,
+    ALLOWED_EVENT_NAMES, DEFAULT_RETENTION_DAYS, get_consent, heatmap, normalize_page_path,
     funnel, overview, purge_expired_events, record_events, retention,
     top_pages, update_consent, user_event_history,
 )
@@ -100,7 +100,7 @@ def admin_heatmap(page_path:str=Query(min_length=1,max_length=300),
                   user=Depends(current_user),conn=Depends(get_conn)):
     _require(conn,user["id"],"analytics.read")
     try:
-        return {"page_path":page_path,"days":days,"cells":heatmap(conn,page_path=page_path,days=days)}
+        return {"page_path":normalize_page_path(page_path),"days":days,"cells":heatmap(conn,page_path=page_path,days=days)}
     except ValueError as exc:
         raise HTTPException(status_code=422,detail=str(exc))
 
@@ -127,15 +127,14 @@ def admin_retention(days:int=Query(default=180,ge=1,le=730),
 def admin_user_events(user_id:UUID,limit:int=Query(default=100,ge=1,le=200),
                       user=Depends(current_user),conn=Depends(get_conn)):
     _require(conn,user["id"],"analytics.users.read")
-    _require(conn,user_id,"analytics.users.read") if False else None
     return {"user_id":str(user_id),"events":user_event_history(conn,user_id=user_id,limit=limit)}
 
 
 @router.delete("/admin/retention/expired")
 def admin_purge_expired(user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.users.read")
-    days=int(os.getenv("SAAS_ANALYTICS_RETENTION_DAYS",str(DEFAULT_RETENTION_DAYS)))
+    _require(conn,user["id"],"analytics.retention.manage")
     try:
+        days=int(os.getenv("SAAS_ANALYTICS_RETENTION_DAYS",str(DEFAULT_RETENTION_DAYS)))
         deleted=purge_expired_events(conn,retention_days=days)
         return {"deleted_events":deleted,"retention_days":days}
     except ValueError as exc:
