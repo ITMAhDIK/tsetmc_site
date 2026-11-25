@@ -1,9 +1,6 @@
 services:
   saas-migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.saas
-    image: tloomberg-saas-api:release-candidate
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
     command:
       - python
       - scripts/manage_saas_migrations.py
@@ -26,10 +23,7 @@ services:
       - saas-backend
 
   saas-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.saas
-    image: tloomberg-saas-api:release-candidate
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
     command:
       - uvicorn
       - saas_core.auth.api:app
