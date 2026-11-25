@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Create a private, checksum-verified, age-encrypted custom-format SaaS DB backup.
-# Never point SAAS_DATABASE_URL at a market-data database.
+# Never point SAAS_BACKUP_DATABASE_URL at a market-data database.
 set -Eeuo pipefail
 
-: "${SAAS_DATABASE_URL:?Set SAAS_DATABASE_URL to the dedicated SaaS PostgreSQL database}"
+: "${SAAS_BACKUP_DATABASE_URL:?Set SAAS_BACKUP_DATABASE_URL to the dedicated SaaS PostgreSQL database}"
 : "${SAAS_EXPECTED_DB_NAME:?Set SAAS_EXPECTED_DB_NAME to the expected SaaS database name}"
 : "${SAAS_BACKUP_DIR:?Set SAAS_BACKUP_DIR to a private directory outside the repository}"
 : "${SAAS_BACKUP_AGE_RECIPIENT:?Set the age public recipient; do not use a private identity here}"
@@ -16,7 +16,7 @@ for command_name in psql pg_dump pg_restore sha256sum awk age; do
 done
 
 # Do not expose a database password through command-line process arguments.
-if [[ "$SAAS_DATABASE_URL" == *"password="* || "$SAAS_DATABASE_URL" =~ ^[[:alpha:]][[:alnum:]+.-]*://[^/]*:[^/@]*@ ]]; then
+if [[ "$SAAS_BACKUP_DATABASE_URL" == *"password="* || "$SAAS_BACKUP_DATABASE_URL" =~ ^[[:alpha:]][[:alnum:]+.-]*://[^/]*:[^/@]*@ ]]; then
   printf 'Do not embed a database password in the connection string; use a protected .pgpass file.\n' >&2
   exit 2
 fi
@@ -36,7 +36,7 @@ if repo_root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; th
   esac
 fi
 
-actual_db="$(psql "$SAAS_DATABASE_URL" -X -A -t -q -c 'SELECT current_database()')"
+actual_db="$(psql "$SAAS_BACKUP_DATABASE_URL" -X -A -t -q -c 'SELECT current_database()')"
 if [[ "$actual_db" != "$SAAS_EXPECTED_DB_NAME" ]]; then
   printf 'Database safety check failed: connected database name does not match SAAS_EXPECTED_DB_NAME.\n' >&2
   exit 3
@@ -63,7 +63,7 @@ cleanup() {
 trap cleanup EXIT
 
 umask 077
-pg_dump --format=custom --no-owner --no-acl --file="$tmp_dump" "$SAAS_DATABASE_URL"
+pg_dump --format=custom --no-owner --no-acl --file="$tmp_dump" "$SAAS_BACKUP_DATABASE_URL"
 pg_restore --list "$tmp_dump" >/dev/null
 
 rm -f -- "$tmp_archive"
