@@ -36,6 +36,30 @@ if repo_root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; th
   esac
 fi
 
+# Remote PostgreSQL backups must verify both the CA chain and the server hostname.
+# Loopback-only disposable/local test databases may omit TLS.
+dsn_host=""
+if [[ "$SAAS_BACKUP_DATABASE_URL" =~ ^postgres(ql)?://([^/@?]+@)?(\[[^]]+\]|[^:/?]+) ]]; then
+  dsn_host="${BASH_REMATCH[3]}"
+  dsn_host="${dsn_host#[}"
+  dsn_host="${dsn_host%]}"
+elif [[ "$SAAS_BACKUP_DATABASE_URL" =~ (^|[[:space:]])host=([^[:space:]]+) ]]; then
+  dsn_host="${BASH_REMATCH[2]}"
+else
+  dsn_host="localhost"
+fi
+for host in ${dsn_host//,/ }; do
+  case "$host" in
+    localhost|127.0.0.1|::1) ;;
+    *)
+      if [[ "$SAAS_BACKUP_DATABASE_URL" != *"sslmode=verify-full"* ]]; then
+        printf 'Remote backup database connections must explicitly use sslmode=verify-full.\n' >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
 actual_db="$(psql "$SAAS_BACKUP_DATABASE_URL" -X -A -t -q -c 'SELECT current_database()')"
 if [[ "$actual_db" != "$SAAS_EXPECTED_DB_NAME" ]]; then
   printf 'Database safety check failed: connected database name does not match SAAS_EXPECTED_DB_NAME.\n' >&2
