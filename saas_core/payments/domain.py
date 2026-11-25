@@ -3,7 +3,7 @@
 Amounts are integer Toman. Browser redirects are never payment evidence.
 """
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from typing import Protocol
 from uuid import UUID
 
@@ -16,7 +16,7 @@ class PaymentNotConfigured(PaymentError):
 class PaymentRejected(PaymentError):
     """The provider rejected or could not verify the payment."""
 
-class OrderStatus(StrEnum):
+class OrderStatus(str, Enum):
     CREATED = "created"
     PENDING = "pending"
     PAID = "paid"
