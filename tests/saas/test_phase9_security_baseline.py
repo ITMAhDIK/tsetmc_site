@@ -79,18 +79,6 @@ def test_phone_normalization_accepts_e164_and_rejects_invalid_values():
             normalize_phone(invalid)
 
 
-def test_otp_verification_rejects_wrong_digest():
-    import hmac
-
-    monkeypatch_secret = "s" * 48
-    import os
-
-    previous = os.environ.get("SAAS_OTP_HMAC_SECRET")
-    os.environ["SAAS_OTP_HMAC_SECRET"] = monkeypatch_secret
-    try:
-        assert verify_otp_hash("0" * 64, "+989121234567", "login", "123456") is False
-    finally:
-        if previous is None:
-            os.environ.pop("SAAS_OTP_HMAC_SECRET", None)
-        else:
-            os.environ["SAAS_OTP_HMAC_SECRET"] = previous
+def test_otp_verification_rejects_wrong_digest(monkeypatch):
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "s" * 48)
+    assert verify_otp_hash("0" * 64, "+989121234567", "login", "123456") is False
