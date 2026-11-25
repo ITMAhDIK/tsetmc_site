@@ -65,6 +65,8 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+
+from sector_affinity import SectorAffinityAccumulator, load_sector_reference
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Jalali (Persian) calendar conversion -- pure Python, no dependency.
@@ -357,7 +359,7 @@ def classify_portfolio_change(row):
     return "observation"
 
 
-def build_portfolio_history_summary(observations):
+def build_portfolio_history_summary(observations, sector_accumulator=None):
     """Aggregate all historical disclosures while preserving missing quantities.
 
     The chart sums only positions disclosed with a valid quantity and price on
@@ -373,6 +375,8 @@ def build_portfolio_history_summary(observations):
         "increase_unquantified", "decrease_unquantified",
     }
     for row in observations:
+        if sector_accumulator is not None:
+            sector_accumulator.add(row)
         observations_count += 1
         date, ins_code = row.get("date"), row.get("ins_code")
         symbol = row.get("symbol") or ins_code
@@ -485,6 +489,8 @@ def build_portfolio_history_summary(observations):
                 date_map[key] = None
                 cisin_conflicts += 1
 
+    if sector_accumulator is not None:
+        sector_accumulator.finish()
     historical_symbols = sorted(
         by_instrument.values(),
         key=lambda item: (item["last_observation_date"] or "", item["symbol"] or ""),
@@ -3908,10 +3914,25 @@ class SiteApi:
             # Rebuild the full dated history from all defensibly linked identity IDs.
             # A later company snapshot without this holder is labelled "assumed sold"
             # per the product's chosen convention, with a visible threshold caveat.
+            sector_registry, sector_categories, sector_registry_metadata = \
+                load_sector_reference(self.site_dir)
+            sector_accumulator = SectorAffinityAccumulator(
+                registry=sector_registry,
+                categories=sector_categories,
+                requested_pair=(scheme, sh_id),
+                as_of_date=as_of_dashed,
+                half_life_months=6.0,
+                max_price_age_days=62,
+                rotation_lookback_days=90,
+                rotation_scale_pct=5.0,
+            )
             historical_summary, historical_symbols, history_series = \
                 build_portfolio_history_summary(
                     self._iter_portfolio_history_observations(
-                        live, ids, (scheme, sh_id), as_of_dashed=as_of_dashed))
+                        live, ids, (scheme, sh_id), as_of_dashed=as_of_dashed),
+                    sector_accumulator=sector_accumulator)
+            sector_affinity = sector_accumulator.result()
+            sector_affinity["registry"] = sector_registry_metadata
             if historical_symbols:
                 ins_codes = list(dict.fromkeys(
                     item["ins_code"] for item in historical_symbols if item.get("ins_code")))
@@ -3991,6 +4012,7 @@ class SiteApi:
                 "uncertain_candidates_count": len(uncertain),
             },
             "history_series": history_series,
+            "sector_affinity": sector_affinity,
             "historical_summary": historical_summary,
             "historical_symbols": historical_symbols,
             "confirmed_positions": confirmed,

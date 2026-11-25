@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "description": "Explicit presentation mapping only. Official TSETMC group/subgroup codes remain the calculation keys. Add real dashboard category ids and map reviewed official codes after downloading the instrument registry.",
+  "categories": [],
+  "official_group_to_category": {},
+  "official_subsector_to_category": {}
+}
