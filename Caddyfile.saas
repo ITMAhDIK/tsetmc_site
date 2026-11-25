@@ -5,9 +5,8 @@
         max_size 1MB
     }
 
-    @readiness path /ready
-    respond @readiness 404
-
+    # /ready returns only a generic readiness state; it exposes no database
+    # name, schema details, secrets or customer data and is used by probes.
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
