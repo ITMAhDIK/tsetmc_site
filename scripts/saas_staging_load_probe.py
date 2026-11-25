@@ -143,10 +143,19 @@ def build_config(environ: dict[str, str] | None = None) -> LoadConfig:
     )
 
 
-def _request_once(opener, url: str, scheduled_at: float) -> RequestResult:
+def _request_once(
+    opener, url: str, scheduled_at: float, max_lateness_seconds: float
+) -> RequestResult:
     delay = scheduled_at - time.monotonic()
     if delay > 0:
         time.sleep(delay)
+    elif -delay > max_lateness_seconds:
+        # Drop overdue work instead of dispatching a burst after slow responses.
+        return RequestResult(
+            status_code=0,
+            duration_ms=0.0,
+            error_type="schedule_overrun",
+        )
     started = time.perf_counter()
     request = urllib.request.Request(
         url,
@@ -212,7 +221,12 @@ def run_probe(config: LoadConfig) -> dict[str, object]:
         for index in range(request_count):
             path = PATHS[index % len(PATHS)]
             scheduled_at = start_at + (index / config.requests_per_second)
-            yield (opener, f"{config.base_url}{path}", scheduled_at)
+            yield (
+                opener,
+                f"{config.base_url}{path}",
+                scheduled_at,
+                1 / config.requests_per_second,
+            )
 
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=config.concurrency, thread_name_prefix="saas-staging-probe"
