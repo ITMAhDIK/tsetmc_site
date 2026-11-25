@@ -67,16 +67,16 @@ remain out-of-band; actual bank payout and provider payment overrides are not
 allowed. Frontend UI and database/security integration tests remain. No market
 data DB or service changes.
 
-## Phase 9 — Production readiness (in progress)
-Phase 9 is a release-readiness programme for the complete Phase 1–8 chain.
-Phase 9A on feat/tloomberg-saas-production-readiness-phase9 adds a threat model
-and release gates, backup/restore runbook and guarded PostgreSQL backup plus
-isolated restore-verification scripts, additional authentication security tests,
-and automated dependency/SAST checks. These are engineering foundations only:
-scripts have not been exercised against a live PostgreSQL instance, and CI scans
-must be observed on the pull request. Database/RBAC/provider concurrency tests,
-independent penetration review, load/soak tests, encrypted off-host backups,
-monitoring/alerting, deployment/rollback automation and jurisdiction-specific
-legal review remain mandatory before public production.
+## Phase 9 — Production readiness (engineering foundation implemented; release gates open)
+Phase 9A–C on feat/tloomberg-saas-production-readiness-phase9 now includes:
+- Threat model, trust boundaries, explicit release gates and NOT READY status.
+- Dependency vulnerability audit (pip-audit), high-severity/high-confidence Bandit, Dependabot weekly checks and CI compilation.
+- Production startup configuration checks, explicit host/CORS allow-lists, cookie CSRF origin checks, security headers, readiness endpoint and bounded PostgreSQL connection pool.
+- Argon2id dummy verification for unknown user logins, serialized concurrent OTP rate limits, exact payment-event and admin-wallet idempotency, append-only wallet/reconciliation/admin audit tables.
+- Checksummed migration runner with advisory locking, per-migration transactions, drift detection, exact DB identity check, explicit rejection of unknown/non-empty schema without migration ledger, and bounded grants to a pre-created runtime role.
+- PostgreSQL 16 CI integration suite for authentication, RBAC and object isolation, support internal-note confidentiality, consent analytics, payment settlement/replay, gateway fail-closed behavior, wallet concurrency/idempotency, OTP concurrency and immutable records.
+- Custom-format PostgreSQL backup and separate restore verification; CI runs an actual ephemeral PG16 backup/restore rehearsal.
+- Non-root API Docker image and production Compose template with one-shot migration prerequisite, read-only filesystem, dropped capabilities, bounded process count, loopback binding and external (unpublished) PostgreSQL.
 
+**Not production-complete.** PR #17 remains Draft and unmerged. Phases 1–8 remain separate unmerged Draft dependencies. Real hosting, TLS ingress, least-privilege role provisioning against the selected managed PostgreSQL, existing-database migration adoption, off-host encrypted backup retention/RPO/RTO, monitoring/alerts, full RBAC/object-isolation matrix, official payment/SMS/bank sandbox tests, edge rate limiting, independent penetration review, load/soak/failure tests and jurisdiction-specific legal/privacy review remain required before public production. No migration has been applied to a live/market DB, and no production deployment was attempted.
 CRM is explicitly deferred.
