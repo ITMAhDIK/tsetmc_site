@@ -553,3 +553,37 @@ def test_admin_audit_logs_are_append_only_in_postgresql(db):
     with pytest.raises(psycopg.errors.RaiseException):
         with db.transaction():
             db.execute("DELETE FROM admin_audit_logs WHERE id=%s", (audit_id,))
+
+
+def test_migration_grant_gives_runtime_dml_without_migration_ledger_access(db):
+    from uuid import uuid4
+    from psycopg import sql
+    from scripts.manage_saas_migrations import _grant_runtime_role
+
+    role_name = "phase9_runtime_" + uuid4().hex[:16]
+    db.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role_name)))
+    db.commit()
+    try:
+        _grant_runtime_role(db, role_name)
+        with db.cursor() as cur:
+            cur.execute(
+                """SELECT
+                     has_schema_privilege(%s,'public','USAGE') AS schema_usage,
+                     has_schema_privilege(%s,'public','CREATE') AS schema_create,
+                     has_table_privilege(%s,'public.users','SELECT') AS users_select,
+                     has_table_privilege(%s,'public.users','INSERT') AS users_insert,
+                     has_table_privilege(%s,'public.saas_schema_migrations','SELECT') AS ledger_select""",
+                (role_name,role_name,role_name,role_name,role_name),
+            )
+            grants = cur.fetchone()
+        assert grants["schema_usage"] is True
+        assert grants["schema_create"] is False
+        assert grants["users_select"] is True
+        assert grants["users_insert"] is True
+        assert grants["ledger_select"] is False
+    finally:
+        db.execute(
+            sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role_name))
+        )
+        db.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name)))
+        db.commit()
