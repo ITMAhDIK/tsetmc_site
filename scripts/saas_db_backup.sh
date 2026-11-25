@@ -8,15 +8,6 @@ set -Eeuo pipefail
 : "${SAAS_BACKUP_DIR:?Set SAAS_BACKUP_DIR to a private directory outside the repository}"
 : "${SAAS_BACKUP_AGE_RECIPIENT:?Set the age public recipient; do not use a private identity here}"
 
-encryption_required="${SAAS_BACKUP_ENCRYPTION_REQUIRED:-true}"
-case "$encryption_required" in
-  true|false) ;;
-  *)
-    printf 'SAAS_BACKUP_ENCRYPTION_REQUIRED must be true or false.\n' >&2
-    exit 2
-    ;;
-esac
-
 for command_name in psql pg_dump pg_restore sha256sum awk age; do
   command -v "$command_name" >/dev/null 2>&1 || {
     printf 'Required command not found: %s\n' "$command_name" >&2
@@ -53,11 +44,7 @@ fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 base_name="tloomberg-saas-${timestamp}-$$"
-if [[ "$encryption_required" == "true" ]]; then
-  final_archive="$backup_dir/$base_name.dump.age"
-else
-  final_archive="$backup_dir/$base_name.dump"
-fi
+final_archive="$backup_dir/$base_name.dump.age"
 final_checksum="$final_archive.sha256"
 
 if [[ -e "$final_archive" || -e "$final_checksum" ]]; then
@@ -79,12 +66,8 @@ umask 077
 pg_dump --format=custom --no-owner --no-acl --file="$tmp_dump" "$SAAS_DATABASE_URL"
 pg_restore --list "$tmp_dump" >/dev/null
 
-if [[ "$encryption_required" == "true" ]]; then
-  rm -f -- "$tmp_archive"
-  age --encrypt --recipient "$SAAS_BACKUP_AGE_RECIPIENT" --output "$tmp_archive" "$tmp_dump"
-else
-  cp -- "$tmp_dump" "$tmp_archive"
-fi
+rm -f -- "$tmp_archive"
+age --encrypt --recipient "$SAAS_BACKUP_AGE_RECIPIENT" --output "$tmp_archive" "$tmp_dump"
 
 sha256sum "$tmp_archive" | awk '{print $1}' > "$tmp_checksum"
 chmod 600 "$tmp_archive" "$tmp_checksum"
@@ -98,8 +81,4 @@ tmp_dump=""
 
 printf 'Backup created: %s\n' "$final_archive"
 printf 'SHA-256 file: %s\n' "$final_checksum"
-if [[ "$encryption_required" == "true" ]]; then
-  printf 'Encryption: age (recipient key only; private identity was not accessed)\n'
-else
-  printf 'WARNING: backup archive is NOT encrypted. Do not transfer/store it outside a secure encrypted volume.\n' >&2
-fi
+printf 'Encryption: age (recipient key only; private identity was not accessed)\n'
