@@ -88,12 +88,6 @@ def test_path_supports_html_routes_but_rejects_traversal():
         normalize_page_path("/../../secret")
 
 
-def test_page_path_allows_static_html_suffix_and_rejects_dot_segments():
-    assert normalize_page_path("/help/article.html") == "/help/article.html"
-    with pytest.raises(ValueError):
-        normalize_page_path("/../../secret")
-
-
 def test_click_events_without_coordinates_are_allowed_for_component_analytics():
     event=validate_event(_event(event_name="click",component_id="subscribe_button"))
     assert event["component_id"] == "subscribe_button"
