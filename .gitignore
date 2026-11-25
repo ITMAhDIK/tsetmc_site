@@ -12,3 +12,11 @@ __pycache__/
 .venv/
 venv/
 node_modules/
+
+# SaaS secrets, local Compose env files and database backups
+.env.saas
+.env.saas.*
+!/.env.saas.example
+*.dump
+*.dump.sha256
+*.backup
