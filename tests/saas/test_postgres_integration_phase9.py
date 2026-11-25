@@ -587,3 +587,66 @@ def test_migration_grant_gives_runtime_dml_without_migration_ledger_access(db):
         )
         db.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name)))
         db.commit()
+
+
+def test_production_connection_pool_opens_checks_database_identity_and_serves_readiness(db, monkeypatch):
+    from cryptography.fernet import Fernet
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
+    monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["testserver"])
+    monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
+    monkeypatch.setenv("SAAS_DATABASE_URL", _DSN)
+    monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", _EXPECTED_DB)
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase9-production-otp-secret-" + "x" * 32)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_DB_POOL_MIN", "1")
+    monkeypatch.setenv("SAAS_DB_POOL_MAX", "3")
+
+    with TestClient(auth_api.app) as production_client:
+        ready = production_client.get("/ready")
+        assert ready.status_code == 200
+        assert ready.json()["status"] == "ready"
+        assert auth_api._DB_POOL is not None
+    assert auth_api._DB_POOL is None
+
+
+def test_production_connection_pool_refuses_wrong_database_name(db, monkeypatch):
+    from cryptography.fernet import Fernet
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
+    monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["testserver"])
+    monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
+    monkeypatch.setenv("SAAS_DATABASE_URL", _DSN)
+    monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "not_the_test_database")
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase9-production-otp-secret-" + "x" * 32)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+
+    with pytest.raises(RuntimeError, match="does not match SAAS_EXPECTED_DATABASE_NAME"):
+        with TestClient(auth_api.app):
+            pass
+    assert auth_api._DB_POOL is None
+
+
+def test_access_log_uses_route_template_and_never_records_query_string(db, client, caplog):
+    import json
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="tloomberg.saas.access"):
+        response = client.get("/health?phone=%2B989111122233&token=do-not-log")
+    assert response.status_code == 200
+
+    entries = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "tloomberg.saas.access"
+    ]
+    assert entries
+    assert entries[-1]["route"] == "/health"
+    assert entries[-1]["method"] == "GET"
+    assert "phone" not in entries[-1]
+    assert "token" not in entries[-1]
+    assert "do-not-log" not in json.dumps(entries)
