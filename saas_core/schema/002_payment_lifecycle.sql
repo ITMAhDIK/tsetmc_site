@@ -67,3 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_payment_refunds_order
 
 -- One order can activate at most one subscription. A payment attempt and
 -- gateway event are retained for reconciliation; never delete financial history.
+
+-- A single order must not have two live checkout attempts that could both charge.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_attempt_one_active_per_order
+    ON payment_attempts(order_id)
+    WHERE status IN ('initiated','pending');
