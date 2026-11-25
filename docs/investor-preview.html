@@ -212,6 +212,7 @@
   function getFiltered() {
     const query = $("search").value.trim().toLowerCase();
     const type = $("typeFilter").value;
+    const groupCode = $("groupFilter").value;
     const sort = $("sortFilter").value;
     let rows = (data?.investors || []).filter(person => {
       const searchable = [
@@ -222,7 +223,7 @@
       const matchesQuery = !query || searchable.includes(query);
       const ptype = String(person.shareholder_type || "").toLowerCase();
       const matchesType = !type || ptype.includes(type);
-      const matchesGroup = !groupCode || (p.sector_affinity?.official_groups || []).some(g=>String(g.code)===String(groupCode));
+      const matchesGroup = !groupCode || (person.sector_affinity?.official_groups || []).some(g=>String(g.code)===String(groupCode));
       return matchesQuery && matchesType && matchesGroup;
     });
     rows.sort((a,b) => {
