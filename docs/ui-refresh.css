@@ -284,3 +284,7 @@ body { font-size:14px; line-height:1.75; }
   .portfolio-controls-secondary .portfolio-field:nth-of-type(2),.portfolio-controls-secondary > span { grid-column:auto; }
   .portfolio-apply-button { width:100%; }
 }
+
+/* Tloomberg brand identity */
+.app-brand-logo{width:42px;height:42px;object-fit:contain;display:block;flex:0 0 auto;border-radius:10px}
+@media(max-width:680px){.app-brand-logo{width:37px;height:37px}}
