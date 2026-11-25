@@ -67,7 +67,6 @@ jobs:
       PGPASSWORD: postgres
       SAAS_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_backup_test
       SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
-      SAAS_BACKUP_DIR: ${{ runner.temp }}/saas-backups
     steps:
       - uses: actions/checkout@v4
       - name: Install PostgreSQL client tools
@@ -81,17 +80,18 @@ jobs:
             psql "$SAAS_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$migration"
           done
       - name: Create checksum-verified backup
-        run: bash scripts/saas_db_backup.sh
+        run: |
+          export SAAS_BACKUP_DIR="$RUNNER_TEMP/saas-backups"
+          bash scripts/saas_db_backup.sh
       - name: Create isolated restore target
         run: createdb --host=127.0.0.1 --username=postgres tloomberg_saas_restore_verify
       - name: Restore and verify the backup
         env:
-          SAAS_BACKUP_FILE: ${{ runner.temp }}/saas-backups
           SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify
           SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
           SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
         run: |
-          dump_file="$(find "$SAAS_BACKUP_FILE" -maxdepth 1 -type f -name '*.dump' -print -quit)"
+          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump' -print -quit)"
           test -n "$dump_file"
           SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh
       - name: Verify restored schema and data boundary
