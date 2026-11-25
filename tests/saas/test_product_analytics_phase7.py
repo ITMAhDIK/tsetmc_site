@@ -98,9 +98,12 @@ def test_saas_application_mounts_product_analytics_routes():
     # Import through the real application entrypoint so circular router imports
     # and FastAPI route declaration errors are caught during test collection.
     from saas_core.auth.api import app
+    from saas_core.analytics.api import router as analytics_router
 
+    router_paths={route.path for route in analytics_router.routes if hasattr(route,"path")}
     paths={route.path for route in app.routes if hasattr(route,"path")}
-    assert "/analytics/consent" in paths
+    assert "/consent" in router_paths, sorted(router_paths)
+    assert "/analytics/consent" in paths, sorted(paths)
     assert "/analytics/events" in paths
     assert "/analytics/admin/overview" in paths
     assert "/analytics/admin/users/{user_id}/events" in paths
