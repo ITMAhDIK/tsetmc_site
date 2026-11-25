@@ -45,6 +45,21 @@ jobs:
         run: bandit --recursive saas_core --severity-level high --confidence-level high
       - name: Validate operational shell scripts
         run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh
+      - name: Compile Python service and operations tools
+        run: python -m compileall -q saas_core scripts
+      - name: Build the non-root SaaS API image
+        run: docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
+      - name: Validate production Compose configuration
+        env:
+          SAAS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_DATABASE_URL: postgresql://runtime:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas
+          SAAS_APP_DATABASE_ROLE: saas_runtime
+          SAAS_TRUSTED_HOSTS: api.example.com
+          SAAS_ALLOWED_ORIGINS: https://app.example.com
+          SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
+          SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: docker compose -f docker-compose.saas.production.yml config --quiet
 
   backup-restore-drill:
     name: PostgreSQL backup and isolated restore drill
