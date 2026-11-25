@@ -48,10 +48,15 @@ def attach_referral(conn, *, referred_user_id: UUID, code: str):
                 raise PermissionError("verified phone is required for referral")
             cur.execute(
                 """INSERT INTO referrals(inviter_user_id,referred_user_id,status)
-                   VALUES (%s,%s,'pending') RETURNING id,status""",
+                   VALUES (%s,%s,'pending')
+                   ON CONFLICT (referred_user_id) DO NOTHING
+                   RETURNING id,status""",
                 (inviter["user_id"],referred_user_id),
             )
-            return cur.fetchone()
+            row=cur.fetchone()
+            if not row:
+                raise ValueError("a referral is already attached to this account")
+            return row
 
 
 def qualify_and_reward_referral(conn, *, referred_user_id: UUID,
@@ -70,6 +75,9 @@ def qualify_and_reward_referral(conn, *, referred_user_id: UUID,
                    JOIN payment_orders o ON o.id=%s AND o.user_id=r.referred_user_id
                    JOIN subscriptions s ON s.payment_order_id=o.id
                    WHERE r.referred_user_id=%s
+                     AND (SELECT COUNT(*) FROM payment_orders paid_orders
+                          WHERE paid_orders.user_id=r.referred_user_id
+                            AND paid_orders.status='paid')=1
                    FOR UPDATE OF r""",(payment_order_id,referred_user_id)
             )
             row=cur.fetchone()
