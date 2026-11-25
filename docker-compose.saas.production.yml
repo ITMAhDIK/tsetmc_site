@@ -26,10 +26,10 @@ services:
       - saas-backend
 
   saas-api:
-    image: tloomberg-saas-api:release-candidate
     build:
       context: .
       dockerfile: Dockerfile.saas
+    image: tloomberg-saas-api:release-candidate
     command:
       - uvicorn
       - saas_core.auth.api:app
@@ -39,6 +39,9 @@ services:
       - "8000"
       - --workers
       - ${SAAS_WEB_WORKERS:-2}
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - 172.31.240.10
     environment:
       APP_ENV: production
       SAAS_DATABASE_URL: ${SAAS_DATABASE_URL:?Set the separate low-privilege runtime database connection string}
@@ -55,8 +58,8 @@ services:
     depends_on:
       saas-migrate:
         condition: service_completed_successfully
-    ports:
-      - "127.0.0.1:${SAAS_LOCAL_BIND_PORT:-8000}:8000"
+    expose:
+      - "8000"
     restart: unless-stopped
     init: true
     read_only: true
@@ -83,8 +86,58 @@ services:
         max-size: 10m
         max-file: "5"
     networks:
-      - saas-backend
+      saas-backend:
+        ipv4_address: 172.31.240.20
+
+  saas-edge:
+    image: caddy:2-alpine
+    environment:
+      SAAS_DOMAIN: ${SAAS_DOMAIN:?Set the public API domain with DNS pointing to this host}
+    depends_on:
+      saas-api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.saas:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 100
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1
+      interval: 20s
+      timeout: 4s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.10
+
+volumes:
+  caddy_data:
+  caddy_config:
 
 networks:
   saas-backend:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24
