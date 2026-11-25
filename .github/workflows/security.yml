@@ -69,10 +69,22 @@ jobs:
       SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
     steps:
       - uses: actions/checkout@v4
-      - name: Install PostgreSQL client tools
+      - name: Install PostgreSQL 16 client wrappers matching the server
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
+          mkdir -p "$RUNNER_TEMP/postgres16-bin"
+          for tool in psql pg_dump pg_restore createdb; do
+            cat > "$RUNNER_TEMP/postgres16-bin/$tool" <<EOF
+          #!/usr/bin/env bash
+          exec docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            -e PGPASSWORD \
+            postgres:16-alpine $tool "\$@"
+          EOF
+            chmod 700 "$RUNNER_TEMP/postgres16-bin/$tool"
+          done
+          echo "$RUNNER_TEMP/postgres16-bin" >> "$GITHUB_PATH"
       - name: Build the disposable SaaS schema
         run: |
           for migration in saas_core/schema/*.sql; do
