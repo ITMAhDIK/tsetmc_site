@@ -107,6 +107,8 @@ def logout(request:Request,response:Response,credentials:HTTPAuthorizationCreden
 from saas_core.account.api import router as account_router
 from saas_core.payments.api import router as payments_router
 from saas_core.wallet.api import router as wallet_router
+from saas_core.support.api import router as support_router
 app.include_router(account_router)
 app.include_router(payments_router)
 app.include_router(wallet_router)
+app.include_router(support_router)
