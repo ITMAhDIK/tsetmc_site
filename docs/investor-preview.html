@@ -193,6 +193,7 @@
     history.replaceState({...history.state, investorPreview:previous}, "");
     history.pushState({investorPreview:{...previous,scrollY:0,listScrollTop:0}}, "");
   };
+  const commitViewState = () => history.replaceState({...history.state,investorPreview:currentViewState()},"");
   const restoreViewState = state => {
     const view = state?.investorPreview;
     if (!view) { window.scrollTo(0,0); return; }
@@ -258,6 +259,8 @@
         symbolFilter = "";
         renderList();
         renderDetail();
+        window.scrollTo(0,0);
+        commitViewState();
       });
     });
   }
@@ -363,7 +366,7 @@
     const company = data?.companies?.[insCode];
     if (!company) {
       $("detail").innerHTML = `<section class="panel section"><div class="back-row"><h2>اطلاعات نماد</h2><button class="btn" data-back-investor>بازگشت به سرمایه‌گذار</button></div><div class="note">برای این نماد فقط عضویت در گروه رسمی بورس موجود است؛ فایل تاریخچهٔ شرکت در مجموعهٔ ۱۴ اکسل بارگذاری نشده است.</div></section>`;
-      $("detail").querySelector("[data-back-investor]")?.addEventListener("click",()=>{selectedCompanyCode=null;renderDetail();});
+      $("detail").querySelector("[data-back-investor]")?.addEventListener("click",()=>{selectedCompanyCode=null;renderDetail();window.scrollTo(0,0);commitViewState();});
       return;
     }
     const snap=company.latest_snapshot||{};
@@ -395,7 +398,7 @@
       <section class="panel section"><div class="section-head"><div><h2>سهامداران شرکت در آخرین snapshot</h2><div class="hint">تاریخ این فهرست: ${safe(company.shareholders_snapshot_date||"—")} · نام، شناسهٔ canonical، نوع، تعداد سهام، درصد مالکیت و تعداد پوزیشن‌های باز هر سهامدار.</div></div><span class="tag">${fa(shareholders.length)} رکورد افشاشده</span></div>
         <div class="table-wrap"><table><thead><tr><th>سهامدار</th><th>شناسه</th><th>نوع</th><th>تعداد سهام</th><th>مالکیت</th><th>پوزیشن‌های باز</th></tr></thead><tbody>${shareholderRows||'<tr><td colspan="6" class="empty-cell">فهرست سهامداران برای آخرین snapshot موجود نیست.</td></tr>'}</tbody></table></div>
       </section>`;
-    $("detail").querySelector("[data-back-investor]")?.addEventListener("click",()=>{selectedCompanyCode=null;renderDetail();});
+    $("detail").querySelector("[data-back-investor]")?.addEventListener("click",()=>{selectedCompanyCode=null;renderDetail();window.scrollTo(0,0);commitViewState();});
     $("detail").querySelectorAll("[data-investor-id]").forEach(btn=>btn.addEventListener("click",()=>{
       selectedId=btn.getAttribute("data-investor-id");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();
     }));
@@ -532,12 +535,12 @@
       btn.addEventListener("click", () => {symbolFilter=btn.getAttribute("data-symbol");renderDetail();});
     });
     $("detail").querySelectorAll("[data-group]").forEach(btn => {
-      btn.addEventListener("click", () => {pushViewState();selectedGroupCode=btn.getAttribute("data-group");renderDetail();});
+      btn.addEventListener("click", () => {pushViewState();selectedGroupCode=btn.getAttribute("data-group");renderDetail();commitViewState();});
     });
     $("detail").querySelectorAll("[data-network-group]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedGroupCode=btn.getAttribute("data-network-group");renderDetail();}));
     $("detail").querySelectorAll("[data-network-investor]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedId=btn.getAttribute("data-network-investor");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();}));
     $("detail").querySelectorAll("[data-company]").forEach(btn => {
-      btn.addEventListener("click", () => {pushViewState();selectedCompanyCode=btn.getAttribute("data-company");renderCompanyDetail(selectedCompanyCode);});
+      btn.addEventListener("click", () => {pushViewState();selectedCompanyCode=btn.getAttribute("data-company");renderCompanyDetail(selectedCompanyCode);window.scrollTo(0,0);commitViewState();});
     });
     $("clearSymbol")?.addEventListener("click",()=>{symbolFilter="";renderDetail();});
   }
