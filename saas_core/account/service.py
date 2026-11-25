@@ -65,14 +65,14 @@ def update_preferences(conn, user_id: UUID, changes: dict):
                 raise LookupError("preferences not found")
             return row
 
-def list_sessions(conn, user_id: UUID):
+def list_sessions(conn, user_id: UUID, current_session_id: UUID):
     with conn.cursor() as cur:
         cur.execute(
             """SELECT id, created_at, last_seen_at, expires_at, user_agent,
                       (id = %s) AS is_current
                FROM sessions
                WHERE user_id=%s AND revoked_at IS NULL AND expires_at>now()
-               ORDER BY last_seen_at DESC""", (None, user_id)
+               ORDER BY last_seen_at DESC""", (current_session_id, user_id)
         )
         return cur.fetchall()
 
@@ -110,6 +110,6 @@ def subscription_history(conn, user_id: UUID):
         return cur.fetchall()
 
 def feature_access(conn, user_id: UUID):
-    from .auth.authorization import has_entitlement
+    from saas_core.auth.authorization import has_entitlement
     features = ("premium_analytics", "ownership_graphs", "investor_history")
     return {feature: has_entitlement(conn, user_id, feature) for feature in features}
