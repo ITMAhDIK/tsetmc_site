@@ -55,9 +55,6 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: var(--bg-canvas); }
     ::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
-    .investor-history-frame{width:100%;height:calc(100vh - 205px);min-height:820px;overflow:hidden;border:1px solid var(--border-subtle);border-radius:16px;background:#0b0e14;box-shadow:0 10px 28px rgba(0,0,0,.12)}
-    .investor-history-frame iframe{display:block;width:100%;height:100%;border:0;background:#0b0e14}
-    @media(max-width:680px){.investor-history-frame{height:calc(100vh - 165px);min-height:720px;border-radius:12px}}
   </style>
   <link rel="stylesheet" href="./ui-refresh.css" />
 </head>
@@ -2457,6 +2454,101 @@
       );
     }
 
+    // --- Investor history tab -------------------------------------------------
+    // A first-class dashboard view (not an iframe). Data remains intentionally
+    // empty until the local server endpoints are ready.
+    function InvestorHistoryPage() {
+      const metrics = [
+        { label: 'ارزش فعلی پرتفوی', note: 'بر اساس آخرین قیمت معتبر', value: '—' },
+        { label: 'شرکت‌های مشاهده‌شده', note: 'شناسه‌های دارای سابقه', value: '—' },
+        { label: 'آخرین تاریخ مشاهده', note: 'آخرین snapshot موجود', value: '—' },
+        { label: 'گروه‌های دارای گرایش', note: 'بر اساس تاریخچهٔ مالکیت', value: '—' },
+      ];
+      return (
+        <div className="investor-history-page">
+          <section className="investor-history-hero">
+            <div className="investor-history-eyebrow">TLOOMBERG / INVESTOR INTELLIGENCE</div>
+            <div className="investor-history-hero-row">
+              <div>
+                <h1>تاریخچه و گرایش سرمایه‌گذار</h1>
+                <p>مسیر سرمایه، تغییر ترکیب پرتفوی و تمرکز سرمایه‌گذار در گروه‌های بورسی</p>
+              </div>
+              <span className="investor-history-status"><i aria-hidden="true" /> آمادهٔ اتصال به سرور</span>
+            </div>
+          </section>
+
+          <section className="investor-history-metrics" aria-label="خلاصهٔ اطلاعات سرمایه‌گذار">
+            {metrics.map(item => (
+              <article className="investor-history-metric" key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <small>{item.note}</small>
+              </article>
+            ))}
+          </section>
+
+          <div className="investor-history-layout">
+            <aside className="investor-history-panel investor-history-search">
+              <div className="investor-history-panel-heading">
+                <div><h2>جستجوی سرمایه‌گذار</h2><p>انتخاب شناسه برای مشاهدهٔ تاریخچه</p></div>
+                <span className="investor-history-tag">در انتظار داده</span>
+              </div>
+              <div className="investor-history-search-placeholder">
+                <span aria-hidden="true">⌕</span>
+                <span>جستجوی نام یا شناسهٔ سرمایه‌گذار</span>
+              </div>
+              <div className="investor-history-empty-message">
+                فهرست سرمایه‌گذاران پس از آماده‌شدن سرویس سمت سرور در این قسمت قرار می‌گیرد.
+              </div>
+              <div className="investor-history-source">
+                <span>منبع اطلاعات</span><strong>سرور محلی تلومبرگ</strong>
+              </div>
+              <div className="investor-history-source">
+                <span>وضعیت اتصال</span><strong>هنوز متصل نشده</strong>
+              </div>
+            </aside>
+
+            <div className="investor-history-content">
+              <section className="investor-history-panel">
+                <div className="investor-history-panel-heading">
+                  <div><h2>روند ارزش پرتفوی</h2><p>تغییر ارزش مجموع سرمایه‌گذاری‌ها در طول زمان</p></div>
+                  <span className="investor-history-tag">نمودار تاریخی</span>
+                </div>
+                <div className="investor-history-chart-placeholder">
+                  <div className="investor-history-chart-grid" aria-hidden="true" />
+                  <div className="investor-history-chart-empty">
+                    <span aria-hidden="true">⌁</span>
+                    <strong>نمودار پس از اتصال داده‌ها نمایش داده می‌شود</strong>
+                    <small>در این مرحله هیچ داده یا مقدار نمونه‌ای ساخته نشده است.</small>
+                  </div>
+                </div>
+              </section>
+
+              <div className="investor-history-secondary-grid">
+                <section className="investor-history-panel investor-history-mini-panel">
+                  <div className="investor-history-panel-heading">
+                    <div><h2>ترکیب سرمایه‌گذاری</h2><p>ورود، خروج و تغییر وزن شرکت‌ها</p></div>
+                  </div>
+                  <div className="investor-history-mini-empty"><span aria-hidden="true">◫</span>پس از آماده‌شدن داده‌ها</div>
+                </section>
+                <section className="investor-history-panel investor-history-mini-panel">
+                  <div className="investor-history-panel-heading">
+                    <div><h2>گرایش به گروه‌های بورسی</h2><p>تمرکز تاریخی و چرخش سرمایه</p></div>
+                  </div>
+                  <div className="investor-history-mini-empty"><span aria-hidden="true">◎</span>پس از آماده‌شدن داده‌ها</div>
+                </section>
+              </div>
+            </div>
+          </div>
+
+          <p className="investor-history-footnote">
+            این بخش فعلاً فقط رابط کاربری است؛ هیچ درخواست API ارسال نمی‌شود و هیچ دادهٔ ساختگی نمایش داده نمی‌شود.
+            ساخت و اتصال داده‌ها در مرحلهٔ بعد از طریق سرور انجام خواهد شد.
+          </p>
+        </div>
+      );
+    }
+
     // --- 12. Root Shell ---
     const NAV_PAGES = [
       { id: 'market', label: 'نمای کلی بازار' },
@@ -2470,10 +2562,20 @@
       { id: 'admin', label: 'مدیریت داده' },
     ];
 
+    function getInitialTheme() {
+      try {
+        const saved = window.localStorage.getItem('tloomberg-theme');
+        if (saved === 'light' || saved === 'dark') return saved;
+      } catch (_) {}
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+        ? 'light'
+        : 'dark';
+    }
+
     function App() {
       const [page, setPage] = useState('market');
       const [activeSymbol, setActiveSymbol] = useState('');
-      const [theme, setTheme] = useState('dark');
+      const [theme, setTheme] = useState(getInitialTheme);
       const [currency, setCurrency] = useState('IRR');
       const [dateMode, setDateMode] = useState('jalali');
       // Bump after the global flips so every fmtDate/fmtGregorianDate call
@@ -2519,6 +2621,12 @@
       const [searchResults, setSearchResults] = useState([]);
 
       useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
+
+      useEffect(() => {
+        try { window.localStorage.setItem('tloomberg-theme', theme); } catch (_) {}
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      }, [theme]);
       const toggleDateMode = () => setDateMode(m => {
         const next = m === 'jalali' ? 'gregorian' : 'jalali';
         setDateModeGlobal(next);
@@ -2587,7 +2695,7 @@
                 <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="app-tool-button" title="تغییر واحد پول">
                   <span className="app-tool-label">واحد</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
                 </button>
-                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="app-tool-button" title="تغییر پوسته">
+                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="app-tool-button" title={theme === 'dark' ? 'تغییر به پوستهٔ روشن' : 'تغییر به پوستهٔ تیره'} aria-label={theme === 'dark' ? 'فعال‌کردن پوستهٔ روشن' : 'فعال‌کردن پوستهٔ تیره'} aria-pressed={theme === 'light'}>
                   <span className="app-tool-label">پوسته</span><strong>{theme === 'dark' ? 'روشن' : 'تیره'}</strong>
                 </button>
               </div>
@@ -2607,7 +2715,7 @@
             {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
             {page === 'shareholders' && <ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode} />}
             {page === 'portfolio' && <PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor} />}
-            {page === 'investor-history' && <section className="investor-history-frame"><iframe src="./investor-preview.html" title="تاریخچه و گرایش سرمایه‌گذار" loading="lazy" /></section>}
+            {page === 'investor-history' && <InvestorHistoryPage />}
             {page === 'screener' && <ScreenerPage onOpenStock={openStock} />}
             {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
             {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} />}
