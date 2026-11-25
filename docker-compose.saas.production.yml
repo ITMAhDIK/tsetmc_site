@@ -49,6 +49,9 @@ services:
       SAAS_OTP_HMAC_SECRET: ${SAAS_OTP_HMAC_SECRET:?Set a dedicated random OTP HMAC secret}
       SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set a dedicated Fernet key}
       SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+      SAAS_DB_POOL_MIN: ${SAAS_DB_POOL_MIN:-1}
+      SAAS_DB_POOL_MAX: ${SAAS_DB_POOL_MAX:-8}
+      SAAS_DB_POOL_TIMEOUT_SECONDS: ${SAAS_DB_POOL_TIMEOUT_SECONDS:-5}
     depends_on:
       saas-migrate:
         condition: service_completed_successfully
