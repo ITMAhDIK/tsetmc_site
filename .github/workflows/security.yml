@@ -48,7 +48,10 @@ jobs:
       - name: Compile Python service and operations tools
         run: python -m compileall -q saas_core scripts
       - name: Build the non-root SaaS API image
-        run: docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
+        run: |
+          docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-saas-api:ci)"
+          test "$image_user" = "10001:10001"
       - name: Validate production Compose configuration
         env:
           SAAS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@db.internal:5432/tloomberg_saas
