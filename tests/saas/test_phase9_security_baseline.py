@@ -109,3 +109,63 @@ def test_migration_role_name_allow_list_rejects_sql_fragments():
     assert ROLE_NAME.fullmatch("saas_runtime") is not None
     for value in ('saas_runtime; DROP ROLE postgres', "Runtime", "x" * 64, ""):
         assert ROLE_NAME.fullmatch(value) is None
+
+
+def test_production_configuration_requires_explicit_https_hosts_and_separate_secrets(monkeypatch):
+    from cryptography.fernet import Fernet
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
+    monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["api.example.com"])
+    monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
+    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas")
+    monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "tloomberg_saas")
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_DB_POOL_MIN", "1")
+    monkeypatch.setenv("SAAS_DB_POOL_MAX", "8")
+    monkeypatch.setenv("SAAS_DB_POOL_TIMEOUT_SECONDS", "4")
+
+    auth_api.validate_production_configuration()
+
+
+def test_production_configuration_rejects_wildcard_hosts_and_shared_secrets(monkeypatch):
+    from cryptography.fernet import Fernet
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
+    monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["*"])
+    monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
+    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas")
+    monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "tloomberg_saas")
+    shared_key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", shared_key)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", shared_key)
+
+    with pytest.raises(ConfigurationError, match="OTP and outbox encryption secrets"):
+        auth_api.validate_production_configuration()
+
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    with pytest.raises(ConfigurationError, match="explicit production hostnames"):
+        auth_api.validate_production_configuration()
+
+
+def test_database_pool_configuration_rejects_unbounded_values(monkeypatch):
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.setenv("SAAS_DB_POOL_MIN", "0")
+    monkeypatch.setenv("SAAS_DB_POOL_MAX", "10")
+    with pytest.raises(ConfigurationError, match="1 <= min <= max"):
+        auth_api._database_pool_config()
+
+    monkeypatch.setenv("SAAS_DB_POOL_MIN", "2")
+    monkeypatch.setenv("SAAS_DB_POOL_MAX", "1")
+    with pytest.raises(ConfigurationError, match="1 <= min <= max"):
+        auth_api._database_pool_config()
+
+    monkeypatch.setenv("SAAS_DB_POOL_MIN", "1")
+    monkeypatch.setenv("SAAS_DB_POOL_MAX", "101")
+    with pytest.raises(ConfigurationError, match="1 <= min <= max"):
+        auth_api._database_pool_config()
