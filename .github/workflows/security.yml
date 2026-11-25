@@ -140,8 +140,9 @@ jobs:
           GRANT SELECT ON ALL TABLES IN SCHEMA public TO saas_backup;
           GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO saas_backup;
           SQL
-          psql "$SAAS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 \
-            -c "SELECT NOT has_table_privilege('saas_backup','public.users','INSERT') AND has_table_privilege('saas_backup','public.users','SELECT')"
+          backup_grants="$(psql "$SAAS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 \
+            -c "SELECT has_table_privilege('saas_backup','public.users','SELECT') AND NOT has_table_privilege('saas_backup','public.users','INSERT') AND NOT has_table_privilege('saas_backup','public.users','UPDATE') AND NOT has_table_privilege('saas_backup','public.users','DELETE') AND NOT has_schema_privilege('saas_backup','public','CREATE')")"
+          test "$backup_grants" = "t"
       - name: Create checksum-verified backup
         run: |
           export SAAS_BACKUP_DIR="$RUNNER_TEMP/saas-backups"
