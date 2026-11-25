@@ -30,7 +30,12 @@ def profile(user=Depends(current_user), conn=Depends(get_conn)):
 
 @router.patch("/profile")
 def patch_profile(body: ProfileUpdate, user=Depends(current_user), conn=Depends(get_conn)):
-    return {"profile": update_profile(conn, user["id"], display_name=body.display_name)}
+    if "display_name" not in body.model_fields_set:
+        raise HTTPException(status_code=422, detail="display_name must be provided")
+    row = update_profile(conn, user["id"], display_name=body.display_name)
+    if row is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    return {"profile": row}
 
 @router.get("/preferences")
 def preferences(user=Depends(current_user), conn=Depends(get_conn)):
