@@ -562,7 +562,7 @@
       for (const person of (data.investors || [])) for (const group of (person.sector_affinity?.official_groups || [])) {
         if (!groupOptions.has(String(group.code))) groupOptions.set(String(group.code),group.label||String(group.code));
       }
-      $("groupFilter").innerHTML = '<option value="">همهٔ گروه‌ها</option>' + [...groupOptions.entries()].sort((a,b)=>a[1].localeCompare(b[1],"fa")).map(([code,label])=>'<option value="\'+safe(code)+'">'+safe(label)+' · '+safe(code)+'</option>').join("");
+      $("groupFilter").innerHTML = '<option value="">همهٔ گروه‌ها</option>' + [...groupOptions.entries()].sort((a,b)=>a[1].localeCompare(b[1],"fa")).map(([code,label])=>\`<option value="\${safe(code)}">\${safe(label)} · \${safe(code)}</option>\`).join("");
       $("search").addEventListener("input",renderList);
       $("groupFilter").addEventListener("change",renderList);
       $("typeFilter").addEventListener("change",renderList);
