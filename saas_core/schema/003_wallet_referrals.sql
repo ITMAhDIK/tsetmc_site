@@ -16,9 +16,13 @@ CREATE TABLE IF NOT EXISTS wallet_bank_accounts (
 ALTER TABLE withdrawal_requests
  ADD COLUMN IF NOT EXISTS bank_account_id UUID;
 ALTER TABLE withdrawal_requests
+ ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(120);
+ALTER TABLE withdrawal_requests
  ADD CONSTRAINT withdrawal_bank_account_owner_fk
  FOREIGN KEY (bank_account_id,user_id)
  REFERENCES wallet_bank_accounts(id,user_id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_withdrawal_idempotency
+ ON withdrawal_requests(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_withdrawals_user_status
  ON withdrawal_requests(user_id,status,requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_referrals_inviter_status
@@ -27,6 +31,5 @@ CREATE INDEX IF NOT EXISTS idx_referral_rewards_user_time
  ON referral_rewards(user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wallet_ledger_reference
  ON wallet_ledger_entries(reference_type,reference_id);
--- A referral reward is a single gift-credit ledger entry, never cash.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_referral_reward_ledger_entry
  ON referral_rewards(ledger_entry_id) WHERE ledger_entry_id IS NOT NULL;
