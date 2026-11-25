@@ -93,6 +93,20 @@
     .loading{padding:24px;color:var(--muted);font-size:12px}
     .status{font-size:10px;color:var(--muted);padding:10px 13px;border-top:1px solid var(--line)}
     .small-muted{font-size:9px;color:var(--muted)}
+    .network-wrap{width:100%;overflow-x:auto;overflow-y:hidden;border:1px solid #263249;border-radius:10px;background:#0d121d;padding:10px}
+    .network-svg{display:block;width:100%;min-width:680px;height:auto;max-height:none}
+    .ownership-edge{stroke:#55d6a0;stroke-width:2.2;stroke-opacity:.72}
+    .group-edge{stroke:#7da7ff;stroke-width:2;stroke-opacity:.7}
+    .investor-node-circle{fill:#245c49;stroke:#55d6a0;stroke-width:2.5}
+    .investor-node-label{fill:#fff;font-size:13px;font-weight:700}
+    .investor-caption{fill:#b9c8de;font-size:11px}
+    .stock-node-circle{fill:#30270e;stroke:#eab308;stroke-width:2.2}
+    .stock-node-label{fill:#ffe38a;font-size:14px;font-weight:800}
+    .group-node-circle{fill:#24344b;stroke:#7da7ff;stroke-width:2.5}
+    .group-node-label{fill:#e8efff;font-size:11px;font-weight:600}
+    .network-node{cursor:pointer;outline:none}
+    .network-node:focus circle,.network-node:hover circle{stroke:#fff;stroke-width:3}
+
     @media(max-width:980px){.layout{grid-template-columns:1fr}.list{max-height:340px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:560px){.wrap{padding:12px}.top{align-items:flex-start;flex-direction:column}h1{font-size:20px}.stats,.company-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.stat-value{font-size:14px}.heat-col{min-width:72px}}
   </style>
@@ -408,28 +422,73 @@
     }));
   }
 
-  function renderAffinityNetwork() {
-    const groupScores=new Map(), investorScores=new Map();
-    for(const person of (data?.investors||[])) for(const group of (person.sector_affinity?.official_groups||[])) {
-      const code=String(group.code),score=Number(group.interest_score)||0;
-      if(!groupScores.has(code)) groupScores.set(code,{code,label:group.label||code,total:0,count:0});
-      const g=groupScores.get(code);g.total+=score;g.count++;
-      if(score>=8) {
-        if(!investorScores.has(person.id)) investorScores.set(person.id,{id:person.id,name:person.shareholder_name||displayId(person),scores:new Map()});
-        investorScores.get(person.id).scores.set(code,score);
-      }
+  function wrapSvgLabel(value, maxChars=12, maxLines=3) {
+    const words=String(value||"").trim().split(/\\s+/).filter(Boolean);
+    const lines=[];
+    let line="";
+    for(const word of words) {
+      if(!line) line=word;
+      else if((line+" "+word).length<=maxChars) line+=" "+word;
+      else {lines.push(line);line=word;}
     }
-    const groups=[...groupScores.values()].sort((a,b)=>b.total/Math.max(1,b.count)-a.total/Math.max(1,a.count)).slice(0,8);
-    const codes=new Set(groups.map(g=>g.code));
-    const investors=[...investorScores.values()].filter(p=>[...p.scores.keys()].some(c=>codes.has(c))).sort((a,b)=>Math.max(...b.scores.values())-Math.max(...a.scores.values())).slice(0,18);
-    if(!groups.length||!investors.length) return '<div class="note">دادهٔ کافی برای ساخت گراف وجود ندارد.</div>';
-    const W=920,H=Math.max(360,groups.length*76,investors.length*34+30),gy=i=>40+i*(H-80)/Math.max(1,groups.length-1),iy=i=>24+i*(H-48)/Math.max(1,investors.length-1);
-    const edges=[];
-    groups.forEach((g,gi)=>investors.forEach((p,pi)=>{const score=p.scores.get(g.code)||0;if(score>=8)edges.push({y1:gy(gi),y2:iy(pi),score});}));
-    const edgeSvg=edges.map(e=>`<line x1="150" y1="${e.y1}" x2="690" y2="${e.y2}" stroke="#eab308" stroke-opacity="${(.12+e.score/100*.55).toFixed(2)}" stroke-width="${(1+e.score/35).toFixed(1)}"/>`).join("");
-    const groupSvg=groups.map((g,i)=>`<g class="network-node" data-network-group="${safe(g.code)}" tabindex="0" role="button"><circle cx="105" cy="${gy(i)}" r="27" fill="#24344b" stroke="#7da7ff" stroke-width="2"/><text x="105" y="${gy(i)+4}" text-anchor="middle" fill="#fff" font-size="10">${safe(g.code)}</text><text x="145" y="${gy(i)+4}" fill="#dbe5f6" font-size="12">${safe(g.label)}</text></g>`).join("");
-    const investorSvg=investors.map((p,i)=>`<g class="network-node" data-network-investor="${safe(p.id)}" tabindex="0" role="button"><circle cx="690" cy="${iy(i)}" r="13" fill="#245c49" stroke="#55d6a0" stroke-width="1.5"/><text x="715" y="${iy(i)+4}" fill="#dbe5f6" font-size="11">${safe(p.name)}</text></g>`).join("");
-    return `<div class="network-wrap"><svg class="network-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="گراف ارتباط گروه‌های بورسی و سرمایه‌گذاران">${edgeSvg}${groupSvg}${investorSvg}</svg></div><div class="hint">۸ گروه با بیشترین میانگین امتیاز و حداکثر ۱۸ سرمایه‌گذار نمایش داده می‌شوند. ضخامت و روشنی یال‌ها متناسب با علاقه است؛ روی گره گروه یا سرمایه‌گذار کلیک کن.</div>`;
+    if(line) lines.push(line);
+    const clipped=lines.slice(0,maxLines);
+    if(lines.length>maxLines) clipped[maxLines-1]=clipped[maxLines-1].slice(0,Math.max(1,maxChars-1))+"…";
+    return clipped;
+  }
+
+  function renderAffinityNetwork(person) {
+    const holdings=(person.symbols||[]).filter(item=>item.exit_status==="currently_disclosed");
+    if(!holdings.length) return '<div class="note">در آخرین snapshotهای موجود، سهمی به‌عنوان پوزیشن باز برای این سرمایه‌گذار ثبت نشده است؛ بنابراین گراف مالکیت قابل ترسیم نیست.</div>';
+
+    const groupMap=new Map();
+    for(const item of holdings) {
+      const code=String(item.group_code ?? item.group_label ?? "unclassified");
+      if(!groupMap.has(code)) groupMap.set(code,{key:code,label:item.group_label||"گروه نامشخص",items:[]});
+      groupMap.get(code).items.push(item);
+    }
+    const groups=[...groupMap.values()];
+    const stocks=holdings;
+    const H=Math.max(380,stocks.length*76,groups.length*112);
+    const W=1040;
+    const investor={x:900,y:H/2};
+    const stockX=565,groupX=180;
+    const stockY=i=>stocks.length===1?H/2:70+i*(H-140)/(stocks.length-1);
+    const groupY=i=>groups.length===1?H/2:65+i*(H-130)/(groups.length-1);
+    const stockGroup=new Map();
+    groups.forEach(g=>g.items.forEach(item=>stockGroup.set(String(item.ins_code),g)));
+
+    const edges=stocks.map((item,i)=>{
+      const group=stockGroup.get(String(item.ins_code));
+      return [
+        `<line x1="${investor.x-52}" y1="${investor.y}" x2="${stockX+38}" y2="${stockY(i)}" class="ownership-edge"/>`,
+        group? `<line x1="${stockX-38}" y1="${stockY(i)}" x2="${groupX+62}" y2="${groupY(groups.indexOf(group))}" class="group-edge"/>`:""
+      ].join("");
+    }).join("");
+
+    const stockNodes=stocks.map((item,i)=>`<g class="network-node" data-network-company="${safe(item.ins_code)}" tabindex="0" role="button" aria-label="نماد ${safe(item.symbol)}">
+      <circle cx="${stockX}" cy="${stockY(i)}" r="38" class="stock-node-circle"/>
+      <text x="${stockX}" y="${stockY(i)+5}" text-anchor="middle" class="stock-node-label" direction="ltr">${safe(item.symbol||"—")}</text>
+    </g>`).join("");
+
+    const groupNodes=groups.map((group,i)=>{
+      const lines=wrapSvgLabel(group.label,13,3);
+      const firstY=groupY(i)-((lines.length-1)*8);
+      const tspans=lines.map((line,j)=>`<tspan x="${groupX}" y="${firstY+j*17}">${safe(line)}</tspan>`).join("");
+      return `<g class="network-node" data-network-group="${safe(group.key)}" tabindex="0" role="button" aria-label="${safe(group.label)}">
+        <circle cx="${groupX}" cy="${groupY(i)}" r="62" class="group-node-circle"/>
+        <text text-anchor="middle" class="group-node-label">${tspans}</text>
+      </g>`;
+    }).join("");
+
+    const investorLabel=safe(person.shareholder_name||displayId(person));
+    const investorNode=`<g><circle cx="${investor.x}" cy="${investor.y}" r="52" class="investor-node-circle"/>
+      <text x="${investor.x}" y="${investor.y+4}" text-anchor="middle" class="investor-node-label">سرمایه‌گذار</text>
+      <text x="${investor.x}" y="${investor.y+72}" text-anchor="middle" class="investor-caption">${investorLabel}</text></g>`;
+    return `<div class="network-wrap"><svg class="network-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="گراف مالکیت سرمایه‌گذار، نمادهای تحت مالکیت و گروه‌های بورسی">
+      ${edges}${groupNodes}${stockNodes}${investorNode}
+    </svg></div>
+    <div class="hint">هر خط پیوسته رابطهٔ مالکیتِ مشاهده‌شده را نشان می‌دهد: سرمایه‌گذار به نماد و نماد به گروه رسمی خودش وصل است. برای دیدن دفتر تغییرات همان نماد روی دایرهٔ نماد کلیک کن. گراف فقط پوزیشن‌های بازِ موجود در داده‌های فعلی را نشان می‌دهد.</div>`;
   }
 
   function renderDetail() {
@@ -497,8 +556,8 @@
       </section>
 
       <section class="panel section">
-        <div class="section-head"><div><h2>گراف ارتباط گروه‌ها و سرمایه‌گذاران</h2><div class="hint">گره‌های آبی گروه‌های رسمی بورس و گره‌های سبز سرمایه‌گذاران هستند.</div></div></div>
-        ${renderAffinityNetwork()}
+        <div class="section-head"><div><h2>گراف مالکیت و گروه‌های سهام</h2><div class="hint">مسیر مالکیت از سرمایه‌گذار به نمادهای تحت مالکیت و سپس گروه رسمی هر نماد.</div></div></div>
+        ${renderAffinityNetwork(person)}
       </section>
 
       <section class="panel section">
@@ -542,6 +601,15 @@
       btn.addEventListener("click", () => {pushViewState();selectedGroupCode=btn.getAttribute("data-group");renderDetail();commitViewState();});
     });
     $("detail").querySelectorAll("[data-network-group]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedGroupCode=btn.getAttribute("data-network-group");renderDetail();commitViewState();}));
+    $("detail").querySelectorAll("[data-network-company]").forEach(btn=>btn.addEventListener("click",()=>{
+      symbolFilter=(data?.companies?.[btn.getAttribute("data-network-company")]?.symbol)||"";
+      if(!symbolFilter) {
+        const person=(data?.investors||[]).find(p=>p.id===selectedId);
+        symbolFilter=(person?.symbols||[]).find(x=>String(x.ins_code)===btn.getAttribute("data-network-company"))?.symbol||"";
+      }
+      renderDetail();
+      $("detail").querySelector("h2")?.scrollIntoView({behavior:"smooth",block:"start"});
+    }));
     $("detail").querySelectorAll("[data-network-investor]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedId=btn.getAttribute("data-network-investor");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();window.scrollTo(0,0);commitViewState();}));
     $("detail").querySelectorAll("[data-company]").forEach(btn => {
       btn.addEventListener("click", () => {pushViewState();selectedCompanyCode=btn.getAttribute("data-company");renderCompanyDetail(selectedCompanyCode);window.scrollTo(0,0);commitViewState();});
