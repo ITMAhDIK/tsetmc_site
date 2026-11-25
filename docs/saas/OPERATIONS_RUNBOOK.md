@@ -4,76 +4,112 @@
 
 This runbook applies only to the dedicated Tloomberg SaaS PostgreSQL database and the separately hosted SaaS API. Do not point any command in this runbook at a TSETMC, market-data, collector, or analytics-source database. Do not copy database dumps, credentials, environment files, OTP payloads, payment secrets or bank-vault tokens into the Git repository.
 
-The backup/restore scripts are operational helpers, not a managed backup service. They have only been syntax-checked in CI; a PostgreSQL restore rehearsal is still mandatory.
+The Docker deployment is a production-oriented template, not a deployment to a real host. It deliberately does not create a database service or publish PostgreSQL. Supply a managed/dedicated PostgreSQL endpoint, TLS reverse proxy, secrets and an existing runtime database role before using it.
 
-## Required backup environment
+## Database roles and migrations
 
-Use a dedicated PostgreSQL role with only the privileges needed to read the SaaS database. Configure secrets through a secret manager or protected shell environment; do not put credentials in shell history or commit them.
+Use separate PostgreSQL identities:
 
-Required variables for backup:
+- **Migration owner:** can create/alter the SaaS schema, migrations ledger and triggers. Its URL is supplied only to the one-shot migration service as `SAAS_MIGRATION_DATABASE_URL`.
+- **Runtime application role:** a pre-created, non-owner LOGIN role with only SaaS application DML/sequence permissions. Its URL is supplied to the API as `SAAS_DATABASE_URL`.
 
-- SAAS_DATABASE_URL: connection string for the dedicated SaaS database.
-- SAAS_EXPECTED_DB_NAME: exact value expected from SELECT current_database().
-- SAAS_BACKUP_DIR: private backup directory outside the Git checkout.
+Never run the web process as PostgreSQL superuser, database owner or migration owner. Create the runtime role out-of-band using your database administration/secret-management process; do not embed its password in this repository or in shell history.
 
-The scripts also require PostgreSQL client tools (psql, pg_dump, pg_restore) and sha256sum.
+### Apply and verify migrations
 
-Do not embed the database password in a connection string passed to command-line tools. Prefer a protected .pgpass file (mode 0600) or a PostgreSQL service definition and review host-level process visibility.
+Run from a trusted deployment environment with the migration-owner connection available:
 
-## Create a backup
+```bash
+python scripts/manage_saas_migrations.py --apply --grant-role "$SAAS_APP_DATABASE_ROLE"
+python scripts/manage_saas_migrations.py --check
+```
 
-From a trusted host with network access to the SaaS database:
+The runner:
+- requires `SAAS_MIGRATION_DATABASE_URL` and an exact `SAAS_EXPECTED_DATABASE_NAME` match;
+- serializes migration runs with a PostgreSQL advisory lock;
+- applies migrations in filename/version order, one transaction per migration;
+- records SHA-256 checksums and application timestamps in `saas_schema_migrations`;
+- refuses if an applied migration file has changed, if an unknown version exists, or if a non-empty schema has no migration ledger;
+- grants bounded table DML and sequence access to the pre-created runtime role, but deliberately withholds access to the migration ledger;
+- applies matching default privileges for future objects created by the migration owner.
 
-1. Create a directory on encrypted storage with access restricted to the backup operator.
-2. Set the three variables above in the protected environment.
-3. Run: bash scripts/saas_db_backup.sh
-4. Store the .dump and adjacent .dump.sha256 files together. Transfer both to encrypted, access-controlled off-host storage.
-5. Record the backup timestamp and result in the operations log, without recording credentials or connection strings.
+**Existing database adoption is not automatic.** Databases that had migrations applied manually before this ledger existed will be rejected rather than guessed. Before production adoption, an operator must independently verify the exact schema state against all migration files and perform a reviewed, documented baseline-adoption procedure. Do not work around this by deleting schema objects or fabricating migration records.
 
-The script checks the connected database name, rejects a backup directory inside the current Git repository, creates a PostgreSQL custom-format dump, checks that pg_restore can read its archive directory, writes a SHA-256 sidecar and applies owner-only file permissions. It does not encrypt the dump itself; storage and transfer encryption remain mandatory.
+### Migration rollback
 
-Choose and document backup cadence, retention, immutability and RPO/RTO before production. No scheduler, retention deletion job or remote storage integration is included here.
+Migrations are forward-only by default. A failed migration transaction rolls back that migration, but previously committed migrations remain applied. Do not edit an already-applied SQL migration to roll it back. Create a separately reviewed corrective migration or restore a verified backup in a controlled recovery window.
 
-## Restore verification (non-production only)
+## Container build and production-oriented Compose
 
-Use a pre-created, empty, isolated PostgreSQL database on a non-production instance. Never run verification against the production database.
+Build the API image from `Dockerfile.saas`. It:
+- uses Python 3.12;
+- runs as UID/GID 10001, not root;
+- includes only the SaaS backend and migration runner;
+- exposes the API on port 8000 and has a `/ready` health check.
 
-Required variables:
+The production Compose template is `docker-compose.saas.production.yml`. Configure all required variables through a protected environment or secret manager, not a committed env file. Required values include:
 
-- SAAS_BACKUP_FILE: path to the .dump file.
-- SAAS_RESTORE_VERIFY_DATABASE_URL: connection string for the isolated verification database.
-- SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: exact expected verification database name.
-- SAAS_PRODUCTION_DB_NAME: configured production database name, used by a second safety check.
+- `SAAS_MIGRATION_DATABASE_URL`: privileged migration-owner connection to the dedicated SaaS DB.
+- `SAAS_DATABASE_URL`: separate low-privilege runtime role connection.
+- `SAAS_EXPECTED_DATABASE_NAME`: exact database name used by both processes.
+- `SAAS_APP_DATABASE_ROLE`: pre-created runtime role to receive grants.
+- `SAAS_TRUSTED_HOSTS` and `SAAS_ALLOWED_ORIGINS`: explicit hostnames and HTTPS origins.
+- `SAAS_OTP_HMAC_SECRET` and `SAAS_OUTBOX_FERNET_KEY`: independent, randomly generated secrets. Never reuse the DB password or each other.
 
-Run: bash scripts/saas_db_restore_verify.sh
+Example invocation after provisioning the database/roles and secrets:
 
-The script verifies the SHA-256 sidecar and archive readability, confirms that the target database name matches the expected verification name and differs from the configured production name, refuses a target containing user-schema tables/views/sequences, and restores in a single transaction without clean or database-drop operations. It then checks for core SaaS tables. The script cannot establish whether a different database name is hosted on the production cluster, so the operator must independently verify the target host/cluster is non-production before running it.
+```bash
+docker compose --env-file /secure/path/saas.production.env \
+  -f docker-compose.saas.production.yml up --build -d
+```
 
-A successful command is only a structural restore check. The operator must additionally run migrations/business invariants, compare expected row counts, sample critical records, check wallet/payment reconciliation and record the measured recovery time. A production restore must use a separately approved disaster-recovery procedure, never this verification script.
+Compose runs the migration service first. The API service starts only after the migration container exits successfully. The API binds to `127.0.0.1` on the host; place a reviewed TLS reverse proxy in front of it. PostgreSQL is external and is never published by this stack. The app container uses a read-only root filesystem, tmpfs for temporary files, dropped Linux capabilities, no-new-privileges, bounded PIDs and bounded JSON logs.
 
-## Deployment and migration controls
+The TLS proxy must set strict HTTPS/HSTS behavior and pass only trusted host/origin values. Do not enable Uvicorn forwarded-header trust for arbitrary client addresses. Configure trusted proxy networks explicitly at the infrastructure layer. The host firewall must not expose port 8000 publicly.
 
-- GitHub Pages hosts static frontend assets only; deploy the FastAPI service to a Python-capable host with HTTPS and network isolation.
-- Keep the SaaS database in a separate instance/database and use a least-privilege application role. Do not grant the web process superuser or schema-owner privileges.
-- Apply migrations as a reviewed, separately authorized operation. Record the migration identifier, checksum, operator, start/end time and result.
-- Back up and verify recovery before schema changes with destructive or data-rewrite behavior.
-- Do not deploy a feature branch or a Draft PR. Promote reviewed commits through staging, run smoke/security checks, then use an approved production change window.
-- The API must remain private until authentication, authorization, CSRF/CORS, rate limiting, HTTPS, secret and monitoring gates are approved.
+The deployment template does not configure a cloud load balancer, DNS, certificates, WAF, private network peering, secrets manager, backups, monitoring or autoscaling. Those are environment-specific release gates.
+
+## Backup and restore
+
+The repository includes `scripts/saas_db_backup.sh` and `scripts/saas_db_restore_verify.sh`.
+
+The backup script requires:
+- `SAAS_DATABASE_URL`: the dedicated SaaS database connection.
+- `SAAS_EXPECTED_DB_NAME`: exact result expected from `SELECT current_database()`.
+- `SAAS_BACKUP_DIR`: private directory outside the Git checkout.
+
+The scripts require `psql`, `pg_dump`, `pg_restore` and `sha256sum`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. The backup script writes a custom-format archive and SHA-256 sidecar with owner-only permissions. It does not encrypt the archive itself.
+
+Run backup from a trusted host and transfer both files to encrypted, access-controlled, off-host storage. Set cadence, retention, immutability and RPO/RTO based on the business recovery requirement. No remote backup-storage integration or retention deletion job is included.
+
+For restore verification, use a pre-created, empty PostgreSQL database on a separately confirmed non-production cluster. Required variables:
+- `SAAS_BACKUP_FILE`
+- `SAAS_RESTORE_VERIFY_DATABASE_URL`
+- `SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME`
+- `SAAS_PRODUCTION_DB_NAME`
+
+The script checks the checksum and archive, rejects a database name equal to the configured production name, refuses a non-empty target schema, and restores in a single transaction without DROP/CLEAN. It then checks required core SaaS tables. The name check cannot prove that a different DB name is not on the production cluster: the operator must independently verify the target host/cluster. Never run the verification script against production.
+
+### Verified CI rehearsal
+
+The Phase 9 CI workflow now provisions a disposable PostgreSQL 16 service, applies all migrations, creates a custom-format backup, restores it into a separate empty database, and verifies the restored schema. The workflow uses PostgreSQL 16 client tools to match the service version. This validates the script path in a clean ephemeral environment; it is **not** evidence of encrypted off-host backups, production credentials, long-term retention or a real disaster-recovery drill.
+
+After a real restore drill, also compare expected row counts, sample critical records, validate payment/wallet invariants and record measured recovery time.
 
 ## Monitoring and alerting requirements
 
-The following are required before public traffic; no monitoring vendor or alert destination has been selected yet:
+No monitoring provider or alert destination has been selected. The following telemetry is required before public traffic:
 
-- API availability, request latency, HTTP 5xx rate and database connection failures.
-- Authentication failures and OTP request/verification anomalies, aggregated without logging secrets or full phone numbers.
+- API availability, readiness, request latency, HTTP 5xx rate and database connection failures.
+- Authentication failures and OTP request/verification anomalies, aggregated without full phone numbers or secrets.
 - Authorization denials and privileged admin actions, with audit-log review.
-- Payment orders stuck pending, provider verification failures and gateway-event reconciliation backlog.
+- Pending/stuck payment orders, provider verification failures and gateway-event reconciliation backlog.
 - Wallet ledger balance/reconciliation anomalies and withdrawal queues.
 - Notification outbox age/retries/failures.
 - Database storage, connection saturation, slow queries, backup freshness and restore-test age.
 - Analytics retention-purge success/failure and support queue age.
 
-Use redacted structured logs with request correlation IDs. Never log passwords, raw session tokens, OTPs, secret values, raw bank tokens, full payment credentials or private ticket content. Define alert thresholds from measured staging behavior rather than guessing them.
+Use redacted structured logs with request correlation IDs. Never log passwords, raw session tokens, OTPs, secret values, raw bank tokens, full payment credentials or private ticket content. Define alert thresholds from measured staging behavior rather than guessing them. Assign an on-call owner and rehearse delivery to the actual alert destination.
 
 ## Incident response
 
