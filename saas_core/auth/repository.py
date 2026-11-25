@@ -1,6 +1,8 @@
 """PostgreSQL persistence helpers. Only the dedicated SaaS database is used."""
 from __future__ import annotations
 from uuid import UUID
+from cryptography.fernet import Fernet
+import os
 from .service import (OTP_MAX_ATTEMPTS, OTP_TTL, SESSION_TTL, AuthenticationError,
     hash_otp, hash_password, hash_session_token, new_otp, new_session_token,
     normalize_phone, utc_now, verify_otp_hash, verify_password)
@@ -77,9 +79,20 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
                 WHERE phone_e164=%s AND purpose=%s AND consumed_at IS NULL""", (phone,purpose))
             cur.execute("""INSERT INTO phone_verifications(phone_e164,purpose,otp_hash,expires_at)
                 VALUES (%s,%s,%s,%s)""", (phone,purpose,digest,expires))
+            # Encrypt both destination and message body at rest. The SMS worker
+            # decrypts them only when dispatching through the configured provider.
+            key = os.environ.get("SAAS_OUTBOX_FERNET_KEY", "")
+            try:
+                cipher = Fernet(key.encode("ascii"))
+            except Exception as exc:
+                raise RuntimeError("SAAS_OUTBOX_FERNET_KEY must be a valid Fernet key") from exc
+            encrypted_phone = cipher.encrypt(phone.encode("utf-8")).decode("ascii")
+            encrypted_payload = cipher.encrypt(
+                ('{"otp":"' + otp + '","purpose":"' + purpose + '"}').encode("utf-8")
+            ).decode("ascii")
             cur.execute("""INSERT INTO notification_outbox(channel,template_code,destination_token,payload,idempotency_key)
-                VALUES ('sms','phone_otp',%s,jsonb_build_object('otp',%s,'purpose',%s),%s)""",
-                (phone,otp,purpose,f"otp:{phone}:{purpose}:{digest[:16]}"))
+                VALUES ('sms','phone_otp',%s,jsonb_build_object('encrypted_payload',%s),%s)""",
+                (encrypted_phone,encrypted_payload,f"otp:{phone}:{purpose}:{digest[:16]}"))
 
 def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login"):
     phone = normalize_phone(phone)
