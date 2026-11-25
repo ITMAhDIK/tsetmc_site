@@ -31,6 +31,8 @@ def normalize_page_path(value: str) -> str:
         raise ValueError("page_path must be a clean origin-relative path without query or fragment")
     segments=[]
     for segment in parsed.path.split("/"):
+        if segment in {".",".."}:
+            raise ValueError("page_path contains an invalid path segment")
         if segment.isdigit() and len(segment) >= 4 or _UUID_SEGMENT_RE.fullmatch(segment):
             segments.append(":id")
         else:
@@ -64,11 +66,15 @@ def validate_event(event: dict) -> dict:
         isinstance(scroll,bool) or not isinstance(scroll,(int,float)) or not 0 <= scroll <= 100
     ):
         raise ValueError("scroll_depth_pct must be between 0 and 100")
+    if scroll is not None and event_name != "scroll":
+        raise ValueError("scroll_depth_pct is only valid for scroll events")
     active=event.get("active_duration_ms")
     if active is not None and (
         isinstance(active,bool) or not isinstance(active,int) or not 0 <= active <= 180_000
     ):
         raise ValueError("active_duration_ms must be between 0 and 180000")
+    if active is not None and event_name != "active_time":
+        raise ValueError("active_duration_ms is only valid for active_time events")
     x_pct=event.get("x_pct")
     y_pct=event.get("y_pct")
     if (x_pct is None) != (y_pct is None):
@@ -78,6 +84,8 @@ def validate_event(event: dict) -> dict:
             isinstance(value,bool) or not isinstance(value,(int,float)) or not 0 <= value <= 100
         ):
             raise ValueError(f"{field} must be between 0 and 100")
+    if x_pct is not None and event_name != "click":
+        raise ValueError("x_pct and y_pct are only valid for click events")
     # Keep only the declared, low-risk fields. Ignore all other browser properties.
     return {
         "client_event_id":event["client_event_id"],
