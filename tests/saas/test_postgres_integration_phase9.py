@@ -447,3 +447,9 @@ def test_cookie_authenticated_state_changes_require_same_origin(db, client):
         json={"subject": "Cookie request test", "message": "This same-origin request is allowed."},
     )
     assert with_same_origin.status_code == 201
+
+
+def test_database_migration_runner_reports_current_checksum_history():
+    from scripts.manage_saas_migrations import run
+
+    assert run(apply=False) == 0
