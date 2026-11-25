@@ -41,7 +41,7 @@ jobs:
       - name: Install static analyzer
         run: python -m pip install --upgrade pip bandit
       - name: Scan SaaS backend
-        run: bandit --recursive saas_core --severity-level high --confidence-level high
+        run: bandit --recursive saas_core scripts --severity-level high --confidence-level high
       - name: Validate operational shell scripts
         run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh
       - name: Compile Python service and operations tools
