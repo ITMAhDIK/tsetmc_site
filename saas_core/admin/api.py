@@ -34,8 +34,8 @@ class RoleBody(BaseModel):
 
 class PlanUpdateBody(BaseModel):
     title: str | None = Field(default=None,min_length=2,max_length=100)
-    duration_days: int | None = Field(default=None,ge=1,le=3650)
-    price_toman: int | None = Field(default=None,ge=0,le=10**12)
+    duration_days: int | None = Field(default=None,ge=1,le=3650,strict=True)
+    price_toman: int | None = Field(default=None,ge=0,le=10**12,strict=True)
     active: bool | None = None
 
 
@@ -49,7 +49,7 @@ class ReconciliationNoteBody(BaseModel):
 
 class WalletAdjustmentBody(BaseModel):
     bucket: str = Field(pattern="^(cash|gift)$")
-    amount_toman: int
+    amount_toman: int = Field(strict=True)
     reason: str = Field(min_length=3,max_length=500)
 
 
