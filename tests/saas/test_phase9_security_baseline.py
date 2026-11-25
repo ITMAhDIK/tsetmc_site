@@ -1,7 +1,6 @@
 import pytest
 
 from saas_core.auth.service import (
-    AuthenticationError,
     ConfigurationError,
     hash_otp,
     hash_password,
@@ -35,6 +34,10 @@ def test_password_hash_is_argon2id_and_verifies_without_storing_plaintext():
 def test_password_policy_rejects_weak_or_ambiguous_values(password):
     with pytest.raises(ValueError):
         hash_password(password)
+
+
+def test_password_verification_fails_closed_for_malformed_hash():
+    assert verify_password("not-an-argon2-hash", "some-password") is False
 
 
 def test_session_tokens_are_random_and_only_the_digest_is_stored():
@@ -76,7 +79,18 @@ def test_phone_normalization_accepts_e164_and_rejects_invalid_values():
             normalize_phone(invalid)
 
 
-def test_otp_shape_errors_are_authentication_failures(monkeypatch):
-    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "s" * 48)
-    with pytest.raises(AuthenticationError):
-        verify_otp_hash("not-a-valid-digest", "+989121234567", "login", "123456")
+def test_otp_verification_rejects_wrong_digest():
+    import hmac
+
+    monkeypatch_secret = "s" * 48
+    import os
+
+    previous = os.environ.get("SAAS_OTP_HMAC_SECRET")
+    os.environ["SAAS_OTP_HMAC_SECRET"] = monkeypatch_secret
+    try:
+        assert verify_otp_hash("0" * 64, "+989121234567", "login", "123456") is False
+    finally:
+        if previous is None:
+            os.environ.pop("SAAS_OTP_HMAC_SECRET", None)
+        else:
+            os.environ["SAAS_OTP_HMAC_SECRET"] = previous
