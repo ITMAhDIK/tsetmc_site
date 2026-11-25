@@ -74,7 +74,8 @@ def create_payment_attempt(conn, *, order_id: UUID, provider: str):
             if order["status"] not in {"created","pending"}:
                 raise ValueError("order is not payable")
             if order["expires_at"] and order["expires_at"] <= datetime.now(timezone.utc):
-                cur.execute("UPDATE payment_orders SET status='cancelled',updated_at=now() WHERE id=%s", (order_id,))
+                # Do not mutate and then raise inside this transaction: the raise
+                # would roll the cancellation back. Expiry is handled by a worker. 
                 raise ValueError("order has expired")
             cur.execute(
                 """INSERT INTO payment_attempts(order_id,provider,amount_toman,currency,status)
@@ -167,11 +168,18 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                    WHERE id=%s""", (order_id,)
             )
             cur.execute(
-                """INSERT INTO subscriptions
-                   (user_id,plan_id,status,starts_at,ends_at,payment_order_id)
-                   VALUES (%s,%s,'active',now(),now() + (%s * interval '1 day'),%s)
+                """WITH next_start AS (
+                       SELECT GREATEST(now(), COALESCE(MAX(ends_at), now())) AS starts_at
+                       FROM subscriptions
+                       WHERE user_id=%s AND status='active' AND ends_at>now()
+                   )
+                   INSERT INTO subscriptions
+                       (user_id,plan_id,status,starts_at,ends_at,payment_order_id)
+                   SELECT %s,%s,'active',next_start.starts_at,
+                          next_start.starts_at + (%s * interval '1 day'),%s
+                   FROM next_start
                    ON CONFLICT (payment_order_id) WHERE payment_order_id IS NOT NULL DO NOTHING""",
-                (row["user_id"],row["plan_id"],row["duration_days"],order_id),
+                (row["user_id"],row["user_id"],row["plan_id"],row["duration_days"],order_id),
             )
             cur.execute(
                 "UPDATE gateway_events SET processing_status='processed',processed_at=now() WHERE id=%s",
