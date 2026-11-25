@@ -102,7 +102,7 @@ def test_saas_application_mounts_product_analytics_routes():
 
     router_paths={route.path for route in analytics_router.routes if hasattr(route,"path")}
     paths={route.path for route in app.routes if hasattr(route,"path")}
-    assert "/consent" in router_paths, sorted(router_paths)
+    assert "/analytics/consent" in router_paths, sorted(router_paths)
     assert "/analytics/consent" in paths, sorted(paths)
     assert "/analytics/events" in paths
     assert "/analytics/admin/overview" in paths
