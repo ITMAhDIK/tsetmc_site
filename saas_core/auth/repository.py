@@ -5,7 +5,7 @@ from cryptography.fernet import Fernet
 import os
 from .service import (OTP_MAX_ATTEMPTS, OTP_TTL, SESSION_TTL, AuthenticationError,
     hash_otp, hash_password, hash_session_token, new_otp, new_session_token,
-    normalize_phone, utc_now, verify_otp_hash, verify_password)
+    normalize_phone, utc_now, verify_otp_hash, verify_password, _DUMMY_PASSWORD_HASH)
 
 def _ensure_user_role(cur, user_id: UUID) -> None:
     cur.execute("""INSERT INTO user_roles(user_id, role_id)
@@ -42,7 +42,12 @@ def login_password(conn, username: str, password: str):
         with conn.cursor() as cur:
             cur.execute("SELECT id,password_hash,status FROM users WHERE lower(username)=lower(%s)", (username.strip(),))
             row = cur.fetchone()
-            if not row or row["status"] != "active" or not row["password_hash"] or not verify_password(row["password_hash"], password):
+            candidate_hash = (
+                row["password_hash"] if row and row["password_hash"]
+                else _DUMMY_PASSWORD_HASH
+            )
+            password_valid = verify_password(candidate_hash, password)
+            if not row or row["status"] != "active" or not row["password_hash"] or not password_valid:
                 raise AuthenticationError("invalid username or password")
             token, expires = create_session(conn, row["id"])
             cur.execute("UPDATE users SET last_login_at=now() WHERE id=%s", (row["id"],))
@@ -75,6 +80,13 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
     expires = utc_now() + OTP_TTL
     with conn.transaction():
         with conn.cursor() as cur:
+            # Serialize concurrent OTP requests for this normalized phone number.
+            # A plain COUNT followed by INSERT would allow parallel requests to
+            # race past the per-phone request ceiling.
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (phone,),
+            )
             cur.execute("""SELECT count(*) AS recent_count FROM phone_verifications
                 WHERE phone_e164=%s AND created_at > now() - interval '15 minutes'""", (phone,))
             if cur.fetchone()["recent_count"] >= 3:
