@@ -80,9 +80,17 @@
     .back-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
     .empty-cell{padding:14px;color:var(--muted);font-size:10px}
     .table-wrap{overflow:auto;border:1px solid #263249;border-radius:9px}
-    table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:11px}
-    th{background:#1a202c;color:#aebbd0;text-align:right;font-weight:600}
-    td,th{padding:10px 11px;border-bottom:1px solid #263044}
+    table{width:100%;table-layout:fixed;border-collapse:collapse;white-space:normal;font-size:11px;direction:rtl}
+    th{background:#1a202c;color:#aebbd0;text-align:right;font-weight:600;white-space:normal;line-height:1.7;overflow-wrap:anywhere}
+    td,th{padding:10px 9px;border-bottom:1px solid #263044;vertical-align:middle;overflow-wrap:anywhere}
+    td.num{white-space:nowrap;overflow-wrap:normal}
+    td .symbol-btn{white-space:nowrap}
+    .table-wrap td,.table-wrap th{min-width:0}
+    .table-wrap table{width:100%}
+    .table-wrap tbody td{line-height:1.7}
+    .table-wrap td:nth-child(1),.table-wrap th:nth-child(1){width:13%}
+    .table-wrap td:nth-child(2),.table-wrap th:nth-child(2){width:19%}
+    .table-wrap td:nth-child(3),.table-wrap th:nth-child(3){width:15%}
     tbody tr:hover{background:#182135}
     .symbol-btn{color:#8fb1ff;background:none;border:0;cursor:pointer;font-weight:700;padding:0}
     .tag{display:inline-block;font-size:9px;border:1px solid #33415a;border-radius:6px;padding:4px 6px;color:#b9c8de}
@@ -399,7 +407,12 @@
       <td><button class="symbol-btn" data-investor-id="${safe(row.investor_id)}">${fa(row.open_positions_count||0)} پوزیشن باز</button></td>
     </tr>`).join("");
     $("detail").innerHTML = `
-      <section class="panel profile">
+      <section class="panel section" id="ownershipGraphSection">
+        <div class="section-head"><div><h2>گراف مالکیت و گروه‌های سهام</h2><div class="hint">مسیر مالکیت از سرمایه‌گذار به نمادهای تحت مالکیت و سپس گروه رسمی هر نماد. برای مشاهدهٔ جزئیات، گره نماد یا گروه را انتخاب کن.</div></div></div>
+        ${renderAffinityNetwork(person)}
+      </section>
+
+      <section class="panel profile" id="investorProfile">
         <div class="back-row"><button class="btn" data-back-investor>بازگشت به صفحهٔ سرمایه‌گذار</button><span class="tag">${safe(company.group_label||"گروه نامشخص")}</span></div>
         <div class="profile-name">${safe(company.symbol)} · ${safe(company.company_name || "نام شرکت در دادهٔ نمونه ثبت نشده")}</div>
         <div class="profile-id">${safe(company.group_label||"گروه نامشخص")} / ${safe(company.subgroup_label||"زیرگروه نامشخص")}</div>
@@ -482,7 +495,7 @@
     }).join("");
 
     const investorLabel=safe(person.shareholder_name||displayId(person));
-    const investorNode=`<g><circle cx="${investor.x}" cy="${investor.y}" r="52" class="investor-node-circle"/>
+    const investorNode=`<g class="network-node" data-network-investor="${safe(person.id)}" tabindex="0" role="button" aria-label="نمایش اطلاعات همین سرمایه‌گذار"><circle cx="${investor.x}" cy="${investor.y}" r="52" class="investor-node-circle"/>
       <text x="${investor.x}" y="${investor.y+4}" text-anchor="middle" class="investor-node-label">سرمایه‌گذار</text>
       <text x="${investor.x}" y="${investor.y+72}" text-anchor="middle" class="investor-caption">${investorLabel}</text></g>`;
     return `<div class="network-wrap"><svg class="network-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="گراف مالکیت سرمایه‌گذار، نمادهای تحت مالکیت و گروه‌های بورسی">
@@ -491,8 +504,37 @@
     <div class="hint">هر خط پیوسته رابطهٔ مالکیتِ مشاهده‌شده را نشان می‌دهد: سرمایه‌گذار به نماد و نماد به گروه رسمی خودش وصل است. برای دیدن دفتر تغییرات همان نماد روی دایرهٔ نماد کلیک کن. گراف فقط پوزیشن‌های بازِ موجود در داده‌های فعلی را نشان می‌دهد.</div>`;
   }
 
+  function renderSelectedGroupDetail(person, code) {
+    const group=(person.sector_affinity?.official_groups||[]).find(g=>String(g.code)===String(code));
+    const label=group?.label || (person.symbols||[]).find(x=>String(x.group_code)===String(code))?.group_label || "گروه انتخاب‌شده";
+    const universe=(data?.official_universe||[]).filter(item=>String(item.group_code)===String(code));
+    const positions=(person.symbols||[]).filter(item=>String(item.group_code)===String(code));
+    const held=new Set(positions.map(x=>String(x.ins_code)));
+    const rows=universe.map(item=>{
+      const company=data.companies?.[item.ins_code]||{};
+      const snap=company.latest_snapshot||{};
+      return `<tr>
+        <td><button class="symbol-btn" data-company="${safe(item.ins_code)}">${safe(item.symbol||"—")}</button></td>
+        <td>${safe(item.subgroup_label||"—")}</td>
+        <td>${held.has(String(item.ins_code))?'<span class="tag green">در پرتفوی این سرمایه‌گذار</span>':"—"}</td>
+        <td class="num">${snap.total_shareholder_count==null?"—":n(snap.total_shareholder_count)}</td>
+      </tr>`;
+    }).join("");
+    $("detail").innerHTML=`
+      <section class="panel section" id="selectedGroupBody">
+        <div class="back-row"><div><h2>${safe(label)}</h2><div class="hint">اعضای رسمی این گروه بر اساس کد گروه TSETMC؛ فهرست کامل رجیستری، مستقل از پوشش فایل‌های اکسل.</div></div><button class="btn" id="backToInvestorGraph">بازگشت به گراف سرمایه‌گذار</button></div>
+        <div class="company-kpis"><div class="company-kpi"><span>نمادهای رسمی گروه</span><strong>${fa(universe.length)}</strong></div><div class="company-kpi"><span>نمادهای این گروه در پرتفوی</span><strong>${fa(positions.length)}</strong></div><div class="company-kpi"><span>امتیاز علاقه‌مندی</span><strong>${group?pct(group.interest_score):"—"}</strong></div><div class="company-kpi"><span>کد گروه</span><strong class="num">${safe(code)}</strong></div></div>
+        <div class="table-wrap"><table><thead><tr><th>نماد</th><th>زیرگروه رسمی</th><th>وضعیت در پرتفوی</th><th>تعداد سهامداران</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="empty-cell">نمادی برای این گروه در رجیستری موجود نیست.</td></tr>'}</tbody></table></div>
+      </section>`;
+    $("backToInvestorGraph")?.addEventListener("click",()=>{renderDetail();$("ownershipGraphSection")?.scrollIntoView({behavior:"smooth",block:"start"});});
+    $("detail").querySelectorAll("[data-company]").forEach(btn=>btn.addEventListener("click",()=>{
+      pushViewState();selectedCompanyCode=btn.getAttribute("data-company");renderCompanyDetail(selectedCompanyCode);window.scrollTo(0,0);commitViewState();
+    }));
+  }
+
   function renderDetail() {
     if (selectedCompanyCode) { renderCompanyDetail(selectedCompanyCode); return; }
+    if (selectedGroupCode) { renderSelectedGroupDetail((data?.investors||[]).find(p=>p.id===selectedId),selectedGroupCode); return; }
     const person = (data?.investors || []).find(p => p.id === selectedId);
     if (!person) {
       $("detail").innerHTML = '<section class="panel empty">یک سرمایه‌گذار را از فهرست انتخاب کنید.</section>';
@@ -556,11 +598,6 @@
       </section>
 
       <section class="panel section">
-        <div class="section-head"><div><h2>گراف مالکیت و گروه‌های سهام</h2><div class="hint">مسیر مالکیت از سرمایه‌گذار به نمادهای تحت مالکیت و سپس گروه رسمی هر نماد.</div></div></div>
-        ${renderAffinityNetwork(person)}
-      </section>
-
-      <section class="panel section">
         <div class="section-head"><div><h2>روند ارزش پرتفوی مشاهده‌شده</h2><div class="hint">ارزش‌ها از تاریخچهٔ قیمت و تعداد سهام موجود در اکسل‌ها می‌آیند؛ این نمودار بر اساس تاریخ‌های ثبت‌شده است.</div></div><span class="tag">${fa(affinity.history?.length || 0)} نقطهٔ ارزش‌گذاری</span></div>
         ${renderChart(person)}
       </section>
@@ -600,15 +637,10 @@
     $("detail").querySelectorAll("[data-group]").forEach(btn => {
       btn.addEventListener("click", () => {pushViewState();selectedGroupCode=btn.getAttribute("data-group");renderDetail();commitViewState();});
     });
-    $("detail").querySelectorAll("[data-network-group]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedGroupCode=btn.getAttribute("data-network-group");renderDetail();commitViewState();}));
+    $("detail").querySelectorAll("[data-network-group]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedGroupCode=btn.getAttribute("data-network-group");renderDetail();window.scrollTo(0,0);commitViewState();}));
+    $("detail").querySelectorAll("[data-network-investor]").forEach(btn=>btn.addEventListener("click",()=>{ $("investorProfile")?.scrollIntoView({behavior:"smooth",block:"start"}); }));
     $("detail").querySelectorAll("[data-network-company]").forEach(btn=>btn.addEventListener("click",()=>{
-      symbolFilter=(data?.companies?.[btn.getAttribute("data-network-company")]?.symbol)||"";
-      if(!symbolFilter) {
-        const person=(data?.investors||[]).find(p=>p.id===selectedId);
-        symbolFilter=(person?.symbols||[]).find(x=>String(x.ins_code)===btn.getAttribute("data-network-company"))?.symbol||"";
-      }
-      renderDetail();
-      $("detail").querySelector("h2")?.scrollIntoView({behavior:"smooth",block:"start"});
+      pushViewState();selectedCompanyCode=btn.getAttribute("data-network-company");renderCompanyDetail(selectedCompanyCode);window.scrollTo(0,0);commitViewState();
     }));
     $("detail").querySelectorAll("[data-network-investor]").forEach(btn => btn.addEventListener("click",()=>{pushViewState();selectedId=btn.getAttribute("data-network-investor");selectedCompanyCode=null;symbolFilter="";renderList();renderDetail();window.scrollTo(0,0);commitViewState();}));
     $("detail").querySelectorAll("[data-company]").forEach(btn => {
