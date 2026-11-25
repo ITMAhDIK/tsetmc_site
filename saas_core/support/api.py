@@ -80,8 +80,6 @@ def open_ticket(body:CreateTicketBody,user=Depends(current_user),conn=Depends(ge
         raise HTTPException(status_code=422,detail=str(exc))
     except LookupError as exc:
         raise HTTPException(status_code=404,detail=str(exc))
-    except psycopg.errors.UniqueViolation as exc:
-        raise HTTPException(status_code=409,detail="FAQ slug is already in use") from exc
 
 
 @router.get("/tickets/{ticket_id}")
@@ -214,3 +212,5 @@ def patch_faq(article_id:UUID,body:FAQUpdateBody,
         raise HTTPException(status_code=422,detail=str(exc))
     except LookupError as exc:
         raise HTTPException(status_code=404,detail=str(exc))
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409,detail="FAQ slug is already in use") from exc
