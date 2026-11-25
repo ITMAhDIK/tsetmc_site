@@ -1,0 +1,20 @@
+services:
+  saas-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-saas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_saas
+      POSTGRES_USER: tloomberg_saas
+      POSTGRES_PASSWORD: \${SAAS_POSTGRES_PASSWORD:-local-development-only-change-me}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - tloomberg_saas_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_saas -d tloomberg_saas"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  tloomberg_saas_pgdata:
