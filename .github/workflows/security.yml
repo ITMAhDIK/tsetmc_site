@@ -90,7 +90,7 @@ jobs:
           --health-retries 20
     env:
       PGPASSWORD: postgres
-      SAAS_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_backup_test
+      SAAS_BACKUP_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_backup_test
       SAAS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_saas_backup_test
       SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas_backup_test
       SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
