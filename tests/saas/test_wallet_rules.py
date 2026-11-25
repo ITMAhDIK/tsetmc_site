@@ -20,6 +20,18 @@ def test_withdrawal_must_be_positive(amount):
         validate_withdrawal(WalletBalances(100, 100), amount)
 
 
+def test_pending_withdrawals_reduce_available_cash():
+    wallet = WalletBalances(cash_toman=400_000, gift_toman=800_000, reserved_cash_toman=150_000)
+    assert wallet.withdrawable_toman == 250_000
+    with pytest.raises(ValueError, match="exceeds user-funded"):
+        validate_withdrawal(wallet, 250_001)
+
+
+def test_reserved_cash_cannot_exceed_cash_balance():
+    with pytest.raises(ValueError, match="reserved cash"):
+        WalletBalances(cash_toman=100, gift_toman=900, reserved_cash_toman=101)
+
+
 def test_gift_is_spent_before_cash():
     assert spend_buckets(WalletBalances(400_000, 800_000), 500_000) == WalletBalances(400_000, 300_000)
 
