@@ -58,9 +58,14 @@ minimum-cohort suppression and separately permission-gated user-level event
 history. Anonymous tracking, frontend SDK/banner, dashboard UI and automatic
 retention scheduling remain. No market-data database or service changes.
 
-## Phase 8 — Superadmin console
-Users, roles, subscriptions, payment reconciliation, wallets, withdrawals,
-referrals, support queues, analytics and audit.
+## Phase 8 — Superadmin console (API foundation started)
+Implemented on feat/tloomberg-saas-superadmin-phase8: superadmin-only dashboard
+and APIs for user management, support/admin role assignment, plans, subscriptions,
+payment reconciliation notes, wallet inspection and audited ledger adjustments,
+withdrawal review, referral visibility and audit logs. Superadmin role changes
+remain out-of-band; actual bank payout and provider payment overrides are not
+allowed. Frontend UI and database/security integration tests remain. No market
+data DB or service changes.
 
 ## Phase 9 — Production readiness
 Threat model, security review, automated/load tests, backup/restore, monitoring,
