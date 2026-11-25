@@ -41,8 +41,13 @@ admin withdrawal review, payout integration and advanced abuse controls remain
 blocked or deferred pending provider contracts and security work. No market-data
 database or service changes.
 
-## Phase 6 — Support
-FAQ, ticket creation/replies, assignment, status and private internal notes.
+## Phase 6 — Support (API foundation started)
+Implemented on feat/tloomberg-saas-support-phase6: public published-FAQ reads,
+customer ticket creation/list/detail/replies, staff queue and conversation access,
+assignment to active support/admin users, status changes, a separate internal-note
+endpoint, role-gated FAQ management and audit records. Attachments, notifications,
+staff/customer UI, SLA and advanced anti-abuse controls remain. No market-data
+database or service changes.
 
 ## Phase 7 — Product analytics
 Consent, click/navigation/scroll/active-time events, heatmaps, funnels, retention
