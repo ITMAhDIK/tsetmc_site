@@ -5,7 +5,7 @@ user/session identity; event payloads contain no free-form text or raw URLs.
 """
 from __future__ import annotations
 import re
-from datetime import timedelta
+
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -14,7 +14,7 @@ ALLOWED_EVENT_NAMES = {
 }
 MIN_ANALYTICS_COHORT = 5
 DEFAULT_RETENTION_DAYS = 365
-_PAGE_PATH_RE = re.compile(r"^[\w/-]{1,300}$", re.UNICODE)
+_PAGE_PATH_RE = re.compile(r"^[\w./-]{1,300}$", re.UNICODE)
 _UUID_SEGMENT_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
