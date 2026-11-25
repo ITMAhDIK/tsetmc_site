@@ -63,9 +63,9 @@ docker compose --env-file /secure/path/saas.production.env \
   -f docker-compose.saas.production.yml up --build -d
 ```
 
-Compose runs the migration service first. The API service starts only after the migration container exits successfully. The API binds to `127.0.0.1` on the host; place a reviewed TLS reverse proxy in front of it. PostgreSQL is external and is never published by this stack. The app container uses a read-only root filesystem, tmpfs for temporary files, dropped Linux capabilities, no-new-privileges, bounded PIDs and bounded JSON logs.
+Compose runs the migration service first. The API service starts only after the migration container exits successfully. Caddy terminates TLS on host ports 80/443 and reverse-proxies to the API over the private Compose bridge. Set `SAAS_DOMAIN` to a public DNS name that resolves to the host; the Caddyfile uses automatic HTTPS and hides `/ready` from public requests. The API has no published host port. PostgreSQL is external and is never published by this stack. The app container uses a read-only root filesystem, tmpfs for temporary files, dropped Linux capabilities, no-new-privileges, bounded PIDs and bounded JSON logs.
 
-The TLS proxy must set strict HTTPS/HSTS behavior and pass only trusted host/origin values. Do not enable Uvicorn forwarded-header trust for arbitrary client addresses. Configure trusted proxy networks explicitly at the infrastructure layer. The host firewall must not expose port 8000 publicly.
+Caddy is assigned static bridge IP `172.31.240.10`; the API is `172.31.240.20`. Uvicorn trusts forwarded headers only from the exact Caddy address, so do not change that IP without updating both the network and Uvicorn allow-list. Confirm that `172.31.240.0/24` does not overlap any host, VPN, cloud VPC or container network. The host firewall should expose only 80/443 (and administrative access from trusted networks), never PostgreSQL or the API container port. The Caddy admin API remains container-local.
 
 The deployment template does not configure a cloud load balancer, DNS, certificates, WAF, private network peering, secrets manager, backups, monitoring or autoscaling. Those are environment-specific release gates.
 
