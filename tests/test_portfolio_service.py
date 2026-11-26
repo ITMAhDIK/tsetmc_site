@@ -139,6 +139,13 @@ def portfolio_api(tmp_path):
                 ("last_refresh", "2026-11-26T18:00:00"),
                 ("ownership_resolver_schema", "resolved-v1-source-exclusions"),
                 ("sidecar_version", str(server.SIDECAR_VERSION)),
+                ("earliest_date", "2026-11-18"),
+                ("latest_date", "2026-11-18"),
+                ("holdings_count", "1"),
+                ("last_fetch_ts", "2026-11-26T18:00:00"),
+                ("top_changes", "[]"),
+                ("recent_holders", "[]"),
+                ("top_changes_date_jalali", "1405-08-27"),
             ],
         )
         side.execute(
@@ -149,6 +156,40 @@ def portfolio_api(tmp_path):
             ) VALUES (?,?,?,?,?)
             """,
             ("share_id", 123, 1, 0, 0),
+        )
+        side.execute(
+            """
+            INSERT INTO site_watch (
+                ins_code, symbol, company_name, market, first_date,
+                first_date_jalali, latest_date, latest_date_jalali,
+                total_company_shares, disclosed_shareholder_count,
+                total_shareholder_count, total_shareholder_count_note,
+                disclosed_ownership_percent_sum, data_completeness,
+                resolved_shareholder_count, resolved_ownership_percent_sum,
+                resolved_unresolved_count, resolved_status, resolved_status_note,
+                raw_ownership_percent_sum, latest_price, latest_price_date, market_value
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "1001", "فولاد", "فولاد مبارکه", "TSE",
+                "2026-11-18", "1405-08-27", "2026-11-18", "1405-08-27",
+                1000, 1, 1, None, 25.0, "1.0",
+                1, 25.0, 0, "ok", None, 25.0, 2600,
+                "2026-11-18", 2600000,
+            ),
+        )
+        side.execute(
+            """
+            INSERT INTO site_company_daily_dedup (
+                ins_code, date, resolved_count, resolved_shares, resolved_pct,
+                raw_count, raw_pct, raw_shares, unquantified_count,
+                unresolved_count, unresolved_shares, total_shares, status, status_note
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "1001", "2026-11-18", 1, 250, 25.0, 1, 25.0, 250,
+                0, 0, 0, 1000, "ok", None,
+            ),
         )
         side.execute(
             """
@@ -311,4 +352,121 @@ def test_portfolio_service_enforces_sidecar_readiness(portfolio_api):
 
     with pytest.raises(ApiError) as error:
         portfolio_api.portfolio_investors({})
+    assert error.value.status == 503
+
+
+def test_market_ownership_and_portfolio_routes_compose_on_one_site_api(
+    portfolio_api,
+):
+    """The Phase 3→4→5 read path must work through one shared composition root."""
+    requests = [
+        ("GET", "/api/v1/market/overview", {}, "summary"),
+        ("GET", "/api/v1/market/watch", {"market": ["TSE"]}, "rows"),
+        ("GET", "/api/v1/stocks/search", {"q": ["فولاد"]}, "results"),
+        ("GET", "/api/v1/stocks/فولاد", {}, "instrument"),
+        ("GET", "/api/v1/stocks/فولاد/prices", {}, "prices"),
+        ("GET", "/api/v1/stocks/فولاد/shareholders", {}, "groups"),
+        (
+            "GET", "/api/v1/stocks/فولاد/ownership-series",
+            {"id_scheme": ["share_id"], "shareholder_id": ["123"]},
+            "company_series",
+        ),
+        (
+            "GET", "/api/v1/shareholders/search",
+            {"q": ["share_id:123"]},
+            "rows",
+        ),
+        (
+            "GET", "/api/v1/shareholders/observation-history",
+            {
+                "symbol": ["فولاد"],
+                "id_scheme": ["share_id"],
+                "shareholder_id": ["123"],
+            },
+            "history",
+        ),
+        (
+            "GET", "/api/v1/portfolios/investors",
+            {"q": ["سرمایه‌گذار"]},
+            "investors",
+        ),
+        (
+            "GET", "/api/v1/portfolios/share_id:123/history",
+            {"ins_code": ["1001"]},
+            "rows",
+        ),
+        ("GET", "/api/v1/portfolios/share_id:123", {}, "investor"),
+    ]
+
+    results = {}
+    for method, path, params, expected_key in requests:
+        payload, status, content_type = dispatch_api(
+            portfolio_api, method, path, params, {}
+        )
+        assert status == 200, path
+        assert content_type == "json", path
+        assert expected_key in payload, path
+        results[path] = payload
+
+    # Phase 3 — the market service sees the same instrument/price/ownership
+    # projections consumed by the subsequent services.
+    assert results["/api/v1/market/overview"]["summary"]["total_companies"] == 1
+    assert results["/api/v1/market/watch"]["rows"][0]["symbol"] == "فولاد"
+    assert results["/api/v1/stocks/search"]["results"][0]["symbol"] == "فولاد"
+    assert results["/api/v1/stocks/فولاد"]["instrument"]["ins_code"] == "1001"
+    assert results["/api/v1/stocks/فولاد/prices"]["prices"][0]["close"] == 2600
+
+    # Phase 4 — ownership reads the same symbol snapshot and same-date totals.
+    shareholders = results["/api/v1/stocks/فولاد/shareholders"]
+    assert shareholders["resolved_shares"] == 250
+    assert shareholders["resolved_ownership_percent_sum"] == 25.0
+    assert results["/api/v1/stocks/فولاد/ownership-series"]["company_series"] == [
+        {"time": "2026-11-18", "value": 25.0}
+    ]
+    assert results["/api/v1/shareholders/observation-history"]["history"] == [
+        {"time": "2026-11-18", "value": 25.0}
+    ]
+    assert results["/api/v1/shareholders/search"]["rows"][0]["group_id"] == "share_id:123"
+
+    # Phase 5 — follow the same identity into the history stream and valuation.
+    assert results["/api/v1/portfolios/investors"]["investors"][0]["id"] == "share_id:123"
+    history = results["/api/v1/portfolios/share_id:123/history"]
+    assert history["total"] == 1
+    assert history["rows"][0]["estimated_holding_value_rial"] == 650000
+    detail = results["/api/v1/portfolios/share_id:123"]
+    assert detail["summary"]["confirmed_combined_value_rial"] == 650000
+    assert detail["history_series"][0]["combined_value_rial"] == 650000
+
+
+def test_market_service_dispatcher_responses_remain_json_and_ordered(
+    portfolio_api,
+):
+    paths = [
+        ("/api/v1/market/overview", {}, "summary"),
+        ("/api/v1/market/watch", {"limit": ["1"], "offset": ["0"]}, "rows"),
+        ("/api/v1/stocks/search", {"q": ["فولاد"]}, "results"),
+        ("/api/v1/stocks/فولاد", {}, "instrument"),
+        ("/api/v1/stocks/فولاد/prices", {}, "prices"),
+    ]
+    for path, params, key in paths:
+        payload, status, content_type = dispatch_api(
+            portfolio_api, "GET", path, params, {}
+        )
+        assert status == 200
+        assert content_type == "json"
+        assert key in payload
+    assert portfolio_api.market_service._overview_cache["payload"] is not None
+
+
+def test_market_service_rechecks_readiness_after_cache_expiry(portfolio_api):
+    portfolio_api.market_overview()
+    portfolio_api.market_service._overview_cache = {"at": 0.0, "payload": None}
+    side = portfolio_api.sidecar()
+    try:
+        side.execute("DELETE FROM site_meta WHERE key='ownership_resolver_schema'")
+        side.commit()
+    finally:
+        side.close()
+    with pytest.raises(ApiError) as error:
+        portfolio_api.market_overview()
     assert error.value.status == 503
