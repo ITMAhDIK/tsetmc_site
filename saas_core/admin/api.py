@@ -95,9 +95,9 @@ async function refresh(){try{const d=await api("/admin/console/overview");const 
 document.querySelectorAll("button[data-path]").forEach(b=>b.addEventListener("click",()=>load(b.dataset.path)));
 $("refresh").addEventListener("click",refresh);
 $("search").addEventListener("submit",e=>{e.preventDefault();load("/admin/console/users?q="+encodeURIComponent($("query").value))});
-async function submitForm(id,path,method,body){$(id).addEventListener("submit",async e=>{e.preventDefault();try{const d=await api(path(),{method,body:JSON.stringify(body())});show(d,"نتیجه عملیات");message("عملیات انجام شد");await refresh()}catch(err){message(err.message)}})}
+async function submitForm(id,path,method,body){$(id).addEventListener("submit",async e=>{e.preventDefault();try{const verb=typeof method==="function"?method():method;const d=await api(path(),{method:verb,body:JSON.stringify(body())});show(d,"نتیجه عملیات");message("عملیات انجام شد");await refresh()}catch(err){message(err.message)}})}
 submitForm("status",()=>"/admin/console/users/"+encodeURIComponent($("statusUser").value)+"/status","PATCH",()=>({status:$("statusValue").value,reason:$("statusReason").value}));
-submitForm("role",()=>"/admin/console/users/"+encodeURIComponent($("roleUser").value)+"/roles/"+encodeURIComponent($("roleValue").value),$("roleAction").value==="grant"?"PUT":"DELETE",()=>({}));
+submitForm("role",()=>"/admin/console/users/"+encodeURIComponent($("roleUser").value)+"/roles/"+encodeURIComponent($("roleValue").value),()=>$("roleAction").value==="grant"?"PUT":"DELETE",()=>({}));
 submitForm("wallet",()=>"/admin/console/wallets/"+encodeURIComponent($("walletUser").value)+"/adjust","POST",()=>({bucket:$("walletBucket").value,amount_toman:Number($("walletAmount").value),reason:$("walletReason").value,idempotency_key:$("walletKey").value}));
 submitForm("reconcile",()=>"/admin/console/payments/reconciliation/"+encodeURIComponent($("caseId").value)+"/resolve","POST",()=>({note:$("caseNote").value,dismissed:$("caseDismiss").value==="true"}));
 refresh();
