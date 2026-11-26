@@ -4,12 +4,12 @@
 - Superadmin-only console guard layered on the existing capability permissions.
 - Dashboard summary counts for users, active subscriptions, pending payments, recent paid orders, pending withdrawals, open support tickets, pending referrals and recent analytics events.
 - Searchable/paginated user list and user detail with roles, recent sessions, subscriptions and analytics-consent state.
-- User suspension/reactivation; suspending a user revokes all of their active sessions. The last active superadmin cannot be suspended.
+- User suspension/reactivation; suspending a user revokes all of their active sessions. Deleted/pending accounts cannot be reactivated, superadmin accounts cannot be changed, and the last active superadmin cannot be suspended.
 - Role listing and assignment/removal for support/admin only. Superadmin role bootstrap/removal is intentionally out-of-band; a logged-in operator cannot self-modify roles.
 - Plan listing and audited updates to title, duration, price and active state. Price changes apply only to new payment orders; existing order amounts are not rewritten.
 - Subscription listing and audited cancellation; the console does not manually activate subscriptions.
 - Payment order listing and append-only reconciliation notes. Reconciliation notes document an investigation; they cannot mark an order paid or override provider verification.
-- Per-user wallet inspection and idempotent, audited cash/gift adjustments through append-only ledger entries. An adjustment cannot make either bucket negative.
+- Per-user wallet inspection and idempotent, audited cash/gift adjustments through append-only ledger entries. Idempotency keys are bound to the exact target, bucket, amount and reason; amounts are strict signed 64-bit integers and an adjustment cannot make either bucket negative.
 - Withdrawal queue and approve/reject workflow. Actual bank payout and marking a withdrawal paid are deliberately not implemented without a provider integration.
 - Referral listing and visibility into rewards.
 - Audit-log filtering and read access.
