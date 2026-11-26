@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 
 from saas_core.auth.authorization import AuthorizationDenied
@@ -205,3 +206,44 @@ def test_support_api_routes_are_registered():
     assert "/support/admin/tickets/{ticket_id}/notes" in paths
     assert "/support/admin/tickets/{ticket_id}/status" in paths
     assert "/support/admin/faqs" in paths
+
+
+def test_support_api_uses_phase_two_sessions_and_phase_two_rbac(migrated_support_database):
+    from saas_core.auth.api import app, current_user, get_conn
+    from saas_core.auth.repository import create_session, revoke_session
+
+    with connect() as conn:
+        owner=make_user(conn)
+        other=make_user(conn)
+        staff=make_user(conn)
+        grant_role(conn,staff,"support")
+        ticket=new_ticket(conn,owner)
+        owner_token,_=create_session(conn,owner)
+        other_token,_=create_session(conn,other)
+        staff_token,_=create_session(conn,staff)
+        conn.commit()
+
+        principal={"token":owner_token}
+        def authenticated_user():
+            from saas_core.auth.repository import authenticate_session
+            return authenticate_session(conn,principal["token"])
+        def database_connection():
+            yield conn
+
+        app.dependency_overrides[current_user]=authenticated_user
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            client=TestClient(app)
+            owner_headers={"Authorization":f"Bearer {owner_token}"}
+            assert client.get(f"/support/tickets/{ticket['id']}",headers=owner_headers).status_code==200
+            principal["token"]=other_token
+            assert client.get(f"/support/tickets/{ticket['id']}",headers={"Authorization":f"Bearer {other_token}"}).status_code==404
+            assert client.get("/support/admin/tickets",headers={"Authorization":f"Bearer {other_token}"}).status_code==403
+            principal["token"]=staff_token
+            assert client.get("/support/admin/tickets",headers={"Authorization":f"Bearer {staff_token}"}).status_code==200
+            revoke_session(conn,staff_token)
+            conn.commit()
+            assert client.get("/support/admin/tickets",headers={"Authorization":f"Bearer {staff_token}"}).status_code==401
+        finally:
+            app.dependency_overrides.pop(current_user,None)
+            app.dependency_overrides.pop(get_conn,None)
