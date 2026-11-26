@@ -124,6 +124,7 @@ def test_production_configuration_requires_explicit_https_hosts_and_separate_sec
     monkeypatch.setenv("SAAS_SUPERADMIN_PHONE_E164", "+989000000001")
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("SAAS_DB_POOL_MIN", "1")
     monkeypatch.setenv("SAAS_DB_POOL_MAX", "8")
     monkeypatch.setenv("SAAS_DB_POOL_TIMEOUT_SECONDS", "4")
@@ -150,6 +151,7 @@ def test_production_configuration_rejects_wildcard_hosts_and_shared_secrets(monk
         auth_api.validate_production_configuration()
 
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
     with pytest.raises(ConfigurationError, match="explicit production hostnames"):
         auth_api.validate_production_configuration()
 
@@ -200,6 +202,7 @@ def test_production_configuration_requires_verified_postgres_tls(monkeypatch):
     monkeypatch.setenv("SAAS_SUPERADMIN_PHONE_E164", "+989000000001")
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
 
     with pytest.raises(ConfigurationError, match="sslmode=verify-full"):
         auth_api.validate_production_configuration()
@@ -231,6 +234,7 @@ def test_production_configuration_rejects_missing_or_invalid_bootstrap_superadmi
     monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "tloomberg_saas")
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.delenv("SAAS_SUPERADMIN_PHONE_E164", raising=False)
 
     with pytest.raises(ConfigurationError, match="SAAS_SUPERADMIN_PHONE_E164 is required"):
