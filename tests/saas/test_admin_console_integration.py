@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 import pytest
@@ -229,3 +231,69 @@ def test_admin_http_api_authenticates_mfa_session_and_enforces_database_roles():
     assert status.startswith("403")
     assert payload["ok"] is False
     assert payload["error"]["code"] == "permission_denied"
+
+
+
+def test_superadmin_role_revocation_waits_for_global_role_lock():
+    with _connect() as connection, connection.cursor() as cursor:
+        actor = _user(cursor, "Concurrent revocation actor")
+        target = _user(cursor, "Concurrent revocation target")
+        cursor.execute("SELECT id FROM roles WHERE code='superadmin'")
+        role_id = cursor.fetchone()[0]
+        cursor.executemany(
+            "INSERT INTO user_roles(user_id,role_id) VALUES (%s,%s)",
+            [(actor, role_id), (target, role_id)],
+        )
+
+    # Hold the shared role row lock. A revocation must wait here rather than
+    # count the superadmin set without serialization.
+    lock_connection = _connect()
+    lock_cursor = lock_connection.cursor()
+    lock_cursor.execute("SELECT id FROM roles WHERE code='superadmin' FOR UPDATE")
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _service().revoke_role,
+                actor_user_id=actor,
+                target_user_id=target,
+                role_code="superadmin",
+                request_id="it-role-lock",
+            )
+            deadline = time.monotonic() + 5
+            waiting_on_role_lock = False
+            while time.monotonic() < deadline:
+                with _connect() as probe, probe.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT EXISTS (
+                          SELECT 1 FROM pg_stat_activity
+                          WHERE datname=current_database()
+                            AND pid<>pg_backend_pid()
+                            AND wait_event_type='Lock'
+                            AND query ILIKE '%SELECT id FROM roles%'
+                            AND query ILIKE '%FOR UPDATE%'
+                        )
+                        """
+                    )
+                    waiting_on_role_lock = cursor.fetchone()[0]
+                if waiting_on_role_lock:
+                    break
+                time.sleep(0.05)
+            assert waiting_on_role_lock, "role revocation did not wait for the superadmin lock"
+    finally:
+        lock_connection.commit()
+        lock_cursor.close()
+        lock_connection.close()
+
+    result = future.result(timeout=5)
+    assert result["revoked"] is True
+    with _connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT count(*) FROM user_roles ur
+            JOIN roles r ON r.id=ur.role_id
+            WHERE ur.user_id=%s AND r.code='superadmin'
+            """,
+            (actor,),
+        )
+        assert cursor.fetchone()[0] == 1
