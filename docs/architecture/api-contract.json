@@ -3,254 +3,32 @@
   "baseline_commit": "ff062cf18fa4953ddd9bebeb9cbbb776741a8258",
   "base_path": "/api/v1",
   "routes": [
-    {
-      "method": "GET",
-      "path": "/market/overview",
-      "test_path": "/api/v1/market/overview",
-      "handler": "market_overview",
-      "response": "json",
-      "status": 200,
-      "argument": "none"
-    },
-    {
-      "method": "GET",
-      "path": "/market/watch",
-      "test_path": "/api/v1/market/watch",
-      "handler": "market_watch",
-      "response": "json",
-      "status": 200,
-      "argument": "params"
-    },
-    {
-      "method": "GET",
-      "path": "/stocks/search",
-      "test_path": "/api/v1/stocks/search",
-      "handler": "stocks_search",
-      "response": "json",
-      "status": 200,
-      "argument": "params"
-    },
-    {
-      "method": "GET",
-      "path": "/stocks/{symbol}",
-      "test_path": "/api/v1/stocks/TEST_SYMBOL",
-      "handler": "stock_detail",
-      "response": "json",
-      "status": 200,
-      "argument": "symbol"
-    },
-    {
-      "method": "GET",
-      "path": "/stocks/{symbol}/shareholders",
-      "test_path": "/api/v1/stocks/TEST_SYMBOL/shareholders",
-      "handler": "stock_shareholders",
-      "response": "json",
-      "status": 200,
-      "argument": "symbol_params"
-    },
-    {
-      "method": "GET",
-      "path": "/stocks/{symbol}/ownership-series",
-      "test_path": "/api/v1/stocks/TEST_SYMBOL/ownership-series",
-      "handler": "stock_ownership_series",
-      "response": "json",
-      "status": 200,
-      "argument": "symbol_params"
-    },
-    {
-      "method": "GET",
-      "path": "/stocks/{symbol}/corporate-actions",
-      "test_path": "/api/v1/stocks/TEST_SYMBOL/corporate-actions",
-      "handler": "stock_corporate_actions",
-      "response": "json",
-      "status": 200,
-      "argument": "symbol"
-    },
-    {
-      "method": "GET",
-      "path": "/stocks/{symbol}/data-quality",
-      "test_path": "/api/v1/stocks/TEST_SYMBOL/data-quality",
-      "handler": "stock_data_quality",
-      "response": "json",
-      "status": 200,
-      "argument": "symbol"
-    },
-    {
-      "method": "GET",
-      "path": "/stocks/{symbol}/prices",
-      "test_path": "/api/v1/stocks/TEST_SYMBOL/prices",
-      "handler": "stock_prices",
-      "response": "json",
-      "status": 200,
-      "argument": "symbol"
-    },
-    {
-      "method": "GET",
-      "path": "/shareholders/search",
-      "test_path": "/api/v1/shareholders/search",
-      "handler": "shareholders_search",
-      "response": "json",
-      "status": 200,
-      "argument": "params"
-    },
-    {
-      "method": "GET",
-      "path": "/shareholders/observation-history",
-      "test_path": "/api/v1/shareholders/observation-history",
-      "handler": "shareholder_observation_history",
-      "response": "json",
-      "status": 200,
-      "argument": "params"
-    },
-    {
-      "method": "GET",
-      "path": "/portfolios/investors",
-      "test_path": "/api/v1/portfolios/investors",
-      "handler": "portfolio_investors",
-      "response": "json",
-      "status": 200,
-      "argument": "params"
-    },
-    {
-      "method": "GET",
-      "path": "/portfolios/{id}/history",
-      "test_path": "/api/v1/portfolios/share_id:42/history",
-      "handler": "portfolio_history",
-      "response": "json",
-      "status": 200,
-      "argument": "investor_params"
-    },
-    {
-      "method": "GET",
-      "path": "/portfolios/{id}",
-      "test_path": "/api/v1/portfolios/share_id:42",
-      "handler": "portfolio_detail",
-      "response": "json",
-      "status": 200,
-      "argument": "investor_params"
-    },
-    {
-      "method": "POST",
-      "path": "/screener/query",
-      "test_path": "/api/v1/screener/query",
-      "handler": "screener_query",
-      "response": "json",
-      "status": 200,
-      "argument": "body"
-    },
-    {
-      "method": "POST",
-      "path": "/screener/export",
-      "test_path": "/api/v1/screener/export",
-      "handler": "screener_export",
-      "response": "xlsx",
-      "status": 200,
-      "argument": "body"
-    },
-    {
-      "method": "GET",
-      "path": "/screener/saved-filters",
-      "test_path": "/api/v1/screener/saved-filters",
-      "handler": "saved_filters_list",
-      "response": "json",
-      "status": 200,
-      "argument": "none"
-    },
-    {
-      "method": "POST",
-      "path": "/screener/saved-filters",
-      "test_path": "/api/v1/screener/saved-filters",
-      "handler": "saved_filters_create",
-      "response": "json",
-      "status": 200,
-      "argument": "body"
-    },
-    {
-      "method": "GET",
-      "path": "/watchlists/default",
-      "test_path": "/api/v1/watchlists/default",
-      "handler": "watchlist_get",
-      "response": "json",
-      "status": 200,
-      "argument": "none"
-    },
-    {
-      "method": "POST",
-      "path": "/watchlists/default/symbols",
-      "test_path": "/api/v1/watchlists/default/symbols",
-      "handler": "watchlist_add",
-      "response": "json",
-      "status": 200,
-      "argument": "body"
-    },
-    {
-      "method": "DELETE",
-      "path": "/watchlists/default/symbols/{symbol}",
-      "test_path": "/api/v1/watchlists/default/symbols/TEST_SYMBOL",
-      "handler": "watchlist_remove",
-      "response": "json",
-      "status": 200,
-      "argument": "symbol"
-    },
-    {
-      "method": "GET",
-      "path": "/admin/overview",
-      "test_path": "/api/v1/admin/overview",
-      "handler": "admin_overview",
-      "response": "json",
-      "status": 200,
-      "argument": "none",
-      "security": "unguarded_in_baseline"
-    },
-    {
-      "method": "GET",
-      "path": "/admin/manifests",
-      "test_path": "/api/v1/admin/manifests",
-      "handler": "admin_manifests",
-      "response": "json",
-      "status": 200,
-      "argument": "params",
-      "security": "unguarded_in_baseline"
-    },
-    {
-      "method": "GET",
-      "path": "/admin/errors",
-      "test_path": "/api/v1/admin/errors",
-      "handler": "admin_errors",
-      "response": "json",
-      "status": 200,
-      "argument": "params",
-      "security": "unguarded_in_baseline"
-    },
-    {
-      "method": "GET",
-      "path": "/admin/identity/queue",
-      "test_path": "/api/v1/admin/identity/queue",
-      "handler": "admin_identity_queue",
-      "response": "json",
-      "status": 200,
-      "argument": "params",
-      "security": "unguarded_in_baseline"
-    },
-    {
-      "method": "POST",
-      "path": "/admin/ingestion/trigger",
-      "test_path": "/api/v1/admin/ingestion/trigger",
-      "handler": null,
-      "response": "json",
-      "status": 501,
-      "argument": "none",
-      "security": "not_implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/admin/identity/resolve",
-      "test_path": "/api/v1/admin/identity/resolve",
-      "handler": null,
-      "response": "json",
-      "status": 501,
-      "argument": "none",
-      "security": "not_implemented"
-    }
+    {"method":"GET","path":"/market/overview","test_path":"/api/v1/market/overview","handler":"market_overview","response":"json","status":200,"argument":"none"},
+    {"method":"GET","path":"/market/watch","test_path":"/api/v1/market/watch","handler":"market_watch","response":"json","status":200,"argument":"params"},
+    {"method":"GET","path":"/stocks/search","test_path":"/api/v1/stocks/search","handler":"stocks_search","response":"json","status":200,"argument":"params"},
+    {"method":"GET","path":"/stocks/{symbol}","test_path":"/api/v1/stocks/TEST_SYMBOL","handler":"stock_detail","response":"json","status":200,"argument":"symbol"},
+    {"method":"GET","path":"/stocks/{symbol}/shareholders","test_path":"/api/v1/stocks/TEST_SYMBOL/shareholders","handler":"stock_shareholders","response":"json","status":200,"argument":"symbol_params"},
+    {"method":"GET","path":"/stocks/{symbol}/ownership-series","test_path":"/api/v1/stocks/TEST_SYMBOL/ownership-series","handler":"stock_ownership_series","response":"json","status":200,"argument":"symbol_params"},
+    {"method":"GET","path":"/stocks/{symbol}/corporate-actions","test_path":"/api/v1/stocks/TEST_SYMBOL/corporate-actions","handler":"stock_corporate_actions","response":"json","status":200,"argument":"symbol"},
+    {"method":"GET","path":"/stocks/{symbol}/data-quality","test_path":"/api/v1/stocks/TEST_SYMBOL/data-quality","handler":"stock_data_quality","response":"json","status":200,"argument":"symbol"},
+    {"method":"GET","path":"/stocks/{symbol}/prices","test_path":"/api/v1/stocks/TEST_SYMBOL/prices","handler":"stock_prices","response":"json","status":200,"argument":"symbol"},
+    {"method":"GET","path":"/shareholders/search","test_path":"/api/v1/shareholders/search","handler":"shareholders_search","response":"json","status":200,"argument":"params"},
+    {"method":"GET","path":"/shareholders/observation-history","test_path":"/api/v1/shareholders/observation-history","handler":"shareholder_observation_history","response":"json","status":200,"argument":"params"},
+    {"method":"GET","path":"/portfolios/investors","test_path":"/api/v1/portfolios/investors","handler":"portfolio_investors","response":"json","status":200,"argument":"params"},
+    {"method":"GET","path":"/portfolios/{id}/history","test_path":"/api/v1/portfolios/share_id%3A42/history","handler":"portfolio_history","response":"json","status":200,"argument":"investor_params"},
+    {"method":"GET","path":"/portfolios/{id}","test_path":"/api/v1/portfolios/share_id%3A42","handler":"portfolio_detail","response":"json","status":200,"argument":"investor_params"},
+    {"method":"POST","path":"/screener/query","test_path":"/api/v1/screener/query","handler":"screener_query","response":"json","status":200,"argument":"body"},
+    {"method":"POST","path":"/screener/export","test_path":"/api/v1/screener/export","handler":"screener_export","response":"xlsx","status":200,"argument":"body"},
+    {"method":"GET","path":"/screener/saved-filters","test_path":"/api/v1/screener/saved-filters","handler":"saved_filters_list","response":"json","status":200,"argument":"none"},
+    {"method":"POST","path":"/screener/saved-filters","test_path":"/api/v1/screener/saved-filters","handler":"saved_filters_create","response":"json","status":200,"argument":"body"},
+    {"method":"GET","path":"/watchlists/default","test_path":"/api/v1/watchlists/default","handler":"watchlist_get","response":"json","status":200,"argument":"none"},
+    {"method":"POST","path":"/watchlists/default/symbols","test_path":"/api/v1/watchlists/default/symbols","handler":"watchlist_add","response":"json","status":200,"argument":"body"},
+    {"method":"DELETE","path":"/watchlists/default/symbols/{symbol}","test_path":"/api/v1/watchlists/default/symbols/TEST_SYMBOL","handler":"watchlist_remove","response":"json","status":200,"argument":"symbol"},
+    {"method":"GET","path":"/admin/overview","test_path":"/api/v1/admin/overview","handler":"admin_overview","response":"json","status":200,"argument":"none","security":"unguarded_in_baseline"},
+    {"method":"GET","path":"/admin/manifests","test_path":"/api/v1/admin/manifests","handler":"admin_manifests","response":"json","status":200,"argument":"params","security":"unguarded_in_baseline"},
+    {"method":"GET","path":"/admin/errors","test_path":"/api/v1/admin/errors","handler":"admin_errors","response":"json","status":200,"argument":"params","security":"unguarded_in_baseline"},
+    {"method":"GET","path":"/admin/identity/queue","test_path":"/api/v1/admin/identity/queue","handler":"admin_identity_queue","response":"json","status":200,"argument":"params","security":"unguarded_in_baseline"},
+    {"method":"POST","path":"/admin/ingestion/trigger","test_path":"/api/v1/admin/ingestion/trigger","handler":null,"response":"json","status":501,"argument":"none","security":"not_implemented"},
+    {"method":"POST","path":"/admin/identity/resolve","test_path":"/api/v1/admin/identity/resolve","handler":null,"response":"json","status":501,"argument":"none","security":"not_implemented"}
   ]
 }
