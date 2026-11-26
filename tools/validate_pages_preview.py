@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 INDEX = DOCS / "index.html"
+LOCAL_APP = ROOT / "ai_studio_code.html"
 DATA = DOCS / "data" / "analytics.json"
 ANALYTICS_CLIENT = DOCS / "analytics-client.js"
 
@@ -82,8 +83,11 @@ def main() -> int:
     )
     if any(marker not in html for marker in admin_report_markers):
         raise SystemExit("The administrator behavior analytics reports are not wired into the UI.")
-    if "http://127.0.0.1:8000" in html:
-        raise SystemExit("The Pages preview must not call a developer's localhost.")
+    if "http://127.0.0.1:8000" in html or "http://127.0.0.1:8000" in LOCAL_APP.read_text(encoding="utf-8"):
+        raise SystemExit("A public build must not call a developer's localhost.")
+    local_app = LOCAL_APP.read_text(encoding="utf-8")
+    if "window.SITE_API_BASE_URL" not in local_app or "replace(/\\\\/$/, '')" not in local_app:
+        raise SystemExit("The hosted site must use a configurable same-origin API base.")
     if re.search(
         r"(?:api[_-]?key|client[_-]?secret|merchant[_-]?id)\s*[:=]\s*['\"][^'\"]{8,}",
         html, re.I,
