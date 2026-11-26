@@ -57,7 +57,7 @@ def test_kavenegar_sender_uses_https_and_form_encoded_message(monkeypatch):
     assert captured["url"].startswith("https://api.kavenegar.com/v1/")
     assert captured["url"].endswith("/sms/send.json")
     assert captured["method"] == "POST"
-    assert captured["form"]["receptor"] == ["+989000000001"]
+    assert captured["form"]["receptor"] == ["09000000001"]
     assert captured["form"]["sender"] == ["10004346"]
     assert "654321" in captured["form"]["message"][0]
 
