@@ -2,7 +2,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from saas_core.auth.api import current_user, get_conn
+from saas_core.auth.api import current_user, get_conn, require_admin_mfa
 from saas_core.auth.authorization import AuthorizationDenied, require_permission
 from .service import (
     add_payment_reconciliation_note, change_user_role, change_user_status,
@@ -12,7 +12,7 @@ from .service import (
     update_plan, adjust_wallet, list_reconciliation_notes,
 )
 
-router=APIRouter(prefix="/admin",tags=["superadmin"])
+router=APIRouter(prefix="/admin",tags=["superadmin"],dependencies=[Depends(require_admin_mfa)])
 
 
 def _require(conn,user_id,permission):
