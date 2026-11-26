@@ -47,6 +47,33 @@ jobs:
       - name: Test SaaS wallet and schema contracts
         run: python -m pytest tests/saas -q
 
+      - name: Parse SaaS PostgreSQL schemas
+        run: |
+          python -m pip install --disable-pip-version-check pglast
+          python - <<'PY'
+          from pathlib import Path
+          from pglast import parse_sql
+          for path in (
+              Path("saas_core/schema/001_initial.sql"),
+              Path("saas_core/schema/002_product_features_referrals_analytics.sql"),
+          ):
+              parse_sql(path.read_text(encoding="utf-8"))
+              print(f"PostgreSQL syntax OK: {path}")
+          PY
+
+      - name: Validate dashboard JSX syntax
+        run: |
+          npm install --prefix /tmp/tloomberg-js-check --no-save @babel/parser
+          NODE_PATH=/tmp/tloomberg-js-check/node_modules node - <<'NODE'
+          const fs = require("fs");
+          const parser = require("@babel/parser");
+          const html = fs.readFileSync("docs/index.html", "utf8");
+          const match = html.match(/<script type="text\\/babel"[^>]*>([\\s\\S]*?)<\\/script>/);
+          if (!match) throw new Error("Dashboard Babel script was not found");
+          parser.parse(match[1], { sourceType: "script", plugins: ["jsx"] });
+          console.log("Dashboard JSX syntax OK");
+          NODE
+
       - name: Inspect uploaded workbook schemas
         run: python tools/inspect_pages_workbooks.py
 

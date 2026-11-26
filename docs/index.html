@@ -2325,8 +2325,6 @@
         { code: 'premium_quarterly', title: 'اشتراک ویژه سه‌ماهه', duration: '۹۰ روز', price: '۲٬۴۹۹٬۰۰۰', note: 'برای استفادهٔ پیوسته در یک دورهٔ سه‌ماهه' },
       ];
       const selected = planOptions.find(item => item.code === selectedPlan) || planOptions[0];
-      const digits = String(purchasePhone).replace(/[^\d۰-۹٠-٩]/g, '');
-      const phoneLooksValid = digits.length >= 10 && digits.length <= 13;
 
       return (
         <div className="app-plans-page">
@@ -2371,7 +2369,7 @@
               </button>
             </div>
             <div className="app-payment-summary"><span>{selected.title}</span><strong>{selected.price} تومان</strong></div>
-            <button type="button" className="app-payment-submit" disabled={!phoneLooksValid}>
+            <button type="button" className="app-payment-submit" disabled aria-disabled="true">
               ادامه و پرداخت با {paymentMethod === 'snappay' ? 'اسنپ‌پی' : 'دیجی‌پی'}
             </button>
             <p className="app-payment-disabled-note">درگاه‌ها تا زمان دریافت دسترسی پذیرندگی، اتصال API و آزمایش callback امن، غیرفعال هستند. این دکمه هنوز تراکنشی ایجاد نمی‌کند.</p>
