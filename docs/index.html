@@ -2973,7 +2973,12 @@
             {page === 'screener' && <ScreenerPage onOpenStock={openStock} />}
             {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
             {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} onAuthChange={setAuthUser} />}
-            {page === 'admin' && <AdminDashboardPage />}
+            {page === 'admin' && authUser && authUser.is_superadmin && <AdminDashboardPage />}
+            {page === 'admin' && (!authUser || !authUser.is_superadmin) && (
+              <div className="mx-auto max-w-3xl p-5 text-sm rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-300">
+                برای دسترسی به پنل مدیریت، ورود با شمارهٔ دارای نقش سوپر ادمین لازم است.
+              </div>
+            )}
           </main>
         </div>
       );
