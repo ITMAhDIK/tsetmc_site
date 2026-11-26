@@ -56,3 +56,12 @@ sandbox verification and dedicated service implementations.
 - Migration schema/005_analytics.sql adds event idempotency and analytics permissions; it is re-runnable.
 - Product analytics is off until the account explicitly opts in; consent changes are kept in an append-only history and each event records the consent version. User-level analysis requires analytics.users.read and is audited. Authenticated users can call DELETE /analytics/data to revoke consent and erase their own event rows atomically; the consent audit history remains.
 - Raw form values, secrets, payment data and support-ticket content are not accepted as event payloads.
+
+
+## Administrative console (Phase 8)
+- `admin/api.py` exposes authenticated, permission-scoped console endpoints under `/admin/console`.
+- `admin/service.py` owns user/role operations, subscription/payment views, reconciliation, wallet review/adjustment, withdrawals, referrals, support queue and audit queries.
+- `schema/007_admin_console.sql` adds the superadmin-only console entry and referral read permissions.
+- Role assignment cannot grant or modify superadmin; that role is provisioned out of band. Suspending an account revokes its active sessions.
+- Wallet adjustments are integer Toman, append-only, idempotent and audited. They do not initiate external transfers.
+- The authenticated browser UI and production security gates are not yet enabled.

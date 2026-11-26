@@ -43,9 +43,13 @@
 - Heatmap data is component interaction intensity only; no pointer tracking or keystroke capture.
 - Frontend consent/instrumentation, event-retention schedule, data export and legal/privacy review remain.
 
-## Phase 8 — Superadmin console
-Users, roles, subscriptions, payment reconciliation, wallets, withdrawals,
-referrals, support queues, analytics and audit.
+## Phase 8 — Administrative console (permission-scoped backend implemented; browser UI follow-up)
+- Authenticated console API provides overview, user search/detail/status, role management, subscription/payment views, reconciliation, wallet detail/adjustments, withdrawals, referrals, support queue and audit.
+- Every service enforces its own permission; the overview and referral administration are superadmin-only. Superadmin role provisioning and modification remain out-of-band.
+- Suspending an account revokes its active sessions; self-suspension and superadmin suspension are blocked.
+- Wallet adjustments use integer Toman, immutable ledger entries, idempotency keys and audit records. No bank transfer or external payout is initiated by the console.
+- Migration 007 adds only console/referral permissions to the isolated SaaS database.
+- Browser UI, CSRF/Origin hardening and production bootstrap remain before production enablement.
 
 ## Phase 9 — Production readiness
 Threat model, security review, automated/load tests, backup/restore, monitoring,

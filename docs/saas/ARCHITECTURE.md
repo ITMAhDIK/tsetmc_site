@@ -62,6 +62,9 @@ active visible duration. Never capture typed text, raw input values, OTPs,
 passwords, payment fields, bank details, private ticket messages or keystrokes.
 Provide consent, retention, deletion and audited user-level analytics access.
 
+## Administrative console
+The console API uses the same SaaS identity/session boundary and checks granular permissions in service functions. Superadmin provisioning and role mutation remain out of band. Wallet changes are append-only ledger entries with idempotency and audit. Do not expose mutation controls in a browser console until CSRF/Origin protections are enabled.
+
 ## Deployment
 Use HTTPS, secure HttpOnly SameSite cookies, CSRF protection, rate limiting,
 secret management, independent database credentials, independent backups,
