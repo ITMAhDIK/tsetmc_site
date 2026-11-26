@@ -27,7 +27,7 @@ def _required_secret(name: str) -> bytes:
 
 def normalize_phone(phone: str) -> str:
     value = phone.strip() if isinstance(phone, str) else ""
-    if not re.fullmatch(r"\\+[1-9][0-9]{7,14}", value):
+    if not re.fullmatch(r"\+[1-9][0-9]{7,14}", value):
         raise ValueError("phone must be a valid E.164 number using ASCII digits")
     return value
 
