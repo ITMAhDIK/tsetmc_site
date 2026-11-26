@@ -74,16 +74,67 @@ def test_load_probe_bounds_rate_duration_and_concurrency(name, value):
         build_config(env)
 
 
-def test_load_probe_only_schedules_health_and_readiness_paths():
-    cfg = build_config(_valid_env())
-    assert cfg.base_url == "https://staging-api.example.com"
-    assert cfg.duration_seconds == 2
-    assert cfg.requests_per_second == 2
+def test_load_probe_only_schedules_health_and_readiness_paths(monkeypatch):
+    from urllib.parse import urlsplit
+    from scripts import saas_staging_load_probe as probe
 
-    # This test validates only the generated request plan and never performs
-    # external I/O. A real run is intentionally staging-host-specific.
-    assert "/health" in ("/health", "/ready")
-    assert "/ready" in ("/health", "/ready")
+    requested_paths = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, _limit):
+            return b""
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            assert request.get_method() == "GET"
+            assert timeout == probe.REQUEST_TIMEOUT_SECONDS
+            requested_paths.append(urlsplit(request.full_url).path)
+            return FakeResponse()
+
+    monkeypatch.setattr(probe, "_validate_public_dns", lambda _host: None)
+    monkeypatch.setattr(
+        probe.urllib.request, "build_opener", lambda *args: FakeOpener()
+    )
+
+    result = run_probe(
+        LoadConfig(
+            base_url="https://staging-api.example.com",
+            host="staging-api.example.com",
+            duration_seconds=1,
+            requests_per_second=2,
+            concurrency=2,
+        )
+    )
+
+    assert sorted(requested_paths) == ["/health", "/ready"]
+    assert result["paths"] == ["/health", "/ready"]
+    assert result["request_count"] == 2
+    assert result["status_counts"] == {"200": 2}
+
+
+def test_load_probe_never_follows_redirects_to_another_host():
+    from urllib.request import Request
+    from scripts.saas_staging_load_probe import NoRedirectHandler
+
+    request = Request("https://staging-api.example.com/health", method="GET")
+    handler = NoRedirectHandler()
+
+    assert handler.redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        {},
+        "https://attacker.example/collect",
+    ) is None
 
 
 def test_load_probe_rejects_dns_names_resolving_to_private_addresses(monkeypatch):
