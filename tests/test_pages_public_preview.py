@@ -77,3 +77,13 @@ def test_pages_preview_includes_the_privacy_consent_analytics_bundle():
     assert "innerText" not in client
     assert "textContent" not in client
     assert "outerHTML" not in client
+
+
+def test_admin_ui_exposes_aggregate_and_superadmin_user_behavior_reports():
+    html = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+    assert "/api/v1/analytics/admin/overview" in html
+    assert "/api/v1/analytics/admin/paths" in html
+    assert "/api/v1/analytics/admin/users/" in html
+    assert "analyticsUserEvents" in html
+    assert "تحلیل رفتار کاربران" in html
+    assert "تاریخچهٔ رفتار یک کاربر" in html
