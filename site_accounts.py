@@ -1755,6 +1755,78 @@ class AccountService:
         finally:
             con.close()
 
+    def analytics_overview(self, *, days=30, limit=20):
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 730:
+            raise AccountError(400, "بازه گزارش باید بین ۱ تا ۷۳۰ روز باشد.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise AccountError(400, "تعداد صفحات باید بین ۱ تا ۱۰۰ باشد.")
+        cutoff = (utc_now() - timedelta(days=days)).isoformat(timespec="seconds")
+        con = self._connect()
+        try:
+            active_users = con.execute(
+                """SELECT COUNT(DISTINCT e.user_id)
+                   FROM site_analytics_events e
+                   JOIN site_analytics_consents c ON c.user_id=e.user_id
+                   WHERE c.product_analytics=1 AND e.occurred_at>=?""",
+                (cutoff,),
+            ).fetchone()[0]
+            if active_users < 5:
+                return {"suppressed": True, "minimum_cohort": 5}
+            row = con.execute(
+                """SELECT COUNT(*) AS event_count,
+                          COUNT(DISTINCT e.user_id) AS active_users,
+                          COUNT(DISTINCT e.session_hash) AS sessions,
+                          SUM(CASE WHEN e.event_name='page_view' THEN 1 ELSE 0 END) AS page_views,
+                          SUM(CASE WHEN e.event_name='click' THEN 1 ELSE 0 END) AS clicks,
+                          SUM(CASE WHEN e.event_name='scroll' THEN 1 ELSE 0 END) AS scroll_events,
+                          COALESCE(SUM(e.active_duration_ms),0) AS active_duration_ms
+                   FROM site_analytics_events e
+                   JOIN site_analytics_consents c ON c.user_id=e.user_id
+                   WHERE c.product_analytics=1 AND e.occurred_at>=?""",
+                (cutoff,),
+            ).fetchone()
+            top_pages = con.execute(
+                """SELECT e.page_path,COUNT(*) AS views,
+                          COUNT(DISTINCT e.user_id) AS users,
+                          COUNT(DISTINCT e.session_hash) AS sessions
+                   FROM site_analytics_events e
+                   JOIN site_analytics_consents c ON c.user_id=e.user_id
+                   WHERE c.product_analytics=1 AND e.event_name='page_view'
+                     AND e.occurred_at>=?
+                   GROUP BY e.page_path
+                   HAVING COUNT(DISTINCT e.user_id)>=5
+                   ORDER BY views DESC,e.page_path LIMIT ?""",
+                (cutoff, limit),
+            ).fetchall()
+            return {
+                "suppressed": False,
+                "days": days,
+                "minimum_cohort": 5,
+                "overview": dict(row),
+                "top_pages": [dict(item) for item in top_pages],
+            }
+        finally:
+            con.close()
+
+    def purge_analytics_events(self, *, retention_days=365):
+        if (
+            isinstance(retention_days, bool)
+            or not isinstance(retention_days, int)
+            or not 30 <= retention_days <= 730
+        ):
+            raise AccountError(400, "دوره نگهداری باید بین ۳۰ تا ۷۳۰ روز باشد.")
+        cutoff = (utc_now() - timedelta(days=retention_days)).isoformat(timespec="seconds")
+        con = self._connect()
+        try:
+            with con:
+                cur = con.execute(
+                    "DELETE FROM site_analytics_events WHERE occurred_at<?",
+                    (cutoff,),
+                )
+                return cur.rowcount
+        finally:
+            con.close()
+
     def analytics_user_events(self, *, target_user_id, limit=100):
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise AccountError(400, "تعداد رویدادها باید بین ۱ تا ۲۰۰ باشد.")
@@ -1797,7 +1869,8 @@ class AccountService:
             or path.startswith("/api/v1/tickets/")
             or path.startswith("/api/v1/site-admin/")
             or path in ("/api/v1/analytics/consent", "/api/v1/analytics/events",
-                        "/api/v1/analytics/admin/paths")
+                        "/api/v1/analytics/admin/overview", "/api/v1/analytics/admin/paths",
+                        "/api/v1/analytics/admin/retention/expired")
             or re.fullmatch(r"/api/v1/analytics/admin/users/[0-9]+/(?:events|paths)", path)
             or path == "/api/v1/market/sector-config"
         )
@@ -1856,6 +1929,17 @@ class AccountService:
             return {"payload": {"consent": consent}}
         if path == "/api/v1/analytics/events" and method == "POST":
             return {"payload": self.record_analytics_events(user, body.get("events"))}
+        if path == "/api/v1/analytics/admin/overview" and method == "GET":
+            self.require_role(user, ("admin", "super_admin"))
+            def query_int(name, default):
+                raw = (params.get(name) or [str(default)])[0]
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    raise AccountError(400, "پارامتر گزارش معتبر نیست.")
+            return {"payload": self.analytics_overview(
+                days=query_int("days", 30), limit=query_int("limit", 20)
+            )}
         if path == "/api/v1/analytics/admin/paths" and method == "GET":
             self.require_role(user, ("admin", "super_admin"))
             def query_int(name, default):
@@ -1874,10 +1958,31 @@ class AccountService:
         analytics_user_match = re.fullmatch(
             r"/api/v1/analytics/admin/users/([0-9]+)/(events|paths)", path
         )
+        if path == "/api/v1/analytics/admin/retention/expired" and method == "DELETE":
+            self.require_role(user, ("super_admin",))
+            raw_days = (params.get("days") or ["365"])[0]
+            try:
+                retention_days = int(raw_days)
+            except (TypeError, ValueError):
+                raise AccountError(400, "دوره نگهداری معتبر نیست.")
+            return {"payload": {
+                "deleted_events": self.purge_analytics_events(retention_days=retention_days),
+                "retention_days": retention_days,
+            }}
         if analytics_user_match and method == "GET":
             self.require_role(user, ("super_admin",))
             target_user_id = int(analytics_user_match.group(1))
             kind = analytics_user_match.group(2)
+            con = self._connect()
+            try:
+                exists = con.execute(
+                    "SELECT 1 FROM site_users WHERE id=? AND is_active=1",
+                    (target_user_id,),
+                ).fetchone()
+                if not exists:
+                    raise AccountError(404, "کاربر موردنظر پیدا نشد.")
+            finally:
+                con.close()
             def query_int(name, default):
                 raw = (params.get(name) or [str(default)])[0]
                 try:
