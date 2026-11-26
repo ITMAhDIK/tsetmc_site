@@ -86,7 +86,9 @@ def test_internal_notes_are_visible_to_staff_but_never_to_ticket_owner(migrated_
         assert len(owner_view["messages"])==1
         assert all(not m["is_internal_note"] for m in owner_view["messages"])
         assert len(staff_view["messages"])==2
-        assert staff_view["messages"][1]["is_internal_note"] is True
+        internal=[m for m in staff_view["messages"] if m["is_internal_note"]]
+        assert len(internal)==1
+        assert internal[0]["body"]=="Escalate after checking logs"
 
 
 def test_assignment_requires_active_support_agent_and_is_audited(migrated_support_database):
