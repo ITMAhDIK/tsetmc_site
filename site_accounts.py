@@ -1779,6 +1779,7 @@ class AccountService:
                           SUM(CASE WHEN e.event_name='page_view' THEN 1 ELSE 0 END) AS page_views,
                           SUM(CASE WHEN e.event_name='click' THEN 1 ELSE 0 END) AS clicks,
                           SUM(CASE WHEN e.event_name='scroll' THEN 1 ELSE 0 END) AS scroll_events,
+                          SUM(CASE WHEN e.event_name='feature_view' THEN 1 ELSE 0 END) AS feature_views,
                           COALESCE(SUM(e.active_duration_ms),0) AS active_duration_ms
                    FROM site_analytics_events e
                    JOIN site_analytics_consents c ON c.user_id=e.user_id
