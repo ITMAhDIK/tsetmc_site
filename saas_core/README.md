@@ -49,3 +49,13 @@ sandbox verification and dedicated service implementations.
 Apply migration 003 after migrations 001 and 002 to the dedicated SaaS PostgreSQL database. The product analytics service requires explicit opt-in, a trusted server-side identity boundary and the `analytics.read` permission for reporting. It supports aggregated component engagement, ordered funnels, weekly cohort retention, audited user-level access and configurable event retention. See `docs/saas/PRODUCT-ANALYTICS.md`.
 
 The service layer is implemented, but the public HTTP adapter, browser collector, consent UI and production deployment are not. Keep collection disabled until those pieces and the published privacy notice are ready.
+
+
+## Administrative console
+
+Migration 004 adds staff permissions and administrative payment-review records.
+The domain service exposes audited, permission-gated operations for users, roles,
+subscriptions, payments, wallets, withdrawals, referrals, support, FAQ and
+audit logs. Payment reviews do not settle orders; only verified gateway
+settlement may activate a subscription. The service has no public HTTP adapter
+or browser console yet.

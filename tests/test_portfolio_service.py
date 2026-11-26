@@ -717,3 +717,137 @@ def test_phase_0_to_7_market_and_saas_analytics_coexist_without_cross_database_a
     )
     assert (status, content_type) == (200, "json")
     assert market_again["summary"]["total_companies"] == 1
+
+
+
+def test_phases_0_to_8_compose_with_separate_market_and_saas_databases(portfolio_api):
+    """Exercise Phase 3–6 market services, Phase 7 analytics and Phase 8 admin together.
+
+    The complete test suite additionally runs the Phase 0 manifest, Phase 1
+    HTTP/dispatcher, and Phase 2 worker/lock integration contracts.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    from saas_core.domain.admin_console import AdminConsoleService
+    from saas_core.domain.product_analytics import ProductAnalyticsService
+
+    # Market phases 3–6 use the SiteApi Sidecar and preserve value/identity.
+    prices, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/stocks/فولاد/prices", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert prices["prices"][0]["close"] == 2600
+
+    ownership, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/stocks/فولاد/ownership-series",
+        {"id_scheme": ["share_id"], "shareholder_id": ["123"]}, {},
+    )
+    assert (status, content_type) == (200, "json")
+    assert ownership["company_series"][0]["value"] == 25.0
+
+    portfolio, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/portfolios/share_id:123", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert portfolio["summary"]["confirmed_combined_value_rial"] == 650000
+
+    screener, status, content_type = dispatch_api(
+        portfolio_api, "POST", "/api/v1/screener/query", {},
+        {"conditions": [{"field": "market", "op": "=", "value": "TSE"}]},
+    )
+    assert (status, content_type) == (200, "json")
+    assert screener["rows"][0]["symbol"] == "فولاد"
+
+    # Phase 7 and 8 connect only to the separate SaaS DB-API pool.
+    class SaasCursor:
+        def __init__(self):
+            self.calls = []
+            self.rowcount = 1
+        def execute(self, sql, params=None):
+            self.calls.append((sql, params))
+            return self
+        def fetchone(self):
+            if self.calls and "SELECT product_analytics" in self.calls[-1][0]:
+                return (True,)
+            return {
+                "users_total": 1, "users_active": 1, "subscriptions_active": 1,
+                "payments_pending": 0, "withdrawals_pending": 0,
+                "tickets_open": 0, "referrals_pending": 0,
+            }
+        def fetchall(self):
+            return [("/stocks/فولاد", "stock-shareholder-tab", 1, 1, 9000)]
+        def close(self):
+            pass
+
+    class SaasConnection:
+        def __init__(self, cursor):
+            self._cursor = cursor
+            self.commits = 0
+            self.rollbacks = 0
+        def cursor(self):
+            return self._cursor
+        def commit(self):
+            self.commits += 1
+        def rollback(self):
+            self.rollbacks += 1
+        def close(self):
+            pass
+
+    saas_cursors = []
+    def saas_connection_factory():
+        cursor = SaasCursor()
+        saas_cursors.append(cursor)
+        return SaasConnection(cursor)
+
+    analytics = ProductAnalyticsService(
+        connection_factory=saas_connection_factory,
+        permission_checker=lambda _actor, permission: permission == "analytics.read",
+        published_consent_version="privacy-v1",
+        clock=lambda: datetime(2026, 11, 26, 18, 0, tzinfo=timezone.utc),
+    )
+    user_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    actor_id = uuid.UUID("44444444-4444-4444-8444-444444444444")
+    analytics.set_consent(
+        user_id=user_id, product_analytics=True, consent_version="privacy-v1"
+    )
+    recorded = analytics.ingest_events(
+        [{
+            "event_id": str(uuid.UUID("55555555-5555-4555-8555-555555555555")),
+            "event_name": "click", "page_path": "/stocks/فولاد",
+            "component_id": "stock-shareholder-tab", "element_role": "tab",
+            "metadata": {"action": "open_section"},
+        }],
+        user_id=user_id,
+    )
+    assert recorded == {"accepted": 1, "duplicates": 0}
+    heatmap = analytics.component_heatmap(
+        actor_user_id=actor_id,
+        start_at=datetime(2026, 11, 19, tzinfo=timezone.utc),
+        end_at=datetime(2026, 11, 26, tzinfo=timezone.utc),
+        page_path="/stocks/فولاد",
+    )
+    assert heatmap["rows"][0]["clicks"] == 1
+
+    admin = AdminConsoleService(
+        connection_factory=saas_connection_factory,
+        permission_checker=lambda _actor, permission: permission == "admin.console.read",
+    )
+    admin_overview = admin.overview(actor_user_id=actor_id)
+    assert admin_overview["users_total"] == 1
+
+    # The SaaS service queries stay in their domain and never touch market tables.
+    saas_sql = "
+".join(sql for cursor in saas_cursors for sql, _ in cursor.calls)
+    assert "analytics_events" in saas_sql
+    assert "analytics_consents" in saas_sql
+    assert "FROM users" in saas_sql
+    assert "site_watch" not in saas_sql
+    assert "shareholder_holdings" not in saas_sql
+
+    # Market APIs remain healthy after both SaaS services ran.
+    market_again, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/market/overview", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert market_again["summary"]["total_companies"] == 1

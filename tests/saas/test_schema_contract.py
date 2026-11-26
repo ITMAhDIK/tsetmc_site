@@ -4,6 +4,7 @@ ROOT = Path(__file__).resolve().parents[2]
 INITIAL = (ROOT / "saas_core" / "schema" / "001_initial.sql").read_text(encoding="utf-8")
 MIGRATION = (ROOT / "saas_core" / "schema" / "002_product_features_referrals_analytics.sql").read_text(encoding="utf-8")
 MIGRATION_003 = (ROOT / "saas_core" / "schema" / "003_product_analytics_ingestion.sql").read_text(encoding="utf-8")
+MIGRATION_004 = (ROOT / "saas_core" / "schema" / "004_admin_console.sql").read_text(encoding="utf-8")
 README = (ROOT / "saas_core" / "README.md").read_text(encoding="utf-8")
 
 
@@ -58,3 +59,11 @@ def test_analytics_ingestion_schema_supports_anonymous_consent_and_idempotency()
     assert "ADD COLUMN IF NOT EXISTS event_id UUID" in MIGRATION_003
     assert "idx_analytics_events_event_id_unique" in MIGRATION_003
     assert "WHERE event_id IS NOT NULL" in MIGRATION_003
+
+
+def test_admin_console_migration_adds_least_privilege_permissions_and_review_records():
+    for permission in ("admin.console.read", "payments.reconcile", "referrals.read"):
+        assert permission in MIGRATION_004
+    assert "admin_payment_reviews" in MIGRATION_004
+    assert "payout_reference" in MIGRATION_004
+    assert "payments.reconcile" in MIGRATION_004

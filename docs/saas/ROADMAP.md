@@ -32,8 +32,10 @@ Consent, click/navigation/scroll/active-time events, heatmaps, funnels, retentio
 and permission-gated user-level analysis.
 
 ## Phase 8 — Superadmin console
-Users, roles, subscriptions, payment reconciliation, wallets, withdrawals,
-referrals, support queues, analytics and audit.
+- [x] Permission-gated user, role, subscription and overview operations.
+- [x] Payment reconciliation queue and append-only human review records.
+- [x] Wallet/withdrawal operations, referrals, support queues, FAQ and audit.
+- [ ] Authenticated HTTP adapter, privileged-session MFA/revocation and browser console UI.
 
 ## Phase 9 — Production readiness
 Threat model, security review, automated/load tests, backup/restore, monitoring,

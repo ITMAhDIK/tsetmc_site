@@ -103,7 +103,7 @@ The menu is a fixed-width drawer opening from the right:
 4. **Settings:** Jalali/Gregorian calendar, Rial/Toman currency, light/dark theme, privacy and analytics consent.
 5. **Logout.**
 
-A superadmin-only staff area contains user/role management, support operations, subscription/payment review, analytics, audit logs and market-data administration. Ordinary users and paid customers do not receive that authority.
+A staff console domain service is provided in \`saas_core.domain.admin_console.AdminConsoleService\`. It covers user/role management, subscription/payment review, wallet/withdrawal operations, referrals, support queues, FAQ and audit. Every write is permission-gated and audited transactionally. This is not a deployed HTTP adapter or browser console yet. Ordinary users and paid customers do not receive that authority.
 
 ## 11. Suggested first-party API surface
 
