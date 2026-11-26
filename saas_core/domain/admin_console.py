@@ -64,14 +64,20 @@ def _text(value, field, *, maximum, required=False):
 
 
 def _page(limit=50, offset=0, maximum=200):
-    try:
-        limit = int(limit)
-        offset = int(offset)
-    except (TypeError, ValueError):
-        raise AdminConsoleError("Pagination must use integers.") from None
-    if isinstance(limit, bool) or isinstance(offset, bool) or not 1 <= limit <= maximum or not 0 <= offset <= 1_000_000:
+    def parse(value, field):
+        if isinstance(value, bool):
+            raise AdminConsoleError("%s must be an integer." % field)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and re.fullmatch(r"-?\\d{1,10}", value.strip()):
+            return int(value.strip())
+        raise AdminConsoleError("%s must be an integer." % field)
+
+    limit_value = parse(limit, "limit")
+    offset_value = parse(offset, "offset")
+    if not 1 <= limit_value <= maximum or not 0 <= offset_value <= 1_000_000:
         raise AdminConsoleError("Pagination is outside the allowed range.")
-    return limit, offset
+    return limit_value, offset_value
 
 
 def _dict(row, columns):
@@ -133,6 +139,13 @@ class AdminConsoleService:
                 json.dumps(after, ensure_ascii=False) if after is not None else None,
             ),
         )
+
+    @staticmethod
+    def _lock_superadmin_role(cursor):
+        # Serialize concurrent changes to the superadmin set before counting it.
+        cursor.execute("SELECT id FROM roles WHERE code='superadmin' FOR UPDATE")
+        if cursor.fetchone() is None:
+            raise AdminConsoleError("The superadmin role is missing.", status=500)
 
     @staticmethod
     def _last_superadmin_guard(cursor, target):
@@ -283,6 +296,7 @@ class AdminConsoleService:
             flag = cursor.fetchone()
             is_superadmin = bool(flag.get("exists") if isinstance(flag, Mapping) else flag[0])
             if is_superadmin and old_status == "active" and status != "active":
+                self._lock_superadmin_role(cursor)
                 self._last_superadmin_guard(cursor, target)
             cursor.execute(
                 "UPDATE users SET status=%s,updated_at=now() WHERE id=%s RETURNING status",
@@ -290,6 +304,11 @@ class AdminConsoleService:
             )
             result = cursor.fetchone()
             new_status = result.get("status") if isinstance(result, Mapping) else result[0]
+            if old_status != new_status and new_status != "active":
+                cursor.execute(
+                    "UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
+                    (target,),
+                )
             self._audit(cursor, actor, "users.status.change", "user", target, request,
                         {"status": old_status}, {"status": new_status})
         return {"user_id": str(target), "status": new_status}
@@ -318,6 +337,10 @@ class AdminConsoleService:
                 is_superadmin = bool(flag.get("exists") if isinstance(flag, Mapping) else flag[0])
                 if not is_superadmin:
                     raise AdminPermissionDenied("superadmin role assignment")
+            if role_code == "superadmin":
+                self._lock_superadmin_role(cursor)
+            if role_code == "superadmin":
+                self._lock_superadmin_role(cursor)
             cursor.execute("SELECT id FROM roles WHERE code=%s", (role_code,))
             role = cursor.fetchone()
             if role is None:
@@ -333,6 +356,10 @@ class AdminConsoleService:
             )
             inserted = cursor.fetchone() is not None
             if inserted:
+                cursor.execute(
+                    "UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
+                    (target,),
+                )
                 self._audit(cursor, actor, "users.role.assign", "user", target, request,
                             after={"role_code": role_code})
         return {"user_id": str(target), "role_code": role_code, "assigned": inserted}
@@ -341,7 +368,7 @@ class AdminConsoleService:
         actor = self._actor(actor_user_id, "roles.manage")
         target = _uuid(target_user_id, "target_user_id")
         request = _request_id(request_id)
-        if role_code not in ROLE_CODES:
+        if not isinstance(role_code, str) or role_code not in ROLE_CODES:
             raise AdminConsoleError("Role is not valid.")
         with self._transaction() as cursor:
             cursor.execute("SELECT status FROM users WHERE id=%s FOR UPDATE", (target,))
@@ -374,6 +401,10 @@ class AdminConsoleService:
             cursor.execute("DELETE FROM user_roles WHERE user_id=%s AND role_id=%s", (target, role_id))
             removed = cursor.rowcount > 0
             if removed:
+                cursor.execute(
+                    "UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
+                    (target,),
+                )
                 self._audit(cursor, actor, "users.role.revoke", "user", target, request,
                             before={"role_code": role_code})
         return {"user_id": str(target), "role_code": role_code, "revoked": removed}
@@ -502,6 +533,7 @@ class AdminConsoleService:
         entry_type = "admin_credit" if direction == "credit" else "admin_debit"
         signed_amount = amount_toman if direction == "credit" else -amount_toman
         with self._transaction() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (idempotency_key,))
             cursor.execute(
                 """
                 SELECT id,user_id,bucket,entry_type,amount_toman
@@ -627,6 +659,47 @@ class AdminConsoleService:
             )
             changed = cursor.fetchone()
             new_status = changed.get("status") if isinstance(changed, Mapping) else changed[0]
+            if decision == "paid":
+                cursor.execute(
+                    "INSERT INTO wallet_accounts(user_id) VALUES (%s) ON CONFLICT(user_id) DO NOTHING",
+                    (data["user_id"],),
+                )
+                cursor.execute(
+                    "SELECT user_id FROM wallet_accounts WHERE user_id=%s FOR UPDATE",
+                    (data["user_id"],),
+                )
+                if cursor.fetchone() is None:
+                    raise AdminConsoleError("Wallet account could not be locked.", status=500)
+                cursor.execute(
+                    """
+                    SELECT COALESCE(b.cash_balance_toman,0) AS cash_balance,
+                           COALESCE((
+                               SELECT SUM(w.amount_toman) FROM withdrawal_requests w
+                               WHERE w.user_id=%s AND w.status IN ('requested','approved')
+                           ),0) AS other_reservations
+                    FROM (SELECT %s::uuid AS user_id) target
+                    LEFT JOIN wallet_balances b ON b.user_id=target.user_id
+                    """,
+                    (data["user_id"], data["user_id"]),
+                )
+                balances = cursor.fetchone()
+                cash_balance = int(balances.get("cash_balance", 0) if isinstance(balances, Mapping) else balances[0])
+                other_reservations = int(balances.get("other_reservations", 0) if isinstance(balances, Mapping) else balances[1])
+                if cash_balance - int(data["amount_toman"]) < other_reservations:
+                    raise AdminConflict("Cash balance is no longer sufficient to complete this payout.")
+                cursor.execute(
+                    """
+                    INSERT INTO wallet_ledger_entries
+                      (user_id,bucket,entry_type,amount_toman,reference_type,reference_id,
+                       idempotency_key,description,created_at)
+                    VALUES (%s,'cash','withdrawal_debit',%s,'withdrawal',%s,%s,%s,now())
+                    """,
+                    (
+                        data["user_id"], -int(data["amount_toman"]), withdrawal,
+                        "withdrawal-paid:" + str(withdrawal),
+                        "Withdrawal payout " + str(withdrawal),
+                    ),
+                )
             self._audit(cursor, actor, "withdrawals.review", "withdrawal", withdrawal, request,
                         before={"status": data["status"], "amount_toman": int(data["amount_toman"])},
                         after={"status": new_status, "payout_reference": payout_ref, "note": note})
@@ -814,3 +887,172 @@ class AdminConsoleService:
             )
             rows = cursor.fetchall()
         return {"entries": _many(rows, cols), "limit": limit, "offset": offset}
+
+
+    def cancel_subscription(self, *, actor_user_id, subscription_id, request_id):
+        """Cancel an existing subscription without ever granting paid access."""
+        actor = self._actor(actor_user_id, "subscriptions.manage")
+        subscription = _uuid(subscription_id, "subscription_id")
+        request = _request_id(request_id)
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT user_id,status,starts_at,ends_at FROM subscriptions WHERE id=%s FOR UPDATE",
+                (subscription,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise AdminNotFound("Subscription")
+            data = _dict(row, ("user_id", "status", "starts_at", "ends_at"))
+            if data["status"] not in {"pending", "active"}:
+                raise AdminConflict("Only pending or active subscriptions can be cancelled.")
+            cursor.execute(
+                """
+                UPDATE subscriptions SET status='cancelled',ends_at=now()
+                WHERE id=%s RETURNING status,ends_at
+                """,
+                (subscription,),
+            )
+            updated = _dict(cursor.fetchone(), ("status", "ends_at"))
+            self._audit(
+                cursor, actor, "subscriptions.cancel", "subscription", subscription, request,
+                before={"status": data["status"], "ends_at": data["ends_at"]},
+                after={"status": updated["status"], "ends_at": updated["ends_at"]},
+            )
+        return {"subscription_id": str(subscription), **updated}
+
+    def ticket_detail(self, *, actor_user_id, ticket_id):
+        """Return a ticket thread to staff; user-facing APIs must filter internal notes."""
+        self._actor(actor_user_id, "tickets.manage")
+        ticket = _uuid(ticket_id, "ticket_id")
+        ticket_columns = (
+            "id", "ticket_number", "user_id", "public_id", "assigned_to",
+            "subject", "category", "priority", "status", "created_at", "updated_at",
+        )
+        message_columns = (
+            "id", "sender_user_id", "sender_public_id", "body",
+            "is_internal_note", "created_at",
+        )
+        with self._transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT t.id,t.ticket_number,t.user_id,u.public_id,t.assigned_to,
+                       t.subject,t.category,t.priority,t.status,t.created_at,t.updated_at
+                FROM tickets t JOIN users u ON u.id=t.user_id WHERE t.id=%s
+                """,
+                (ticket,),
+            )
+            ticket_row = _dict(cursor.fetchone(), ticket_columns)
+            if ticket_row is None:
+                raise AdminNotFound("Ticket")
+            cursor.execute(
+                """
+                SELECT m.id,m.sender_user_id,u.public_id,m.body,m.is_internal_note,m.created_at
+                FROM ticket_messages m JOIN users u ON u.id=m.sender_user_id
+                WHERE m.ticket_id=%s ORDER BY m.created_at,m.id
+                """,
+                (ticket,),
+            )
+            messages = _many(cursor.fetchall(), message_columns)
+        return {"ticket": ticket_row, "messages": messages}
+
+    def add_ticket_reply(self, *, actor_user_id, ticket_id, body, request_id):
+        actor = self._actor(actor_user_id, "tickets.manage")
+        ticket = _uuid(ticket_id, "ticket_id")
+        request = _request_id(request_id)
+        body = _text(body, "body", maximum=5000, required=True)
+        with self._transaction() as cursor:
+            cursor.execute("SELECT status FROM tickets WHERE id=%s FOR UPDATE", (ticket,))
+            row = cursor.fetchone()
+            if row is None:
+                raise AdminNotFound("Ticket")
+            previous = row.get("status") if isinstance(row, Mapping) else row[0]
+            if previous == "closed":
+                raise AdminConflict("A closed ticket cannot receive a staff reply.")
+            cursor.execute(
+                """
+                INSERT INTO ticket_messages(ticket_id,sender_user_id,body,is_internal_note,created_at)
+                VALUES (%s,%s,%s,FALSE,now()) RETURNING id
+                """,
+                (ticket, actor, body),
+            )
+            inserted = cursor.fetchone()
+            message_id = inserted.get("id") if isinstance(inserted, Mapping) else inserted[0]
+            cursor.execute(
+                "UPDATE tickets SET status='answered',updated_at=now() WHERE id=%s",
+                (ticket,),
+            )
+            self._audit(
+                cursor, actor, "tickets.reply.create", "ticket", ticket, request,
+                before={"status": previous},
+                after={"status": "answered", "message_id": str(message_id)},
+            )
+        return {"ticket_id": str(ticket), "message_id": str(message_id), "internal": False}
+
+    def list_faq(self, *, actor_user_id, published=None, limit=100, offset=0):
+        self._actor(actor_user_id, "faq.manage")
+        limit, offset = _page(limit, offset)
+        if published is not None and type(published) is not bool:
+            raise AdminConsoleError("published must be a boolean.")
+        columns = ("slug", "question", "answer", "published", "sort_order", "updated_at")
+        with self._transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT slug,question,answer,published,sort_order,updated_at
+                FROM faq_articles
+                WHERE (%s IS NULL OR published=%s)
+                ORDER BY sort_order,slug LIMIT %s OFFSET %s
+                """,
+                (published, published, limit, offset),
+            )
+            rows = cursor.fetchall()
+        return {"articles": _many(rows, columns), "limit": limit, "offset": offset}
+
+    def archive_faq(self, *, actor_user_id, slug, request_id):
+        actor = self._actor(actor_user_id, "faq.manage")
+        slug = _text(slug, "slug", maximum=120, required=True)
+        request = _request_id(request_id)
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT published FROM faq_articles WHERE slug=%s FOR UPDATE",
+                (slug,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise AdminNotFound("FAQ article")
+            previous = row.get("published") if isinstance(row, Mapping) else row[0]
+            cursor.execute(
+                "UPDATE faq_articles SET published=FALSE,updated_at=now() WHERE slug=%s RETURNING published",
+                (slug,),
+            )
+            updated = cursor.fetchone()
+            published_now = updated.get("published") if isinstance(updated, Mapping) else updated[0]
+            self._audit(
+                cursor, actor, "faq.archive", "faq_article", slug, request,
+                before={"published": previous}, after={"published": published_now},
+            )
+        return {"slug": slug, "published": published_now}
+
+    def admin_context(self, *, actor_user_id):
+        actor = _uuid(actor_user_id, "actor_user_id")
+        columns = ("roles", "permissions")
+        with self._transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                  COALESCE(array_agg(DISTINCT r.code) FILTER (WHERE r.code IS NOT NULL),ARRAY[]::text[]) AS roles,
+                  COALESCE(array_agg(DISTINCT p.code) FILTER (WHERE p.code IS NOT NULL),ARRAY[]::text[]) AS permissions
+                FROM users u
+                LEFT JOIN user_roles ur ON ur.user_id=u.id
+                LEFT JOIN roles r ON r.id=ur.role_id
+                LEFT JOIN role_permissions rp ON rp.role_id=r.id
+                LEFT JOIN permissions p ON p.id=rp.permission_id
+                WHERE u.id=%s AND u.status='active'
+                GROUP BY u.id
+                """,
+                (actor,),
+            )
+            result = _dict(cursor.fetchone(), columns)
+        if result is None:
+            raise AdminPermissionDenied("active staff session")
+        return {"user_id": str(actor), "roles": result["roles"], "permissions": result["permissions"]}
+
