@@ -1702,8 +1702,13 @@ class AccountService:
             if target_user_id is not None:
                 sql += " AND e.user_id=?"
                 params.append(int(target_user_id))
-            sql += " ORDER BY e.user_id,e.session_hash,e.id"
+            sql += " ORDER BY e.user_id,e.session_hash,e.id LIMIT 100001"
             rows = con.execute(sql, params).fetchall()
+            if len(rows) > 100_000:
+                raise AccountError(
+                    413,
+                    "تعداد بازدیدهای این بازه برای تحلیل مسیر زیاد است؛ بازه زمانی کوتاه‌تری انتخاب کنید.",
+                )
 
             sessions = {}
             for row in rows:
@@ -1923,6 +1928,8 @@ class AccountService:
             return {"payload": {"logged_out": True},
                     "headers": {"Set-Cookie": self.clear_session_cookie(secure)}}
         self.require_user(user)
+        if path.startswith("/api/v1/analytics/") and user.get("must_change_password"):
+            raise AccountError(403, "برای ادامه کار ابتدا رمز عبور موقت را تغییر دهید.")
         if path == "/api/v1/analytics/consent" and method == "GET":
             return {"payload": {"consent": self.analytics_consent(user)}}
         if path == "/api/v1/analytics/consent" and method == "PUT":
