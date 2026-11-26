@@ -2819,12 +2819,14 @@
                   </div>
                 </section>
               )}
+
+              <div className="app-drawer-menu-end">
+                {signedIn ? <button type="button" className="app-drawer-logout" onClick={onLogout}>{demo ? 'خروج از حساب آزمایشی' : 'خروج از حساب'} <span>↪</span></button>
+                  : <a href="./saas/" className="app-drawer-footer-login">ورود به حساب کاربری</a>}
+                <small>اطلاعات مالی و دسترسی‌ها فقط پس از اتصال سرویس حساب نمایش داده می‌شوند.</small>
+              </div>
             </div>
-            <footer className="app-drawer-footer">
-              {signedIn ? <button type="button" className="app-drawer-logout" onClick={onLogout}>{demo ? 'خروج از حساب آزمایشی' : 'خروج از حساب'} <span>↪</span></button>
-                : <a href="./saas/" className="app-drawer-footer-login">ورود به حساب کاربری</a>}
-              <small>اطلاعات مالی و دسترسی‌ها فقط پس از اتصال سرویس حساب نمایش داده می‌شوند.</small>
-            </footer>
+
           </aside>
         </>
       );
