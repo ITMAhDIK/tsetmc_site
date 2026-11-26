@@ -21,7 +21,8 @@ def phase8_schema():
     try:
         with psycopg.connect(DSN,options=f"-c search_path={schema},public",row_factory=dict_row) as conn:
             for name in ("001_initial.sql","002_payment_lifecycle.sql",
-                         "003_wallet_referrals.sql","006_superadmin_console.sql"):
+                         "003_wallet_referrals.sql","004_support_indexes.sql",
+                         "005_product_analytics.sql","006_superadmin_console.sql"):
                 with open(os.path.join(root,"saas_core","schema",name),encoding="utf-8") as stream:
                     conn.execute(stream.read())
         yield schema
