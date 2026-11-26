@@ -1,0 +1,29 @@
+# Dedicated Python API image; GitHub Pages remains a separate static frontend.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN groupadd --system --gid 10001 saas \
+    && useradd --system --uid 10001 --gid saas --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin saas
+
+COPY requirements-saas-runtime.txt /app/requirements-saas-runtime.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements-saas-runtime.txt
+
+COPY --chown=10001:10001 saas_core /app/saas_core
+COPY --chown=10001:10001 scripts/manage_saas_migrations.py /app/scripts/manage_saas_migrations.py
+COPY --chown=10001:10001 scripts/saas_sms_worker.py /app/scripts/saas_sms_worker.py
+
+USER 10001:10001
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=20s --timeout=4s --start-period=25s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+
+CMD ["uvicorn", "saas_core.auth.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

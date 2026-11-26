@@ -1,0 +1,19 @@
+{$SAAS_DOMAIN} {
+    encode zstd gzip
+
+    request_body {
+        max_size 1MB
+    }
+
+    # /ready returns only a generic readiness state; it exposes no database
+    # name, schema details, secrets or customer data and is used by probes.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    reverse_proxy saas-api:8000
+}
