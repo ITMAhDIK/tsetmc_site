@@ -149,6 +149,8 @@ def test_production_configuration_rejects_wildcard_hosts_and_shared_secrets(monk
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", shared_key)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", shared_key)
     monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_METRICS_TOKEN", "metrics-test-secret-" + "m" * 40)
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus-test")
 
     with pytest.raises(ConfigurationError, match="OTP and outbox encryption secrets"):
         auth_api.validate_production_configuration()
