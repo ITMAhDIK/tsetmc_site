@@ -123,12 +123,13 @@ def test_wallet_debit_cannot_consume_reserved_withdrawal_cash():
     assert conn.rollbacks==1
 
 def test_paid_withdrawal_requires_reference_and_is_audited():
-    c=Cursor(one=[(TARGET,"approved",120000),("paid",),(TARGET,)])
+    c=Cursor(one=[(TARGET,"approved",120000),("paid",),(TARGET,),(150000,0)])
     svc,conn=service(c)
     result=svc.review_withdrawal(actor_user_id=ACTOR,withdrawal_id=RESOURCE,decision="paid",
        payout_reference="BANK-REF-1",request_id="req-paid")
     update=next(params for sql,params in c.calls if "UPDATE withdrawal_requests" in sql)
     assert result["status"]=="paid" and update[3]=="BANK-REF-1"
+    assert any("wallet_ledger_entries" in sql for sql,_ in c.calls)
     assert any("admin_audit_logs" in sql for sql,_ in c.calls) and conn.commits==1
 
 def test_paid_withdrawal_without_reference_is_rejected_pre_db():
