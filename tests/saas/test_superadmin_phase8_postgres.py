@@ -26,7 +26,8 @@ def phase8_schema():
                          "005_product_analytics.sql","006_superadmin_console.sql",
                          "007_immutable_admin_audit.sql","008_analytics_path_sequences.sql",
                          "009_analytics_event_order.sql","010_sms_outbox_worker.sql",
-                         "011_privileged_mfa_and_legal_acceptance.sql"):
+                         "011_privileged_mfa_and_legal_acceptance.sql",
+                         "012_bind_legal_versions_to_otp.sql"):
                 with open(os.path.join(root,"saas_core","schema",name),encoding="utf-8") as stream:
                     conn.execute(stream.read())
         yield schema
@@ -348,7 +349,10 @@ def test_new_privileged_session_requires_mfa_and_totp_cannot_be_replayed(admin_c
 
 
 def test_signup_requires_reviewed_current_legal_versions_before_otp_is_queued(admin_context, monkeypatch):
-    client = admin_context["client"]
+    from saas_core.auth import repository as auth_repository
+
+    c = admin_context
+    client, conn = c["client"], c["conn"]
     monkeypatch.delenv("SAAS_TERMS_VERSION", raising=False)
     monkeypatch.delenv("SAAS_PRIVACY_VERSION", raising=False)
     blocked = client.post("/auth/phone/request", json={
@@ -364,3 +368,84 @@ def test_signup_requires_reviewed_current_legal_versions_before_otp_is_queued(ad
         "terms_version": "old-terms", "privacy_version": "privacy-reviewed-2026-01",
     })
     assert mismatch.status_code == 422
+
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase8-signup-secret-" + "x" * 32)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+    monkeypatch.setattr(auth_repository, "new_otp", lambda: "135790")
+    phone = "+989123450001"
+    terms_v1, privacy_v1 = "terms-reviewed-2026-01", "privacy-reviewed-2026-01"
+    requested = client.post("/auth/phone/request", json={
+        "phone": phone, "purpose": "signup", "terms_accepted": True,
+        "terms_version": terms_v1, "privacy_version": privacy_v1,
+    })
+    assert requested.status_code == 200, requested.text
+
+    challenge = conn.execute(
+        """SELECT signup_terms_version,signup_privacy_version
+           FROM phone_verifications WHERE phone_e164=%s AND purpose='signup'
+           AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1""",
+        (phone,),
+    ).fetchone()
+    assert challenge == {
+        "signup_terms_version": terms_v1,
+        "signup_privacy_version": privacy_v1,
+    }
+
+    # Changing both settings and client payload after the OTP has been issued
+    # cannot relabel the old challenge as acceptance of new text.
+    monkeypatch.setenv("SAAS_TERMS_VERSION", "terms-reviewed-2026-02")
+    monkeypatch.setenv("SAAS_PRIVACY_VERSION", "privacy-reviewed-2026-02")
+    relabelled = client.post("/auth/phone/verify", json={
+        "phone": phone, "otp": "135790", "purpose": "signup",
+        "terms_accepted": True, "terms_version": "terms-reviewed-2026-02",
+        "privacy_version": "privacy-reviewed-2026-02",
+    })
+    assert relabelled.status_code == 401
+    still_pending = conn.execute(
+        """SELECT consumed_at FROM phone_verifications WHERE phone_e164=%s
+           AND purpose='signup' ORDER BY created_at DESC LIMIT 1""",
+        (phone,),
+    ).fetchone()
+    assert still_pending["consumed_at"] is None
+
+    # The same OTP can only be verified with the exact versions originally
+    # presented and still configured by the owner.
+    monkeypatch.setenv("SAAS_TERMS_VERSION", terms_v1)
+    monkeypatch.setenv("SAAS_PRIVACY_VERSION", privacy_v1)
+    verified = client.post("/auth/phone/verify", json={
+        "phone": phone, "otp": "135790", "purpose": "signup",
+        "terms_accepted": True, "terms_version": terms_v1,
+        "privacy_version": privacy_v1,
+    })
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["authenticated"] is True
+    acceptance = conn.execute(
+        """SELECT terms_version,privacy_version,source
+           FROM legal_acceptances WHERE user_id=(
+             SELECT id FROM users WHERE phone_e164=%s
+           )""",
+        (phone,),
+    ).fetchone()
+    assert acceptance == {
+        "terms_version": terms_v1,
+        "privacy_version": privacy_v1,
+        "source": "phone_otp_signup",
+    }
+
+
+def test_phone_login_challenge_cannot_create_an_unknown_user(admin_context, monkeypatch):
+    from saas_core.auth import repository as auth_repository
+
+    client, conn = admin_context["client"], admin_context["conn"]
+    phone = "+989123450099"
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase8-login-secret-" + "x" * 32)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+    monkeypatch.setattr(auth_repository, "new_otp", lambda: "246802")
+
+    requested = client.post("/auth/phone/request", json={"phone": phone, "purpose": "login"})
+    assert requested.status_code == 200
+    rejected = client.post("/auth/phone/verify", json={
+        "phone": phone, "otp": "246802", "purpose": "login",
+    })
+    assert rejected.status_code == 401
+    assert conn.execute("SELECT COUNT(*) FROM users WHERE phone_e164=%s", (phone,)).fetchone()["count"] == 0
