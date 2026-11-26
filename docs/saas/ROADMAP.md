@@ -38,7 +38,11 @@ and permission-gated user-level analysis.
 - [ ] Authenticated HTTP adapter, privileged-session MFA/revocation and browser console UI.
 
 ## Phase 9 — Production readiness
-Threat model, security review, automated/load tests, backup/restore, monitoring,
-incident response, deployment automation and legal review.
+- [x] Threat model, security gates and incident/monitoring/backup runbooks.
+- [x] SaaS-only healthcheck and verified PostgreSQL backup/restore tooling.
+- [x] Bounded GET-only staging load probe with explicit acknowledgement.
+- [x] CI validation of migrations 001–004 on PostgreSQL and backup/restore round-trip.
+- [ ] Hosting-specific deployment, external monitoring/alerting and encrypted backup retention.
+- [ ] Independent security review, privacy/legal approval and production go-live sign-off.
 
 CRM is explicitly deferred.

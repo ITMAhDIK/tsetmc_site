@@ -59,3 +59,14 @@ subscriptions, payments, wallets, withdrawals, referrals, support, FAQ and
 audit logs. Payment reviews do not settle orders; only verified gateway
 settlement may activate a subscription. The service has no public HTTP adapter
 or browser console yet.
+
+
+## Production-readiness toolkit
+
+- `tools/saas_healthcheck.py`: checks connectivity and critical schema objects using only `SAAS_DATABASE_URL`.
+- `tools/saas_db_ops.py`: private custom-format backups, SHA-256 verification and explicitly confirmed restore.
+- `tools/readonly_load_test.py`: bounded GET-only probes on allow-listed HTTPS staging endpoints.
+- `docs/ops/`: threat model, backup/restore, monitoring, incident and load-test runbooks.
+- `.github/workflows/phase9-readiness.yml`: PostgreSQL migration and backup/restore round-trip CI.
+
+This toolkit does not deploy services, provision production secrets, configure external monitoring or approve legal notices. Those remain owner/hosting tasks.
