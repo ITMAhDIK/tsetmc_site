@@ -1,0 +1,125 @@
+"""Real PostgreSQL integration tests for the Phase 8 admin domain.
+
+The suite is enabled only when SAAS_TEST_DATABASE_URL points at a disposable
+SaaS test database whose schema migrations 001–005 have been applied.
+"""
+from __future__ import annotations
+
+import os
+import uuid
+
+import pytest
+
+from saas_core.domain.admin_console import AdminConflict, AdminConsoleService
+
+
+DATABASE_URL = os.environ.get("SAAS_TEST_DATABASE_URL")
+pytestmark = pytest.mark.skipif(
+    not DATABASE_URL,
+    reason="SAAS_TEST_DATABASE_URL is not configured; PostgreSQL integration test skipped",
+)
+
+
+def _connect():
+    psycopg = pytest.importorskip("psycopg")
+    return psycopg.connect(DATABASE_URL)
+
+
+def _user(cursor, label: str) -> uuid.UUID:
+    public_id = "IT-" + uuid.uuid4().hex[:24]
+    cursor.execute(
+        "INSERT INTO users(public_id,display_name) VALUES (%s,%s) RETURNING id",
+        (public_id, label),
+    )
+    return cursor.fetchone()[0]
+
+
+def _service() -> AdminConsoleService:
+    return AdminConsoleService(
+        connection_factory=_connect,
+        # The domain receives an authoritative permission decision as it would
+        # from the authenticated SaaS application boundary. These tests focus
+        # on the real PostgreSQL transaction, constraints and audit behavior.
+        permission_checker=lambda _actor, _permission: True,
+    )
+
+
+def test_payment_review_and_audit_commit_without_settling_the_order():
+    actor = uuid.uuid4()
+    with _connect() as connection, connection.cursor() as cursor:
+        actor = _user(cursor, "Phase 8 integration reviewer")
+        owner = _user(cursor, "Phase 8 integration customer")
+        cursor.execute(
+            """
+            INSERT INTO payment_orders
+              (user_id,amount_toman,status,idempotency_key,phone_e164)
+            VALUES (%s,250000,'pending',%s,'+989120000001')
+            RETURNING id
+            """,
+            (owner, "it-payment-" + uuid.uuid4().hex),
+        )
+        order_id = cursor.fetchone()[0]
+
+    result = _service().review_payment(
+        actor_user_id=actor,
+        order_id=order_id,
+        outcome="provider_followup",
+        note="Integration review; provider evidence is required.",
+        request_id="it-payment-review",
+    )
+
+    assert result["order_status_unchanged"] == "pending"
+    with _connect() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT status FROM payment_orders WHERE id=%s", (order_id,))
+        assert cursor.fetchone()[0] == "pending"
+        cursor.execute(
+            """
+            SELECT outcome,note FROM admin_payment_reviews
+            WHERE order_id=%s AND actor_user_id=%s
+            """,
+            (order_id, actor),
+        )
+        assert cursor.fetchone() == (
+            "provider_followup",
+            "Integration review; provider evidence is required.",
+        )
+        cursor.execute(
+            """
+            SELECT action,request_id FROM admin_audit_logs
+            WHERE actor_user_id=%s AND target_id=%s
+            """,
+            (actor, str(order_id)),
+        )
+        assert cursor.fetchone() == (
+            "payments.reconciliation.review",
+            "it-payment-review",
+        )
+
+
+def test_last_active_superadmin_guard_rolls_back_real_status_change():
+    target = uuid.uuid4()
+    with _connect() as connection, connection.cursor() as cursor:
+        target = _user(cursor, "Only active superadmin")
+        cursor.execute("SELECT id FROM roles WHERE code='superadmin'")
+        role_id = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO user_roles(user_id,role_id) VALUES (%s,%s)",
+            (target, role_id),
+        )
+
+    with pytest.raises(AdminConflict, match="last active superadmin"):
+        _service().set_user_status(
+            actor_user_id=target,
+            target_user_id=target,
+            status="suspended",
+            request_id="it-last-superadmin",
+        )
+
+    with _connect() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT status FROM users WHERE id=%s", (target,))
+        assert cursor.fetchone()[0] == "active"
+        cursor.execute(
+            "SELECT count(*) FROM admin_audit_logs WHERE target_id=%s",
+            (str(target),),
+        )
+        assert cursor.fetchone()[0] == 0
