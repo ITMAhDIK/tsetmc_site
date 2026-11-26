@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 INDEX = DOCS / "index.html"
 DATA = DOCS / "data" / "analytics.json"
+ANALYTICS_CLIENT = DOCS / "analytics-client.js"
 
 class DocumentCheck(HTMLParser):
     def __init__(self):
@@ -43,6 +44,32 @@ def main() -> int:
         raise SystemExit("Full React UI must use the configured Babel React preset.")
     if not (DOCS / "ui-refresh.css").is_file():
         raise SystemExit("The full UI stylesheet is missing from the Pages artifact.")
+
+    if not ANALYTICS_CLIENT.is_file():
+        raise SystemExit("The first-party analytics client is missing from the Pages artifact.")
+    if not re.search(
+        r'<script[^>]+src=["\\']\\./analytics-client\\.js["\\'][^>]*></script>',
+        html,
+        flags=re.IGNORECASE,
+    ):
+        raise SystemExit("The consent-aware first-party analytics client is not loaded.")
+    client = ANALYTICS_CLIENT.read_text(encoding="utf-8")
+    required_client_markers = (
+        "TloombergAnalytics",
+        "/api/v1/analytics/events",
+        "page_view",
+        "active_time",
+        "scroll",
+        "data-analytics-exclude",
+    )
+    if any(marker not in client for marker in required_client_markers):
+        raise SystemExit("The analytics client is missing a required privacy-safe capture feature.")
+    if re.search(r"localStorage|sessionStorage|document\\.cookie", client):
+        raise SystemExit("Behavioral events must not be persisted in browser storage.")
+    if re.search(r"(?:innerText|textContent|outerHTML|value)\\b", client):
+        raise SystemExit("The analytics client must never inspect user-entered or rendered text.")
+    if "privacy-analytics-panel" not in html or "/api/v1/analytics/consent" not in html:
+        raise SystemExit("The explicit analytics consent UI is missing.")
     if "http://127.0.0.1:8000" in html:
         raise SystemExit("The Pages preview must not call a developer's localhost.")
     if re.search(
