@@ -39,7 +39,7 @@ if [[ ! -s "$backup_file" ]]; then
   exit 2
 fi
 
-header="$(head -c 20 -- "$backup_file" 2>/dev/null || true)"
+header="$(head -c 21 -- "$backup_file" 2>/dev/null || true)"
 if [[ "$header" != "age-encryption.org/v1" ]]; then
   printf 'Refusing to upload an archive without an age encryption header.\n' >&2
   exit 2
