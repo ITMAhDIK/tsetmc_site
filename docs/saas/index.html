@@ -4,8 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0e14">
-  <meta name="description" content="ورود و ثبت‌نام امن در تلومبرگ با شماره موبایل یا حساب گوگل">
+  <meta name="description" content="ورود امن به تلومبرگ با شماره موبایل">
   <meta name="tloomberg-auth-api" content="">
+  <meta name="tloomberg-terms-version" content="">
+  <meta name="tloomberg-privacy-version" content="">
   <title>ورود به تلومبرگ | Tloomberg</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css">
   <style>
@@ -133,16 +135,16 @@
             <div class="hint">کد تأیید فقط به شماره‌ای ارسال می‌شود که وارد می‌کنی.</div>
             <label class="terms-row" id="termsRow" for="termsAccepted">
               <input id="termsAccepted" name="termsAccepted" type="checkbox">
-              <span>با <a href="./terms.html" target="_blank" rel="noopener">قوانین و مقررات تلومبرگ</a> موافقم و آن‌ها را می‌پذیرم.</span>
+              <span>با <a href="./terms.html" target="_blank" rel="noopener">قوانین و مقررات</a> و <a href="./privacy.html" target="_blank" rel="noopener">اطلاعیه حریم خصوصی تلومبرگ</a> موافقم و هر دو را می‌پذیرم.</span>
             </label>
             <button class="primary" id="sendButton" type="submit">ارسال کد تأیید <span aria-hidden="true">←</span></button>
           </form>
 
           <div id="otpArea" class="otp-area">
             <div class="step-label"><span>۲</span> تأیید شماره موبایل</div>
-            <label for="otp">کد چهاررقمی آزمایشی</label>
-            <input class="field otp-input" id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="••••" dir="ltr">
-            <div class="hint" id="otpHint">برای تست، هر عدد چهاررقمی را وارد کن؛ پیامکی ارسال نمی‌شود.</div>
+            <label for="otp">کد شش‌رقمی پیامک‌شده</label>
+            <input class="field otp-input" id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" dir="ltr">
+            <div class="hint" id="otpHint">کد شش‌رقمی ارسال‌شده به شماره شما را وارد کنید.</div>
             <button class="primary" id="verifyButton" type="button">تأیید و ورود</button>
             <div class="otp-actions">
               <button class="link-btn" id="resendButton" type="button">نمایش دوبارهٔ مرحلهٔ تست</button>
@@ -182,7 +184,7 @@
   <script>
     (() => {
       const API_BASE = (document.querySelector('meta[name="tloomberg-auth-api"]')?.content || '').trim().replace(/\/+$/, '');
-      const DEMO_OTP_MODE = !API_BASE;
+      const DEMO_OTP_MODE = false;
       // This public hash is only a visual demo selector, never an auth secret.
       const DEMO_SUPERADMIN_PHONE_SHA256 = '363c2dd7650cfb7d22f3d624656f2bd69e79e16b4e0412bfaa75cea8490c10ce';
       const $ = id => document.getElementById(id);
@@ -191,7 +193,8 @@
       let currentPhone = '';
       let challengeId = null;
       let currentMode = 'login';
-      const TERMS_VERSION = 'pending-owner-content';
+      const TERMS_VERSION = (document.querySelector('meta[name="tloomberg-terms-version"]')?.content || '').trim();
+      const PRIVACY_VERSION = (document.querySelector('meta[name="tloomberg-privacy-version"]')?.content || '').trim();
 
       const toEnglishDigits = value => String(value || '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
       function normalizePhone(value) {
@@ -206,6 +209,7 @@
         target.className = 'status show ' + type;
       }
       async function request(path, body) {
+        requireApi();
         const response = await fetch(API_BASE + path, {
           method: body ? 'POST' : 'GET',
           credentials: 'include',
@@ -295,12 +299,16 @@
             setStatus('حالت آزمایشی فعال شد؛ یک کد دلخواه چهاررقمی وارد کن.', 'info');
             return;
           }
-          const requestBody = { phone_e164: phone, purpose: currentMode };
+          const requestBody = { phone, purpose: currentMode === 'register' ? 'signup' : 'login' };
           if (currentMode === 'register') {
+            if (!TERMS_VERSION || !PRIVACY_VERSION) {
+              throw new Error('ثبت‌نام تا زمان انتشار نسخهٔ نهایی و تأییدشدهٔ قوانین و حریم خصوصی غیرفعال است.');
+            }
             requestBody.terms_accepted = true;
             requestBody.terms_version = TERMS_VERSION;
+            requestBody.privacy_version = PRIVACY_VERSION;
           }
-          const result = await request('/api/v1/auth/otp/request', requestBody);
+          const result = await request('/api/v1/auth/phone/request', requestBody);
           challengeId = result.challenge_id || null;
           $('otpHint').textContent = 'کد برای ' + maskPhone(phone) + ' ارسال شده است. اعتبار کد محدود است.';
           showOtp();
@@ -327,17 +335,20 @@
           if (code.length !== 6) throw new Error('کد تأیید باید شش رقم باشد.');
           $('verifyButton').disabled = true;
           const verifyBody = {
-            phone_e164: currentPhone,
-            code,
-            challenge_id: challengeId,
-            purpose: currentMode,
+            phone: currentPhone,
+            otp: code,
+            purpose: currentMode === 'register' ? 'signup' : 'login',
           };
           if (currentMode === 'register') {
             if (!$('termsAccepted').checked) throw new Error('پذیرش قوانین برای ثبت‌نام الزامی است.');
             verifyBody.terms_accepted = true;
+            if (!TERMS_VERSION || !PRIVACY_VERSION) {
+              throw new Error('ثبت‌نام تا زمان انتشار نسخهٔ نهایی و تأییدشدهٔ قوانین و حریم خصوصی غیرفعال است.');
+            }
             verifyBody.terms_version = TERMS_VERSION;
+            verifyBody.privacy_version = PRIVACY_VERSION;
           }
-          const result = await request('/api/v1/auth/otp/verify', verifyBody);
+          const result = await request('/api/v1/auth/phone/verify', verifyBody);
           renderAccount(result);
         } catch (error) {
           setStatus(error.message, 'error');
@@ -398,22 +409,16 @@
       });
       $('otp').maxLength = DEMO_OTP_MODE ? 4 : 6;
       $('otp').addEventListener('input', event => { event.target.value = toEnglishDigits(event.target.value).replace(/\D/g, '').slice(0, DEMO_OTP_MODE ? 4 : 6); });
-      if (DEMO_OTP_MODE) {
-        $('setupNote').style.display = '';
-        $('sendButton').textContent = 'ارسال کد تأیید ←';
-        $('googleButton').title = 'ورود گوگل پس از اتصال سرویس احراز هویت فعال می‌شود.';
+      $('setupNote').style.display = 'none';
+      if (!API_BASE) {
+        setStatus('سرویس احراز هویت هنوز به این وب‌سایت متصل نشده است. ورود و ثبت‌نام غیرفعال است.', 'error');
       } else {
-        $('setupNote').style.display = 'none';
         request('/api/v1/auth/me')
           .then(data => renderAccount(data))
           .catch(() => {});
       }
-      const oauthResult = new URLSearchParams(window.location.search).get('oauth');
-      if (oauthResult === 'success' && !DEMO_OTP_MODE) {
-        request('/api/v1/auth/me').then(data => renderAccount(data)).catch(error => setStatus(error.message, 'error'));
-      } else if (oauthResult === 'error') {
-        setStatus('ورود با گوگل کامل نشد. دوباره تلاش کن.', 'error');
-      }
+      // Google OAuth is deliberately hidden until its provider credentials,
+      // callback verification and linking tests are implemented.
     })();
   </script>
 </body>
