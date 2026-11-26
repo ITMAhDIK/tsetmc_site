@@ -87,6 +87,23 @@ The deployment template does not configure a cloud load balancer, DNS, certifica
 
 Application rollback and schema rollback are different operations. Prefer rolling the application back to a backward-compatible prior image while keeping the schema forward-compatible. The migration runner intentionally has no automatic down-migrations. If a schema change is destructive or incompatible, stop the rollout and use a separately reviewed recovery plan; do not edit migration history or delete ledger entries to force a downgrade. A production database restore is a disaster-recovery action that requires explicit approval, a verified backup, a maintenance window and reconciliation of payments/wallet transactions that occurred after the backup.
 
+## Phone OTP, superadmin bootstrap and SMS outbox
+
+The API's passwordless phone flow is backed by a separately deployed worker:
+
+- `POST /auth/phone/request` stores an HMAC-protected OTP challenge and an encrypted SMS outbox message. Requests are rate-limited by phone and purpose.
+- `scripts/saas_sms_worker.py` claims pending `phone_otp` rows with `FOR UPDATE SKIP LOCKED`, decrypts the recipient/payload only in memory, dispatches via Kavenegar HTTPS, and records delivery acceptance or a bounded retry/failure state.
+- The worker uses the same low-privilege SaaS runtime DB URL and outbox Fernet key as the API. Its provider credentials are isolated to the worker process.
+- Production secrets required for the worker: `SMS_PROVIDER=kavenegar`, `SMS_API_KEY`, `SMS_SENDER`, `SAAS_OUTBOX_FERNET_KEY`, `SAAS_DATABASE_URL`, `SAAS_EXPECTED_DATABASE_NAME`, `SAAS_NOTIFICATION_POLL_SECONDS`.
+- `SAAS_SUPERADMIN_PHONE_E164` must be stored only in the protected API runtime secret store. It is the bootstrap owner's E.164 phone. After the OTP is verified successfully, the backend compares the normalized verified phone with this secret and grants `superadmin`; other newly verified numbers receive only `user`. The role grant creates an immutable administrative audit event.
+- Do not put the bootstrap phone, Kavenegar API key, sender line, OTP or database URLs in Git, HTML, JavaScript, GitHub Pages configuration, logs or chat. The public `docs/analytics-config.js` contains only the API base URL and is intentionally blank until deployment.
+- The SMS worker logs aggregate counts and error classes only. Provider response bodies, phone numbers, OTPs, message contents and API keys are not written to logs.
+- Provider acceptance is not equivalent to handset delivery. When a user reports a missing code, inspect the provider dashboard using the provider's protected portal; never ask the user to send their OTP to support.
+
+A verified real login requires a provisioned SaaS database/API host, valid Kavenegar API key and approved sender, the protected bootstrap phone secret, HTTPS/DNS, and a same-site frontend/API cookie topology. With the repository's current HttpOnly `SameSite=Lax` session cookie, use a custom site domain and an API subdomain under the same registrable domain (or a same-origin reverse proxy). The default GitHub Pages hostname and a separately rooted API hostname are not a reliable cross-site cookie setup.
+
+The repository integration tests use synthetic phone numbers and a fake SMS sender. They never send a real SMS. A passing CI run validates the worker code path, not provider credentials, sender approval, billing, carrier delivery or production OTP receipt.
+
 ## Backup and restore
 
 The repository includes `scripts/saas_db_backup.sh` and `scripts/saas_db_restore_verify.sh`. Every archive produced by the backup script is age-encrypted by default; there is no plaintext backup mode in the normal backup workflow.
