@@ -99,6 +99,7 @@
     let initialized = false;
     let inFlight = false;
     let consentState = "unknown";
+    let initialPageTracked = false;
     let currentRoute = { page: "market" };
     let currentPath = "/market";
     let queue = [];
@@ -193,11 +194,14 @@
       }
     }
 
-    function trackPage(route) {
+    function trackPage(route, options) {
       currentRoute = route && typeof route === "object" ? { ...route } : { page: "market" };
       currentPath = routePath(currentRoute);
       scrollReported.clear();
       if (!enabled) return false;
+      const isInitial = Boolean(options && options.initial);
+      if (isInitial && initialPageTracked) return false;
+      if (isInitial) initialPageTracked = true;
       enqueue("navigation", { component_id: "route-change", element_role: "navigation" });
       enqueue("page_view");
       return true;
@@ -338,6 +342,8 @@
         status.textContent = "ثبت فعالیت اختصاصی فقط برای حساب واردشده امکان‌پذیر است. تا پیش از ورود و ثبت رضایت، هیچ رویدادی ذخیره نمی‌شود.";
       } else if (state === "error") {
         status.textContent = "ارتباط با سرویس تحلیل برقرار نشد. تا رفع مشکل، ثبت فعالیت غیرفعال است.";
+      } else if (state === "accepted") {
+        status.textContent = "رضایت تحلیل رفتار شما فعال است؛ برای توقف ثبت، «موافق نیستم» را انتخاب کنید.";
       } else {
         status.textContent = "هیچ فعالیتی پیش از موافقت صریح شما ثبت نمی‌شود.";
       }
@@ -347,7 +353,7 @@
       const accept = doc.createElement("button");
       accept.type = "button";
       accept.className = "tloomberg-analytics-accept";
-      accept.textContent = "موافقت می‌کنم";
+      accept.textContent = state === "accepted" ? "رضایت فعال بماند" : "موافقت می‌کنم";
       accept.disabled = !apiBase;
       accept.addEventListener("click", async () => {
         accept.disabled = true;
@@ -422,7 +428,7 @@
       enabled = true;
       consentState = "accepted";
       startCollectors();
-      if (currentRoute) trackPage(currentRoute);
+      if (currentRoute) trackPage(currentRoute, { initial: true });
       return result;
     }
 
@@ -445,7 +451,7 @@
         consentState = enabled ? "accepted" : "consent-required";
         if (enabled) {
           startCollectors();
-          trackPage(currentRoute);
+          trackPage(currentRoute, { initial: true });
         } else {
           showConsentBanner(consentState);
         }
