@@ -1925,9 +1925,11 @@ class AccountService:
         if path == "/api/v1/analytics/consent" and method == "GET":
             return {"payload": {"consent": self.analytics_consent(user)}}
         if path == "/api/v1/analytics/consent" and method == "PUT":
+            self.check_csrf(user, body.get("_csrf") or body.get("csrf_token"))
             consent = self.set_analytics_consent(user, body.get("product_analytics"))
             return {"payload": {"consent": consent}}
         if path == "/api/v1/analytics/events" and method == "POST":
+            self.check_csrf(user, body.get("_csrf") or body.get("csrf_token"))
             return {"payload": self.record_analytics_events(user, body.get("events"))}
         if path == "/api/v1/analytics/admin/overview" and method == "GET":
             self.require_role(user, ("admin", "super_admin"))
@@ -1960,6 +1962,7 @@ class AccountService:
         )
         if path == "/api/v1/analytics/admin/retention/expired" and method == "DELETE":
             self.require_role(user, ("super_admin",))
+            self.check_csrf(user, body.get("_csrf") or body.get("csrf_token"))
             raw_days = (params.get("days") or ["365"])[0]
             try:
                 retention_days = int(raw_days)
