@@ -246,3 +246,50 @@ def test_production_configuration_rejects_missing_or_invalid_bootstrap_superadmi
     monkeypatch.setenv("SAAS_SUPERADMIN_PHONE_E164", "09306311461")
     with pytest.raises(ConfigurationError, match="valid E.164"):
         auth_api.validate_production_configuration()
+
+def test_internal_prometheus_metrics_require_a_separate_bearer_token(monkeypatch):
+    from fastapi.testclient import TestClient
+    import saas_core.auth.api as auth_api
+
+    monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+    monkeypatch.setenv("SAAS_METRICS_TOKEN", "metrics-token-" + "m" * 40)
+    client = TestClient(auth_api.app)
+
+    health = client.get("/health")
+    assert health.status_code == 200
+
+    denied = client.get("/internal/metrics")
+    assert denied.status_code == 401
+    denied = client.get("/internal/metrics", headers={"Authorization": "Bearer wrong"})
+    assert denied.status_code == 401
+
+    response = client.get(
+        "/internal/metrics",
+        headers={"Authorization": "Bearer " + "metrics-token-" + "m" * 40},
+    )
+    assert response.status_code == 200
+    assert "saas_http_requests_total" in response.text
+    assert 'route="/health"' in response.text
+    assert "password" not in response.text.lower()
+    assert "cookie" not in response.text.lower()
+
+
+def test_production_configuration_rejects_missing_metrics_token(monkeypatch):
+    import saas_core.auth.api as auth_api
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setattr(auth_api, "APP_ENV", "production")
+    monkeypatch.setattr(auth_api, "COOKIE_SECURE", True)
+    monkeypatch.setattr(auth_api, "TRUSTED_HOSTS", ["api.example.com"])
+    monkeypatch.setattr(auth_api, "ALLOWED_ORIGINS", ["https://app.example.com"])
+    monkeypatch.setenv("SAAS_DATABASE_URL", "postgresql://runtime:secret@db.example/tloomberg_saas?sslmode=verify-full")
+    monkeypatch.setenv("SAAS_EXPECTED_DATABASE_NAME", "tloomberg_saas")
+    monkeypatch.setenv("SAAS_SUPERADMIN_PHONE_E164", "+989000000001")
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus-test")
+    monkeypatch.delenv("SAAS_METRICS_TOKEN", raising=False)
+
+    with pytest.raises(ConfigurationError, match="SAAS_METRICS_TOKEN"):
+        auth_api.validate_production_configuration()
