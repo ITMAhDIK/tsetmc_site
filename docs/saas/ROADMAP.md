@@ -10,7 +10,7 @@
 - Argon2id password registration/login, opaque revocable sessions and secure cookies.
 - Phone OTP challenge persistence, encrypted SMS outbox and per-phone request throttling.
 - Server-side role, permission and subscription-entitlement policy.
-- Initial combined branch CI: static Pages validation passed; 83 tests passed.
+- Initial combined branch CI: 83 tests passed.
 - Not production-ready: Google OAuth/verified linking, password reset/email verification, IP/distributed rate limiting, CSRF/CORS/security headers, superadmin bootstrap, SMS delivery worker, PostgreSQL integration tests and deployment security review remain.
 
 ## Phase 3 — Account and dashboard API (implemented; integration validation pending)
@@ -21,9 +21,13 @@
 - No market-data schema, database, collector or API changes.
 - Dashboard frontend and PostgreSQL integration tests remain.
 
-## Phase 4 — Subscriptions and payments
-SnapPay/DigiPay adapters, merchant onboarding, sandbox tests, verified phone,
-idempotent order lifecycle, verification/settlement, refunds and reconciliation.
+## Phase 4 — Subscriptions and payments (lifecycle foundation integrated; production blocked)
+- Server-priced idempotent subscription orders and verified-phone purchase gate.
+- Provider-neutral checkout/verification contracts and payment-attempt tracking.
+- Atomic settlement, provider-event deduplication and subscription renewal extension.
+- Refund-request schema only; no refund execution or reconciliation worker.
+- SnapPay/DigiPay adapters fail closed pending official merchant packs and sandbox credentials.
+- PostgreSQL integration/concurrency tests, provider end-to-end tests and callback-authenticity review remain.
 
 ## Phase 5 — Wallet and referrals
 Ledger, top-ups, gift/cash balance, withdrawal reservations, bank verification,
