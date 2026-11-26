@@ -1,40 +1,57 @@
-# SaaS PostgreSQL backup and restore
+# SaaS PostgreSQL backup, restore and off-host copy
 
-Only `SAAS_DATABASE_URL` is honored. The tool never falls back to
-`DATABASE_URL`, refuses an identical `MARKET_DATABASE_URL`, and passes the
-URL is parsed into libpq environment variables (`PGHOST`, `PGPORT`, `PGUSER`,
-`PGPASSWORD`, `PGDATABASE` and optional SSL settings), never command-line arguments.
+All backup operations target only the dedicated SaaS PostgreSQL database.
+Never point these scripts at Market, collector, TSETMC or investor-holdings
+databases.
 
-## Backup and verification
+## Encrypted local backup
 
-```bash
-export SAAS_DATABASE_URL='postgresql://...'
-python tools/saas_db_ops.py backup --directory /secure/backup/tloomberg-saas
-python tools/saas_db_ops.py verify --file /secure/backup/tloomberg-saas/saas-YYYYMMDDTHHMMSSZ.dump
-```
+`scripts/saas_db_backup.sh` requires
+`SAAS_BACKUP_DATABASE_URL`, `SAAS_EXPECTED_DB_NAME`, `SAAS_BACKUP_DIR`
+and `SAAS_BACKUP_AGE_RECIPIENT`. It rejects inline URL passwords, requires
+`sslmode=verify-full` for remote PostgreSQL, refuses to write inside the Git
+checkout, creates a custom-format dump, checks it with `pg_restore --list`,
+encrypts with the age public recipient and atomically publishes a
+`.dump.age` plus SHA-256 sidecar using restrictive file permissions.
 
-The archive is custom-format, written to a temporary file, parsed with
-`pg_restore --list`, atomically published and accompanied by a SHA-256 manifest.
-POSIX directories/files are restricted to owner-only permissions. Encryption,
-offsite upload and retention scheduling belong to the hosting environment.
+## Isolated restore drill
 
-## Destructive restore
+`scripts/saas_db_restore_verify.sh` verifies the SHA-256, decrypts using the
+protected `SAAS_BACKUP_AGE_IDENTITY`, validates the archive, checks the target
+database name and refuses the configured production database. The target must
+be pre-created and empty; restore is single-transaction.
 
-1. Confirm the target is SaaS, never market data.
-2. Verify archive/manifest and take a recent pre-restore backup.
-3. Obtain an approved change/incident reference and second-person review.
-4. Point `SAAS_DATABASE_URL` at the intended target.
-5. Require the exact confirmation literal:
+Required variables:
 
-```bash
-python tools/saas_db_ops.py restore --file /secure/backup/tloomberg-saas/saas-YYYYMMDDTHHMMSSZ.dump --confirm-restore RESTORE_SAAS_DATABASE
-python tools/saas_healthcheck.py
-```
+- `SAAS_BACKUP_FILE`
+- `SAAS_RESTORE_VERIFY_DATABASE_URL`
+- `SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME`
+- `SAAS_PRODUCTION_DB_NAME`
+- `SAAS_BACKUP_AGE_IDENTITY`
 
-Restore uses `pg_restore --clean --if-exists --no-owner --no-acl --exit-on-error`;
-it does not create/drop the database. Reconcile login, entitlements, payment
-orders, wallet totals, withdrawal reservations and audit after restore.
+The CI PostgreSQL job creates the SaaS schema, a dedicated read-only backup
+role, age-encrypted backup and isolated scratch restore. The latest verified
+CI run completed this drill successfully.
 
-Suggested starting policy: daily encrypted backups, 30-day daily retention,
-monthly archival, quarterly isolated restore drills, and documented RPO/RTO.
-These are recommendations, not an implemented scheduler or legal requirement.
+## Off-host publication
+
+`scripts/saas_offsite_backup.sh` uses an externally configured rclone remote.
+It accepts only age-encrypted `.dump.age` artifacts, verifies the local age
+envelope and SHA-256 before transfer, uploads the archive and checksum with
+`--immutable --checksum`, reads both objects back, and verifies the remote
+archive bytes and checksum after transfer. It never overwrites or deletes
+objects.
+
+Systemd templates:
+
+- `deploy/systemd/tloomberg-saas-offsite-backup.service`
+- `deploy/systemd/tloomberg-saas-offsite-backup.timer`
+
+The timer is scheduled daily in UTC. Install it only after configuring the
+rclone remote, private credentials and protected age identity. Provider-side
+object retention/object-lock must be configured and tested at the storage
+provider; the script cannot create a legal immutability guarantee.
+
+CI tests exercise remote copy/read/verification with a fake rclone executable.
+They do not upload to an actual cloud bucket. Production scheduling, bucket
+credentials, retention and restore access remain external release gates.
