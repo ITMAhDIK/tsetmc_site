@@ -130,8 +130,8 @@ test("consent enables bounded events and sends only allow-listed fields", async 
   });
 
   await sdk.init();
-  await sdk.setConsent(true);
   sdk.trackPage({ page: "stock", activeSymbol: "فولاد" });
+  await sdk.setConsent(true);
   sdk.trackClick("nav-stock", "button");
   sdk.trackScroll(25);
   sdk.trackActiveTime(15000);
