@@ -50,9 +50,12 @@ def test_consent_is_opt_in_and_revocation_blocks_future_ingestion(migrated_analy
             record_events(conn,user_id=user,events=[event()])
         granted=set_consent(conn,user_id=user,enabled=True)
         assert granted["product_analytics"] is True and granted["essential"] is True
+        set_consent(conn,user_id=user,enabled=True)
+        assert conn.execute("SELECT count(*) AS n FROM analytics_consent_history WHERE user_id=%s",(user,)).fetchone()["n"]==1
         assert record_events(conn,user_id=user,events=[event()])["accepted"]==1
         revoked=set_consent(conn,user_id=user,enabled=False)
         assert revoked["product_analytics"] is False
+        assert conn.execute("SELECT count(*) AS n FROM analytics_consent_history WHERE user_id=%s",(user,)).fetchone()["n"]==2
         with pytest.raises(PermissionError):
             record_events(conn,user_id=user,events=[event()])
 

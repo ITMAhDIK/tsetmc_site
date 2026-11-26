@@ -22,6 +22,8 @@ def set_consent(conn, *, user_id: UUID, enabled: bool):
         raise ValueError("product_analytics consent must be boolean")
     with conn.transaction():
         with conn.cursor() as cur:
+            cur.execute("SELECT product_analytics,consent_version FROM analytics_consents WHERE user_id=%s FOR UPDATE",(user_id,))
+            previous=cur.fetchone()
             cur.execute(
                 """INSERT INTO analytics_consents(user_id,essential,product_analytics,consent_version)
                    VALUES (%s,TRUE,%s,%s)
@@ -31,7 +33,14 @@ def set_consent(conn, *, user_id: UUID, enabled: bool):
                    RETURNING user_id,essential,product_analytics,consent_version,updated_at""",
                 (user_id, enabled, CONSENT_VERSION),
             )
-            return cur.fetchone()
+            result=cur.fetchone()
+            if previous is None or previous["product_analytics"] != enabled or previous["consent_version"] != CONSENT_VERSION:
+                cur.execute(
+                    """INSERT INTO analytics_consent_history(user_id,product_analytics,consent_version)
+                       VALUES (%s,%s,%s)""",
+                    (user_id,enabled,CONSENT_VERSION),
+                )
+            return result
 
 
 def _validate_event(event):
