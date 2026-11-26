@@ -64,6 +64,8 @@ jobs:
           SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
           SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           SAAS_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+          SAAS_METRICS_TOKEN: ci-placeholder-metrics-token-with-more-than-32-chars
+          PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
           SAAS_TERMS_VERSION: ci-terms-review-version
           SAAS_PRIVACY_VERSION: ci-privacy-review-version
           SAAS_SUPERADMIN_PHONE_E164: "+989000000001"
