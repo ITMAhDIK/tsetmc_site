@@ -2564,6 +2564,12 @@
       const [promo, setPromo] = useState('WELCOME15');
       const [wallet, setWallet] = useState({ balance_toman: 0, transactions: [] });
       const [tickets, setTickets] = useState([]);
+      const [analyticsOverview, setAnalyticsOverview] = useState(null);
+      const [analyticsPaths, setAnalyticsPaths] = useState(null);
+      const [analyticsUserId, setAnalyticsUserId] = useState('');
+      const [analyticsUserEvents, setAnalyticsUserEvents] = useState([]);
+      const [analyticsUserPaths, setAnalyticsUserPaths] = useState(null);
+      const [analyticsBusy, setAnalyticsBusy] = useState(false);
       const [selectedTicket, setSelectedTicket] = useState(null);
       const [messages, setMessages] = useState([]);
       const [ticketSubject, setTicketSubject] = useState('');
@@ -3106,15 +3112,44 @@
           apiFetch('/api/v1/site-admin/overview'),
           apiFetch('/api/v1/site-admin/staff'),
           apiFetch('/api/v1/tickets'),
+          apiFetch('/api/v1/analytics/admin/overview?days=30').catch(() => null),
+          apiFetch('/api/v1/analytics/admin/paths?days=30&max_steps=5').catch(() => null),
         ]);
         setOverview(results[0]);
         setStaff(results[1].staff || []);
         setTickets(results[2].tickets || []);
+        setAnalyticsOverview(results[3]);
+        setAnalyticsPaths(results[4]);
       };
 
       useEffect(() => {
         refresh().catch(e => setError(e.message));
       }, []);
+
+      const loadUserAnalytics = async () => {
+        const target = String(analyticsUserId || '').trim();
+        if (!/^\\d+$/.test(target)) {
+          setError('شناسه عددی معتبر کاربر را وارد کنید.');
+          return;
+        }
+        setAnalyticsBusy(true);
+        setError('');
+        try {
+          const [eventsResult, pathsResult] = await Promise.all([
+            apiFetch('/api/v1/analytics/admin/users/' + target + '/events?limit=100'),
+            apiFetch('/api/v1/analytics/admin/users/' + target + '/paths?days=30&max_steps=5'),
+          ]);
+          setAnalyticsUserEvents(eventsResult.events || []);
+          setAnalyticsUserPaths(pathsResult);
+          setNotice('گزارش رفتار کاربر بارگذاری شد. مشاهده در گزارش ممیزی ثبت شده است.');
+        } catch (e) {
+          setAnalyticsUserEvents([]);
+          setAnalyticsUserPaths(null);
+          setError(e.message);
+        } finally {
+          setAnalyticsBusy(false);
+        }
+      };
 
       const createStaff = async (event) => {
         event.preventDefault();
@@ -3187,6 +3222,101 @@
             ))}
           </div>
 
+          <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <div>
+                <h2 className="font-bold text-sm">تحلیل رفتار کاربران</h2>
+                <p className="text-[10px] text-[var(--text-secondary)] mt-1">فقط رویدادهای کاربران واردشده با رضایت فعال؛ گروه‌های کمتر از پنج کاربر نمایش داده نمی‌شوند.</p>
+              </div>
+              <button type="button" onClick={() => refresh().catch(e => setError(e.message))}
+                className="px-3 py-1.5 rounded border border-[var(--border-subtle)] text-xs">به‌روزرسانی</button>
+            </div>
+            {analyticsOverview?.suppressed ? (
+              <p className="text-xs text-[var(--text-secondary)]">برای نمایش آمار تجمیعی هنوز دادهٔ کافی از پنج کاربرِ دارای رضایت ثبت نشده است.</p>
+            ) : analyticsOverview?.overview ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {[
+                    ['کاربران فعال', analyticsOverview.overview.active_users],
+                    ['نشست‌ها', analyticsOverview.overview.sessions],
+                    ['بازدید صفحات', analyticsOverview.overview.page_views],
+                    ['کلیک‌ها', analyticsOverview.overview.clicks],
+                    ['رویدادها', analyticsOverview.overview.event_count],
+                    ['مدت فعال (ثانیه)', Math.round((analyticsOverview.overview.active_duration_ms || 0) / 1000)],
+                  ].map(([label,value]) => <div key={label} className="rounded-lg bg-[var(--bg-elevated)] p-2.5">
+                    <div className="text-[10px] text-[var(--text-secondary)]">{label}</div>
+                    <div className="text-lg font-bold num mt-1">{fmtNum(value || 0)}</div>
+                  </div>)}
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                  <div>
+                    <h3 className="font-semibold text-xs mb-2">صفحات محبوب در ۳۰ روز گذشته</h3>
+                    <div className="space-y-1.5">
+                      {(analyticsOverview.top_pages || []).length ? analyticsOverview.top_pages.map(item => (
+                        <div key={item.page_path} className="flex flex-wrap justify-between gap-2 rounded bg-[var(--bg-elevated)] px-3 py-2 text-xs">
+                          <span className="num" dir="ltr">{item.page_path}</span>
+                          <span className="text-[var(--text-secondary)]">{fmtNum(item.views)} بازدید · {fmtNum(item.users)} کاربر</span>
+                        </div>
+                      )) : <p className="text-[11px] text-[var(--text-secondary)]">هنوز صفحهٔ پرتکرار قابل‌نمایشی وجود ندارد.</p>}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-xs mb-2">مسیرهای پرتکرار</h3>
+                    <div className="space-y-1.5">
+                      {(analyticsPaths?.paths || []).length ? analyticsPaths.paths.slice(0,10).map((item,index) => (
+                        <div key={index} className="rounded bg-[var(--bg-elevated)] px-3 py-2 text-xs">
+                          <div className="leading-7">{item.path.join(' ← ')}</div>
+                          <div className="text-[10px] text-[var(--text-secondary)]">
+                            {fmtNum(item.repetitions)} تکرار · {fmtNum(item.sessions)} نشست · {fmtNum(item.users)} کاربر
+                          </div>
+                        </div>
+                      )) : <p className="text-[11px] text-[var(--text-secondary)]">مسیر پرتکرار قابل‌نمایشی وجود ندارد.</p>}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : <p className="text-xs text-[var(--text-secondary)]">در انتظار داده‌های تحلیل…</p>}
+          </section>
+          {isSuperAdmin && <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4 space-y-3">
+            <div>
+              <h2 className="font-bold text-sm">تاریخچهٔ رفتار یک کاربر</h2>
+              <p className="text-[10px] text-[var(--text-secondary)] mt-1">این بخش فقط برای سوپرادمین فعال است؛ هر بار مشاهده در audit ثبت می‌شود.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input type="number" min="1" step="1" value={analyticsUserId}
+                onChange={e=>setAnalyticsUserId(e.target.value)}
+                placeholder="شناسه عددی کاربر"
+                className="min-w-[180px] flex-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2 text-xs" />
+              <button type="button" disabled={analyticsBusy}
+                onClick={loadUserAnalytics}
+                className="rounded bg-blue-600 px-4 py-2 text-xs text-white disabled:opacity-50">
+                {analyticsBusy?'در حال دریافت…':'مشاهده تاریخچه'}
+              </button>
+            </div>
+            {analyticsUserPaths && <>
+              <h3 className="font-semibold text-xs">مسیرهای تکراری کاربر {toFa(analyticsUserId)}</h3>
+              {(analyticsUserPaths.paths || []).length ? analyticsUserPaths.paths.slice(0,10).map((item,index)=>(
+                <div key={index} className="rounded bg-[var(--bg-elevated)] px-3 py-2 text-xs">
+                  <div>{item.path.join(' ← ')}</div>
+                  <div className="text-[10px] text-[var(--text-secondary)]">{fmtNum(item.repetitions)} تکرار در {fmtNum(item.sessions)} نشست</div>
+                </div>
+              )) : <p className="text-[11px] text-[var(--text-secondary)]">مسیر تکراری ثبت نشده است.</p>}
+              <h3 className="font-semibold text-xs mt-3">آخرین رویدادها</h3>
+              <div className="max-h-64 overflow-auto space-y-1.5">
+                {analyticsUserEvents.map((event,index)=>(
+                  <div key={index} className="rounded bg-[var(--bg-elevated)] px-3 py-2 text-xs flex flex-wrap justify-between gap-2">
+                    <span>{event.event_name} · <span className="num" dir="ltr">{event.page_path}</span></span>
+                    <span className="text-[10px] text-[var(--text-secondary)]">
+                      {event.active_duration_ms ? fmtNum(Math.round(event.active_duration_ms/1000))+' ثانیه' :
+                       event.scroll_depth_pct !== null ? fmtNum(event.scroll_depth_pct)+'٪ اسکرول' :
+                       event.component_id || event.element_role || ''}
+                    </span>
+                    <span className="text-[10px] text-[var(--text-secondary)]">{fmtDateTime(event.occurred_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </>}
+          </section>}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             <section className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-4">
               <div className="flex justify-between items-center gap-2">
