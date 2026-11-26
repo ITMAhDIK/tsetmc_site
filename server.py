@@ -192,16 +192,31 @@ def gregorian_yyyymmdd_to_jalali(yyyymmdd):
 
 
 def jalali_to_gregorian_date(jalali):
-    """'1405-08-27', '14050827' or '1405/08/27' -> '2026-11-18'
-    (dashed Gregorian, the form the live DB stores dates in)."""
+    """'1405-08-27', '14050827' or '1405/08/27' -> '2026-11-18'.
+
+    Reject out-of-range Jalali fields before conversion. The arithmetic
+    converter itself maps overflow days into later months, which is useful
+    for calendar arithmetic but is not valid input for an API date filter.
+    """
     s = str(jalali or "").replace("-", "").replace("/", "")
-    if len(s) == 8 and s.isdigit():
-        try:
-            gy, gm, gd = jalali_to_gregorian(int(s[0:4]), int(s[4:6]), int(s[6:8]))
-            return "%04d-%02d-%02d" % (gy, gm, gd)
-        except Exception:
-            return ""
-    return ""
+    if len(s) != 8 or not s.isdigit():
+        return ""
+    jy, jm, jd = int(s[0:4]), int(s[4:6]), int(s[6:8])
+    if jy < 1 or not 1 <= jm <= 12:
+        return ""
+    if jm <= 6:
+        max_day = 31
+    elif jm <= 11:
+        max_day = 30
+    else:
+        max_day = 30 if _jalali_is_leap(jy) else 29
+    if not 1 <= jd <= max_day:
+        return ""
+    try:
+        gy, gm, gd = jalali_to_gregorian(jy, jm, jd)
+        return "%04d-%02d-%02d" % (gy, gm, gd)
+    except (TypeError, ValueError, OverflowError):
+        return ""
 
 
 def _verify_jalali(con):

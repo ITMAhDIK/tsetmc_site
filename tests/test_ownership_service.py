@@ -121,6 +121,7 @@ def ownership_api(tmp_path):
     api = SiteApi(str(source_path), str(sidecar_path), "", "")
     side = api.sidecar()  # creates the real current Sidecar schema
     try:
+        side.execute("CREATE TABLE IF NOT EXISTS site_holder_history (id INTEGER PRIMARY KEY)")
         side.executemany(
             "INSERT OR REPLACE INTO site_meta(key,value) VALUES (?,?)",
             [
@@ -229,6 +230,21 @@ def test_stock_shareholders_rejects_invalid_jalali_date(ownership_api):
             "فولاد", {"date_jalali": ["1405-99-99"]}
         )
     assert error.value.status == 400
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "1405-00-01", "1405-13-01", "1405-07-31",
+        "1405-12-30", "1405-08-00", "not-a-date",
+    ],
+)
+def test_jalali_date_parser_rejects_out_of_range_values(value):
+    assert server.jalali_to_gregorian_date(value) == ""
+
+
+def test_jalali_date_parser_accepts_a_leap_year_esfand_30():
+    assert server.jalali_to_gregorian_date("1400-12-30") == "2022-03-21"
 
 
 def test_ownership_series_preserves_same_date_percentages_and_event_valuation(
