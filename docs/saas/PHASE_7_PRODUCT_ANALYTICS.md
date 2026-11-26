@@ -8,11 +8,14 @@
 - Batch ingestion accepts at most 50 events and deduplicates with a client event UUID.
 - Supported events: page_view, click, navigation, scroll, active_time and feature_view.
 - Only allow-listed, low-risk fields are stored. Query strings, fragments, full URLs and free-form text are rejected or ignored. Numeric/UUID path segments are normalized to :id.
-- Aggregate reports include overview KPIs, top pages, click heatmap bins, sequential event funnels with a 30-day step-conversion window, and weekly D7/D30 retention cohorts based on first opted-in page view (the day-7 and day-30 windows are only evaluated after each window has fully matured).
+- Aggregate reports include overview KPIs, top pages, click heatmap bins, sequential event funnels with a 30-day step-conversion window, weekly D7/D30 retention cohorts based on first opted-in page view, and repeated contiguous page-view paths of 2–5 steps (the day-7 and day-30 windows are only evaluated after each window has fully matured).
+- Repeated route patterns are derived within each authenticated session in timestamp order; sessions are never stitched together. Reports expose repetition count, distinct sessions/users and last occurrence.
+- Aggregate repeated paths are suppressed below five distinct opted-in users. Per-user repeated paths require `analytics.users.read` and each read is written to the administrator audit log.
 - Aggregate overview is suppressed below five active users; small funnel steps and under-mature retention denominators are also suppressed.
 - Aggregate reports suppress page/funnel/heatmap groups with fewer than five distinct users.
 - Aggregate reporting requires analytics.read. User-level event history requires analytics.users.read, and retention cleanup requires analytics.retention.manage; both elevated permissions are granted only to superadmin.
 - A retention purge helper is included; a trusted scheduler/operator must invoke it according to SAAS_ANALYTICS_RETENTION_DAYS (default 365 days).
+- Migration `008_analytics_path_sequences.sql` adds partial covering indexes for per-session route ordering and time-window aggregation; path sequences remain derived from the canonical event log rather than duplicated into a second table.
 
 ## API routes
 - GET /analytics/consent
@@ -23,6 +26,8 @@
 - GET /analytics/admin/heatmap
 - GET /analytics/admin/funnel
 - GET /analytics/admin/retention
+- GET /analytics/admin/paths (repeated aggregate page paths)
+- GET /analytics/admin/users/{user_id}/paths (audited individual route history; superadmin-only)
 - GET /analytics/admin/users/{user_id}/events
 - DELETE /analytics/admin/retention/expired (manual privileged purge)
 
@@ -34,7 +39,7 @@
 - All reads and writes target the dedicated SaaS PostgreSQL database. No market database, market API, collector or GitHub Pages market frontend is involved.
 
 ## Not included
-- Frontend consent banner/event SDK and admin analytics dashboard UI.
+- Frontend consent banner/event SDK and admin analytics dashboard UI. Until the frontend SDK is wired to `POST /analytics/events`, the database and reports are ready but the live GitHub Pages site will not automatically send activity events.
 - Automatic retention scheduler/worker; only a bounded manual purge operation and helper are present.
 - Cross-device anonymous identity stitching, marketing attribution and export APIs.
 - PostgreSQL integration, high-volume ingestion/load tests, dashboard query benchmarks and privacy/security review have not been run.
