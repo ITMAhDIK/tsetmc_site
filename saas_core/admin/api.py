@@ -20,7 +20,7 @@ class UserStatusBody(BaseModel):
 class WalletAdjustmentBody(BaseModel):
     model_config=ConfigDict(extra="forbid")
     bucket: str=Field(pattern="^(cash|gift)$")
-    amount_toman: int=Field(strict=True)
+    amount_toman: int=Field(strict=True,ge=-9223372036854775807,le=9223372036854775807)
     reason: str=Field(min_length=1,max_length=500)
     idempotency_key: str=Field(min_length=8,max_length=120)
 class ReconciliationBody(BaseModel):
