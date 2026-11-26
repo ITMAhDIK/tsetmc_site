@@ -232,3 +232,107 @@ def test_analytics_api_uses_phase_two_sessions_for_consent_reports_and_self_dele
                 assert client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload]}).status_code==403
         finally:
             app.dependency_overrides.pop(get_conn,None)
+
+
+def test_event_batch_is_atomic_when_idempotency_conflict_occurs_mid_batch(migrated_analytics_database):
+    with connect() as conn:
+        user=make_user(conn);set_consent(conn,user_id=user,enabled=True)
+        original=event("page_view",page_path="/pricing")
+        record_events(conn,user_id=user,events=[original])
+        conflicting={**original,"page_path":"/checkout"}
+        fresh=event("click",page_path="/pricing",component_id="plan-card",element_role="card")
+        with pytest.raises(ValueError,match="reused with different event data"):
+            record_events(conn,user_id=user,events=[fresh,conflicting])
+        # The valid first item in the rejected batch must roll back too.
+        assert conn.execute(
+            "SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)
+        ).fetchone()["n"]==1
+        assert conn.execute(
+            "SELECT count(*) AS n FROM analytics_events WHERE user_id=%s AND client_event_id=%s",
+            (user,fresh["event_id"]),
+        ).fetchone()["n"]==0
+
+
+def test_analytics_date_window_boundaries_and_event_time_limits(migrated_analytics_database):
+    from saas_core.analytics.service import _range
+    today=date.today()
+    assert _range(today-timedelta(days=366),today)
+    with pytest.raises(ValueError,match="cannot exceed 367 days"):
+        _range(today-timedelta(days=367),today)
+    with connect() as conn:
+        user=make_user(conn);set_consent(conn,user_id=user,enabled=True)
+        with pytest.raises(ValueError,match="outside the accepted time window"):
+            record_events(conn,user_id=user,events=[event(occurred_at=datetime.now(timezone.utc)-timedelta(days=31))])
+        with pytest.raises(ValueError,match="outside the accepted time window"):
+            record_events(conn,user_id=user,events=[event(occurred_at=datetime.now(timezone.utc)+timedelta(minutes=6))])
+        with pytest.raises(ValueError,match="viewport dimensions"):
+            record_events(conn,user_id=user,events=[event(viewport_width=True)])
+        with pytest.raises(ValueError,match="active_duration_ms"):
+            record_events(conn,user_id=user,events=[event("active_time",active_duration_ms=300001)])
+        assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)).fetchone()["n"]==0
+
+
+def test_consent_revocation_serializes_against_inflight_event_ingestion(migrated_analytics_database):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import time
+
+    with connect() as setup:
+        user=make_user(setup);set_consent(setup,user_id=user,enabled=True)
+        setup.commit()
+        payload=event()
+        lock_acquired=Event()
+        def ingest_after_lock_release():
+            lock_acquired.set()
+            with connect() as worker:
+                return record_events(worker,user_id=user,events=[payload])
+        with connect() as lock_conn:
+            with lock_conn.transaction():
+                lock_conn.execute("SELECT id FROM users WHERE id=%s FOR UPDATE",(user,))
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future=pool.submit(ingest_after_lock_release)
+                    assert lock_acquired.wait(timeout=2)
+                    time.sleep(0.15)
+                    set_consent(lock_conn,user_id=user,enabled=False)
+                # The worker was blocked on the account row until this transaction commits.
+            with pytest.raises(PermissionError,match="consent is required"):
+                future.result(timeout=5)
+        with connect() as verify:
+            assert verify.execute(
+                "SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)
+            ).fetchone()["n"]==0
+            assert verify.execute(
+                "SELECT product_analytics FROM analytics_consents WHERE user_id=%s",(user,)
+            ).fetchone()["product_analytics"] is False
+
+
+def test_analytics_api_rejects_extra_fields_and_invalid_report_ranges(migrated_analytics_database):
+    from saas_core.auth.api import app,get_conn
+    from saas_core.auth.repository import create_session
+    with connect() as conn:
+        user=make_user(conn)
+        grant(conn,user,"superadmin")
+        token,_=create_session(conn,user)
+        conn.commit()
+        def database_connection():
+            yield conn
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                headers={"Authorization":f"Bearer {token}"}
+                assert client.put("/analytics/consent",headers=headers,
+                    json={"product_analytics":True,"admin":True}).status_code==422
+                assert client.post("/analytics/events",headers=headers,
+                    json={"events":[]}).status_code==422
+                assert client.post("/analytics/events",headers=headers,
+                    json={"events":[{"event_id":str(uuid4()),"event_name":"page_view",
+                    "page_path":"/home","occurred_at":datetime.now(timezone.utc).isoformat(),
+                    "metadata":{},"user_id":str(user)}]}).status_code==422
+                today=date.today()
+                too_wide=today-timedelta(days=367)
+                assert client.get(f"/analytics/admin/overview?start={too_wide}&end={today}",
+                    headers=headers).status_code==422
+                assert client.get(f"/analytics/admin/overview?start={today}&end={too_wide}",
+                    headers=headers).status_code==422
+        finally:
+            app.dependency_overrides.pop(get_conn,None)
