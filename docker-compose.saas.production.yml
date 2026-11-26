@@ -25,17 +25,13 @@ services:
   saas-api:
     image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
     command:
-      - uvicorn
-      - saas_core.auth.api:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --workers
-      - ${SAAS_WEB_WORKERS:-2}
-      - --proxy-headers
-      - --forwarded-allow-ips
-      - 172.31.240.10
+      - sh
+      - -c
+      - >-
+        mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
+        && find "$PROMETHEUS_MULTIPROC_DIR" -mindepth 1 -maxdepth 1 -type f -delete
+        && exec uvicorn saas_core.auth.api:app --host 0.0.0.0 --port 8000
+        --workers ${SAAS_WEB_WORKERS:-2} --proxy-headers --forwarded-allow-ips 172.31.240.10
     environment:
       APP_ENV: production
       SAAS_DATABASE_URL: ${SAAS_DATABASE_URL:?Set the separate low-privilege runtime database connection string}
@@ -46,6 +42,8 @@ services:
       SAAS_OTP_HMAC_SECRET: ${SAAS_OTP_HMAC_SECRET:?Set a dedicated random OTP HMAC secret}
       SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set a dedicated Fernet key}
       SAAS_ADMIN_MFA_FERNET_KEY: ${SAAS_ADMIN_MFA_FERNET_KEY:?Set a distinct Fernet key for privileged MFA secrets}
+      SAAS_METRICS_TOKEN: ${SAAS_METRICS_TOKEN:?Set a private bearer token for Prometheus scraping}
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
       SAAS_TERMS_VERSION: ${SAAS_TERMS_VERSION:-}
       SAAS_PRIVACY_VERSION: ${SAAS_PRIVACY_VERSION:-}
       SAAS_SUPERADMIN_PHONE_E164: ${SAAS_SUPERADMIN_PHONE_E164:?Set the verified bootstrap admin phone in protected server secrets}
