@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from site_accounts import AccountError, AccountService
@@ -223,3 +224,143 @@ def test_analytics_endpoints_do_not_intercept_sector_affinity():
     assert AccountService.handles("/api/v1/analytics/admin/paths")
     assert AccountService.handles("/api/v1/analytics/admin/users/12/events")
     assert not AccountService.handles("/api/v1/analytics/sector-affinity")
+
+
+def test_analytics_write_routes_require_csrf_tokens(service):
+    user = signed_in(service, "analytics_csrf_user")
+    with pytest.raises(AccountError) as consent_error:
+        service.dispatch(
+            "PUT", "/api/v1/analytics/consent", {},
+            {"product_analytics": True}, user, "http://localhost:8000",
+        )
+    assert consent_error.value.status == 403
+
+    dispatch_consent(service, user, True)
+    event = {
+        "client_event_id": str(uuid4()),
+        "event_name": "page_view",
+        "page_path": "/market",
+    }
+    with pytest.raises(AccountError) as ingest_error:
+        service.dispatch(
+            "POST", "/api/v1/analytics/events", {}, {"events": [event]},
+            user, "http://localhost:8000",
+        )
+    assert ingest_error.value.status == 403
+
+    admin = signed_in(service, "analytics_csrf_superadmin", role="super_admin")
+    with pytest.raises(AccountError) as purge_error:
+        service.dispatch(
+            "DELETE", "/api/v1/analytics/admin/retention/expired",
+            {"days": ["365"]}, {}, admin, "http://localhost:8000",
+        )
+    assert purge_error.value.status == 403
+
+
+def test_admin_analytics_overview_and_top_pages_require_minimum_cohort(service):
+    users = []
+    for index in range(5):
+        user = signed_in(service, f"analytics_overview_user_{index}")
+        dispatch_consent(service, user, True)
+        page_views(service, user, ["/market", "/market", "/stock/فملی"])
+        post_events(service, user, [
+            {
+                "client_event_id": str(uuid4()),
+                "event_name": "click",
+                "page_path": "/market",
+                "component_id": "toolbar-account",
+                "element_role": "button",
+            },
+            {
+                "client_event_id": str(uuid4()),
+                "event_name": "active_time",
+                "page_path": "/market",
+                "active_duration_ms": 5000,
+            },
+        ])
+        users.append(user)
+
+    admin = signed_in(service, "analytics_overview_admin", role="admin")
+    response = service.dispatch(
+        "GET", "/api/v1/analytics/admin/overview",
+        {"days": ["30"], "limit": ["10"]}, {}, admin, "http://localhost:8000",
+    )["payload"]
+    assert response["suppressed"] is False
+    assert response["overview"]["active_users"] == 5
+    assert response["overview"]["sessions"] == 5
+    assert response["overview"]["page_views"] == 15
+    assert response["overview"]["clicks"] == 5
+    assert response["overview"]["active_duration_ms"] == 25_000
+    market = next(item for item in response["top_pages"] if item["page_path"] == "/market")
+    assert market["views"] == 10
+    assert market["users"] == 5
+
+
+def test_superadmin_user_event_timeline_is_role_gated_and_audited(service):
+    target = signed_in(service, "analytics_timeline_target")
+    dispatch_consent(service, target, True)
+    page_views(service, target, ["/market", "/stock/فملی"])
+    regular_admin = signed_in(service, "analytics_timeline_admin", role="admin")
+    path = f"/api/v1/analytics/admin/users/{target['id']}/events"
+    with pytest.raises(AccountError) as denied:
+        service.dispatch("GET", path, {}, {}, regular_admin, "http://localhost:8000")
+    assert denied.value.status == 403
+
+    superadmin = signed_in(service, "analytics_timeline_superadmin", role="super_admin")
+    response = service.dispatch(
+        "GET", path, {"limit": ["10"]}, {}, superadmin, "http://localhost:8000"
+    )["payload"]
+    assert response["user_id"] == target["id"]
+    assert [event["page_path"] for event in response["events"]] == ["/stock/فملی", "/market"]
+
+    con = service._connect()
+    try:
+        row = con.execute(
+            """SELECT action FROM site_analytics_audit
+               WHERE actor_user_id=? AND target_user_id=? ORDER BY id DESC LIMIT 1""",
+            (superadmin["id"], target["id"]),
+        ).fetchone()
+        assert row["action"] == "user_events.read"
+    finally:
+        con.close()
+
+
+def test_retention_endpoint_deletes_only_events_older_than_configured_days(service):
+    user = signed_in(service, "analytics_retention_user")
+    dispatch_consent(service, user, True)
+    page_views(service, user, ["/market", "/stock"])
+    con = service._connect()
+    try:
+        old_at = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat(timespec="seconds")
+        con.execute(
+            "UPDATE site_analytics_events SET occurred_at=? WHERE user_id=? AND page_path='/market'",
+            (old_at, user["id"]),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    superadmin = signed_in(service, "analytics_retention_superadmin", role="super_admin")
+    result = service.dispatch(
+        "DELETE", "/api/v1/analytics/admin/retention/expired",
+        {"days": ["365"]}, {"_csrf": superadmin["csrf_token"]},
+        superadmin, "http://localhost:8000",
+    )["payload"]
+    assert result == {"deleted_events": 1, "retention_days": 365}
+
+    con = service._connect()
+    try:
+        rows = con.execute(
+            "SELECT page_path FROM site_analytics_events WHERE user_id=?",
+            (user["id"],),
+        ).fetchall()
+        assert [row["page_path"] for row in rows] == ["/stock"]
+    finally:
+        con.close()
+
+    with pytest.raises(AccountError):
+        service.dispatch(
+            "DELETE", "/api/v1/analytics/admin/retention/expired",
+            {"days": ["731"]}, {"_csrf": superadmin["csrf_token"]},
+            superadmin, "http://localhost:8000",
+        )
