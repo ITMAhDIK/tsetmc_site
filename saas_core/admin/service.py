@@ -57,7 +57,7 @@ def list_users(conn, *, actor_id: UUID, query: str | None=None, status: str | No
                LEFT JOIN roles r ON r.id=ur.role_id
                WHERE (%s='' OR COALESCE(u.username,'') ILIKE %s OR
                       COALESCE(u.display_name,'') ILIKE %s OR u.public_id ILIKE %s)
-                 AND (%s IS NULL OR u.status=%s)
+                 AND (%s::text IS NULL OR u.status=%s)
                GROUP BY u.id ORDER BY u.created_at DESC,u.id LIMIT %s OFFSET %s""",
             (term,pattern,pattern,pattern,status,status,limit,offset),
         )
@@ -174,7 +174,7 @@ def list_subscriptions(conn, *, actor_id: UUID, status: str | None=None, limit: 
                               p.code AS plan_code,p.title AS plan_title,o.amount_toman,o.duration_days
                        FROM subscriptions s JOIN users u ON u.id=s.user_id
                        JOIN plans p ON p.id=s.plan_id LEFT JOIN payment_orders o ON o.id=s.payment_order_id
-                       WHERE (%s IS NULL OR s.status=%s)
+                       WHERE (%s::text IS NULL OR s.status=%s)
                        ORDER BY s.created_at DESC LIMIT %s OFFSET %s""",
                     (status,status,limit,offset))
         return cur.fetchall()
@@ -195,7 +195,7 @@ def list_payment_orders(conn, *, actor_id: UUID, status: str | None=None, limit:
                        LEFT JOIN LATERAL (SELECT provider,status,provider_order_id,request_ref
                                           FROM payment_attempts WHERE order_id=o.id
                                           ORDER BY created_at DESC LIMIT 1) a ON TRUE
-                       WHERE (%s IS NULL OR o.status=%s)
+                       WHERE (%s::text IS NULL OR o.status=%s)
                        ORDER BY o.created_at DESC LIMIT %s OFFSET %s""",
                     (status,status,limit,offset))
         return cur.fetchall()
@@ -260,7 +260,7 @@ def list_withdrawals(conn, *, actor_id: UUID, status: str | None=None, limit: in
                               b.bank_name,b.verification_status
                        FROM withdrawal_requests w JOIN users u ON u.id=w.user_id
                        LEFT JOIN wallet_bank_accounts b ON b.id=w.bank_account_id
-                       WHERE (%s IS NULL OR w.status=%s)
+                       WHERE (%s::text IS NULL OR w.status=%s)
                        ORDER BY w.requested_at DESC LIMIT %s OFFSET %s""",
                     (status,status,limit,offset))
         return cur.fetchall()
@@ -280,7 +280,7 @@ def list_referrals(conn, *, actor_id: UUID, status: str | None=None, limit: int=
                        FROM referrals r JOIN users i ON i.id=r.inviter_user_id
                        JOIN users u ON u.id=r.referred_user_id
                        LEFT JOIN referral_rewards rr ON rr.referral_id=r.id
-                       WHERE (%s IS NULL OR r.status=%s)
+                       WHERE (%s::text IS NULL OR r.status=%s)
                        ORDER BY r.created_at DESC LIMIT %s OFFSET %s""",
                     (status,status,limit,offset))
         return cur.fetchall()
@@ -296,7 +296,7 @@ def list_audit_logs(conn, *, actor_id: UUID, action: str | None=None, limit: int
         cur.execute("""SELECT l.id,l.actor_user_id,u.username AS actor_username,l.action,
                               l.target_type,l.target_id,l.request_id,l.before_state,l.after_state,l.created_at
                        FROM admin_audit_logs l LEFT JOIN users u ON u.id=l.actor_user_id
-                       WHERE (%s IS NULL OR l.action=%s)
+                       WHERE (%s::text IS NULL OR l.action=%s)
                        ORDER BY l.created_at DESC,l.id DESC LIMIT %s OFFSET %s""",
                     (action,action,limit,offset))
         return cur.fetchall()
