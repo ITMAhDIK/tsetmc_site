@@ -15,7 +15,7 @@
 - Aggregate reports suppress page/funnel/heatmap groups with fewer than five distinct users.
 - Aggregate reporting requires analytics.read. User-level event history requires analytics.users.read, and retention cleanup requires analytics.retention.manage; both elevated permissions are granted only to superadmin.
 - A retention purge helper is included; a trusted scheduler/operator must invoke it according to SAAS_ANALYTICS_RETENTION_DAYS (default 365 days).
-- Migration `008_analytics_path_sequences.sql` adds partial covering indexes for per-session route ordering and time-window aggregation; path sequences remain derived from the canonical event log rather than duplicated into a second table.
+- Migrations `008_analytics_path_sequences.sql` and `009_analytics_event_order.sql` add partial covering indexes and a monotonic database event order. The event order keeps page sequences deterministic when multiple events in one batch share the same server timestamp; path sequences remain derived from the canonical event log rather than duplicated into a second table.
 
 ## API routes
 - GET /analytics/consent
