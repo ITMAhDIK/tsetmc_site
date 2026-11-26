@@ -493,7 +493,7 @@ def repeated_paths(
               {user_filter}
             WINDOW route_order AS (
                 PARTITION BY e.user_id,e.session_id
-                ORDER BY e.occurred_at,e.id
+                ORDER BY e.event_order,e.id
             )
         ),
         path_patterns AS (
