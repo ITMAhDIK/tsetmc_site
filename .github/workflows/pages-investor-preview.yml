@@ -63,6 +63,28 @@ jobs:
       - name: Build static investor history and affinity data
         run: python tools/build_static_investor_demo.py
 
+      - name: Validate SaaS OTP portal JavaScript and public privacy boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("docs/saas/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+          if len(scripts) != 1:
+              raise SystemExit(f"Expected exactly one inline auth script, got {len(scripts)}")
+          if "+989306311461" in html:
+              raise SystemExit("A private superadmin phone number must never be committed to the public page")
+          script = scripts[0]
+          if "localStorage" in script or "sessionStorage" in script:
+              raise SystemExit("Auth sessions must not be stored in browser storage")
+          for required in ("/api/v1/auth/otp/request", "/api/v1/auth/otp/verify",
+                           "/api/v1/auth/me", "/api/v1/auth/logout"):
+              if required not in script:
+                  raise SystemExit(f"Missing auth endpoint contract: {required}")
+          Path("/tmp/tloomberg-auth.js").write_text(script, encoding="utf-8")
+          PY
+          node --check /tmp/tloomberg-auth.js
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
