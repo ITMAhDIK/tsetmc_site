@@ -42,23 +42,34 @@ def totp_code(secret: str, *, for_time: float | None = None, step: int = 30) -> 
     return f"{binary % 1_000_000:06d}"
 
 
-def verify_totp(secret: str, supplied: str, *, at_time: float | None = None,
-                window: int = 1, step: int = 30) -> bool:
-    """Constant-time verification with a bounded clock-drift window."""
+def matching_counter(secret: str, supplied: str, *, at_time: float | None = None,
+                     window: int = 1, step: int = 30) -> int | None:
+    """Return the matched time-step counter, allowing callers to prevent replay."""
     if not isinstance(supplied, str) or len(supplied) != 6 or not supplied.isascii() or not supplied.isdigit():
-        return False
+        return None
     if isinstance(window, bool) or not isinstance(window, int) or not 0 <= window <= 2:
         raise ValueError("TOTP verification window must be between zero and two steps")
     moment = time.time() if at_time is None else at_time
     try:
+        current = int(moment // step)
         for delta in range(-window, window + 1):
-            candidate = totp_code(secret, for_time=moment + delta * step, step=step)
+            counter = current + delta
+            if counter < 0:
+                continue
+            candidate = totp_code(secret, for_time=counter * step, step=step)
             if hmac.compare_digest(candidate, supplied):
-                return True
+                return counter
     except (TypeError, ValueError):
-        return False
-    return False
+        return None
+    return None
 
+
+def verify_totp(secret: str, supplied: str, *, at_time: float | None = None,
+                window: int = 1, step: int = 30) -> bool:
+    """Constant-time verification with a bounded clock-drift window."""
+    return matching_counter(
+        secret, supplied, at_time=at_time, window=window, step=step
+    ) is not None
 
 def provisioning_uri(secret: str, *, account: str, issuer: str = "Tloomberg",
                      period: int = 30, digits: int = 6) -> str:
