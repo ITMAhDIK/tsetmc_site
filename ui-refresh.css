@@ -87,8 +87,13 @@ body { font-size:14px; line-height:1.75; }
 .app-nav-wrap { border-top:1px solid color-mix(in srgb,var(--border-subtle) 70%,transparent); }
 .app-nav {
   width:min(100%,1660px); min-height:53px; margin:0 auto;
-  padding:6px clamp(14px,2.5vw,34px); display:flex; align-items:center; gap:7px;
-  overflow-x:auto; scrollbar-width:none;
+  padding:6px clamp(14px,2.5vw,34px); display:flex; align-items:center;
+  justify-content:center; flex-wrap:wrap; gap:7px;
+  overflow-x:visible; scrollbar-width:none;
+}
+@media(max-width:900px) {
+  .app-nav { justify-content:center; padding-inline:10px; gap:5px; }
+  .app-nav-item { padding-inline:10px; font-size:11px; }
 }
 .app-nav::-webkit-scrollbar { display:none; }
 .app-nav-item {
