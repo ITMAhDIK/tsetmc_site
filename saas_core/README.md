@@ -34,3 +34,14 @@ Payment gateways, SMS, Google OAuth, production authentication and withdrawal
 processing are intentionally not represented as live integrations yet.
 They require merchant credentials, current provider contracts, secrets,
 sandbox verification and dedicated service implementations.
+
+
+## Support (Phase 6)
+- `support/service.py` owns ticket and FAQ persistence.
+- `support/api.py` exposes public published FAQs, authenticated owner-scoped tickets,
+  staff queue/assignment/status/replies and private internal notes.
+- Staff capabilities are permission-gated by `tickets.manage`; FAQ publishing is
+  separately gated by `faq.manage`.
+- User ticket reads filter internal notes at the SQL query; no client-side hiding.
+- Migration `schema/004_support.sql` adds query indexes only and is re-runnable.
+- Support records remain in the isolated SaaS PostgreSQL database.

@@ -121,3 +121,8 @@ app.include_router(payments_router)
 # Wallet routes share the authenticated SaaS session and isolated DB connection.
 from saas_core.wallet.api import router as wallet_router
 app.include_router(wallet_router)
+
+
+# Support routes share authenticated sessions and isolated SaaS persistence.
+from saas_core.support.api import router as support_router
+app.include_router(support_router)

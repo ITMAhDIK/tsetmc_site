@@ -10,34 +10,30 @@
 - Argon2id password registration/login, opaque revocable sessions and secure cookies.
 - Phone OTP challenge persistence, encrypted SMS outbox and per-phone request throttling.
 - Server-side role, permission and subscription-entitlement policy.
-- Initial combined branch CI: 83 tests passed.
-- Not production-ready: Google OAuth/verified linking, password reset/email verification, IP/distributed rate limiting, CSRF/CORS/security headers, superadmin bootstrap, SMS delivery worker, PostgreSQL integration tests and deployment security review remain.
+- Production hardening gates remain: Google OAuth/verified linking, password reset/email verification, IP/distributed rate limiting, CSRF/CORS/security headers, superadmin bootstrap, SMS worker and deployment security review.
 
-## Phase 3 — Account and dashboard API (implemented; integration validation pending)
-- Authenticated profile read/update (display name only).
-- Allow-listed theme, calendar, currency and locale preferences.
-- Active session listing, single-other-session revocation and revoke-all-others; current session is protected.
-- Subscription history read model and server-resolved feature entitlements.
-- No market-data schema, database, collector or API changes.
-- Dashboard frontend and PostgreSQL integration tests remain.
+## Phase 3 — Account and dashboard API
+- Authenticated profile read/update, allow-listed preferences, session listing/revocation, subscription history and server-resolved entitlements.
+- Dashboard frontend and PostgreSQL runtime coverage remain separate follow-up work.
 
 ## Phase 4 — Subscription/payment lifecycle (PostgreSQL-tested; gateway onboarding blocked)
 - Server-priced, phone-verified, idempotent orders and hosted checkout attempt lifecycle.
 - Atomic settlement, amount/provider-reference validation, callback replay protection and serialized renewals.
 - Expired-order maintenance, audited full-refund queue/worker contract and stale-payment reconciliation queue.
-- Disposable PostgreSQL 16 integration and concurrency tests run in CI.
-- SnapPay/DigiPay live adapters, provider callback authenticity and sandbox E2E remain blocked on official merchant docs and credentials; no live payments.
+- Live provider integration remains blocked on official merchant docs and credentials; no live payments.
 
-## Phase 5 — Wallet and referrals (integrated; external bank/provider gates remain)
-- Isolated SaaS wallet with append-only idempotent ledger, cash/gift buckets and gift-first spending.
-- Cash-only withdrawal reservations, verified bank-account gate, admin approval/rejection and audited confirmed payout settlement.
-- Server-generated referral codes and verified-phone referral attachment.
-- First verified paid subscription settlement issues one idempotent gift reward using a versioned reward policy.
-- PostgreSQL 16 integration/concurrency tests and migration re-run coverage.
-- Wallet top-ups, bank verification onboarding, automated payouts and advanced abuse controls remain blocked/deferred pending provider contracts and security work. No market-data database or service changes.
+## Phase 5 — Wallet and referrals (PostgreSQL-tested)
+- Isolated cash/gift wallet with append-only idempotent ledger and gift-first spending.
+- Withdrawal reservation, verified-bank-account ownership gate, admin approval/rejection and audited confirmed payout.
+- Server-generated referral codes, verified-phone attachment and one-time gift reward after first paid subscription settlement.
+- Extended regression suite: 139 passed, including PostgreSQL 16, concurrency, replay, rejection/cancellation, bank verification and migration re-run.
+- Wallet top-ups, bank verification onboarding, automated payouts and advanced abuse controls remain gated on provider/security work.
 
-## Phase 6 — Support
-FAQ, ticket creation/replies, assignment, status and private internal notes.
+## Phase 6 — Support (implemented; validation in CI)
+- Public published FAQ, authenticated ticket creation/list/detail/replies and strict ticket ownership.
+- Staff queue with assignment, status transitions, staff replies and private internal notes.
+- Permission checks for tickets.manage and faq.manage; staff mutations and FAQ changes are audited.
+- User-facing ticket reads never include internal notes.
 
 ## Phase 7 — Product analytics
 Consent, click/navigation/scroll/active-time events, heatmaps, funnels, retention
