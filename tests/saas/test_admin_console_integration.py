@@ -103,6 +103,17 @@ def test_payment_review_and_audit_commit_without_settling_the_order():
 def test_last_active_superadmin_guard_rolls_back_real_status_change():
     target = uuid.uuid4()
     with _connect() as connection, connection.cursor() as cursor:
+        # Keep this invariant test independent of superadmins created by other
+        # integration cases in the same disposable database.
+        cursor.execute(
+            """
+            UPDATE users SET status='suspended'
+            WHERE id IN (
+              SELECT ur.user_id FROM user_roles ur
+              JOIN roles r ON r.id=ur.role_id WHERE r.code='superadmin'
+            )
+            """
+        )
         target = _user(cursor, "Only active superadmin")
         cursor.execute("SELECT id FROM roles WHERE code='superadmin'")
         role_id = cursor.fetchone()[0]
