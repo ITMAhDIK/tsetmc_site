@@ -35,7 +35,7 @@ def _prepare(tmp_path: Path):
         "else cat \"$RCLONE_LOCAL_ARCHIVE\"; fi\n"
         "    elif [[ \"$2\" == \"$RCLONE_LOCAL_CHECKSUM\" ]]; then "
         "cat \"$RCLONE_LOCAL_CHECKSUM\"\n"
-        "    else exit 3; fi ;;\n"
+        "    else exit 3; fi; exit 0 ;;\n"
         "esac\n"
         "exit 2\n",
         encoding="utf-8",
