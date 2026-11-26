@@ -163,23 +163,26 @@ def cancel_withdrawal(conn, *, user_id: UUID, withdrawal_id: UUID):
             return cur.fetchone()
 
 
-def settle_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID, idempotency_key: str):
-    """Record the cash debit only after an approved payout is confirmed paid."""
+def settle_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID,
+                      idempotency_key: str, payout_reference: str):
+    """Record cash debit only after an external payout has been confirmed."""
+    if not payout_reference or len(payout_reference)>160:
+        raise ValueError("a valid external payout reference is required")
     with conn.transaction():
         with conn.cursor() as cur:
-            cur.execute("SELECT user_id FROM withdrawal_requests WHERE id=%s", (withdrawal_id,))
-            owner = cur.fetchone()
+            cur.execute("SELECT user_id FROM withdrawal_requests WHERE id=%s",(withdrawal_id,))
+            owner=cur.fetchone()
             if not owner:
                 raise LookupError("withdrawal request not found")
             _lock_wallet(conn,owner["user_id"])
             cur.execute(
                 """SELECT user_id,amount_toman,status FROM withdrawal_requests
-                   WHERE id=%s FOR UPDATE""", (withdrawal_id,)
+                   WHERE id=%s FOR UPDATE""",(withdrawal_id,)
             )
-            request = cur.fetchone()
+            request=cur.fetchone()
             if not request:
                 raise LookupError("withdrawal request not found")
-            if request["status"] != "approved":
+            if request["status"]!="approved":
                 raise ValueError("only approved withdrawals can be settled")
             post_ledger_entry(
                 conn,user_id=request["user_id"],bucket="cash",entry_type="withdrawal_debit",
@@ -189,7 +192,95 @@ def settle_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID, idempoten
             )
             cur.execute(
                 """UPDATE withdrawal_requests SET status='paid',paid_at=now(),
-                   reviewed_at=COALESCE(reviewed_at,now()),reviewed_by=%s
-                   WHERE id=%s AND status='approved'""", (reviewer_id,withdrawal_id)
+                   reviewed_at=COALESCE(reviewed_at,now()),reviewed_by=%s,payout_reference=%s
+                   WHERE id=%s AND status='approved'""",
+                (reviewer_id,payout_reference,withdrawal_id),
+            )
+            cur.execute(
+                """INSERT INTO admin_audit_logs(actor_user_id,action,target_type,target_id,after_state)
+                   VALUES (%s,'wallet.withdrawal.paid','withdrawal',%s,
+                           jsonb_build_object('payout_reference',%s::text))""",
+                (reviewer_id,str(withdrawal_id),payout_reference),
             )
             return {"withdrawal_id":withdrawal_id,"status":"paid"}
+
+
+def spend_wallet(conn, *, user_id: UUID, amount_toman: int, idempotency_key: str,
+                 reference_type: str, reference_id: UUID, description: str | None = None):
+    """Atomically spend gift first, then unreserved cash, using append-only debits."""
+    from saas_core.domain.wallet import spend_buckets
+    if not isinstance(amount_toman,int) or isinstance(amount_toman,bool) or amount_toman<=0:
+        raise ValueError("spend amount must be a positive integer Toman")
+    if not idempotency_key or len(idempotency_key)>100:
+        raise ValueError("valid idempotency key is required")
+    if not reference_type or len(reference_type)>32:
+        raise ValueError("valid spend reference type is required")
+    with conn.transaction():
+        _lock_wallet(conn,user_id)
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id,user_id,amount_toman,reference_type,reference_id
+                   FROM wallet_ledger_entries
+                   WHERE idempotency_key IN (%s,%s) AND entry_type='purchase_debit'""",
+                (idempotency_key+":gift",idempotency_key+":cash"),
+            )
+            prior=cur.fetchall()
+            if prior:
+                if (any(row["user_id"]!=user_id or row["reference_type"]!=reference_type
+                        or row["reference_id"]!=reference_id for row in prior)
+                        or -sum(row["amount_toman"] for row in prior)!=amount_toman):
+                    raise ValueError("idempotency key was reused with different wallet spend data")
+                return {"already_processed":True,"entries":prior}
+        balances=get_wallet_balances(conn,user_id)
+        spendable=WalletBalances(balances.withdrawable_toman,balances.gift_toman)
+        remaining=spend_buckets(spendable,amount_toman)
+        gift_debit=remaining.gift_toman-spendable.gift_toman
+        cash_debit=remaining.cash_toman-spendable.cash_toman
+        entries=[]
+        if gift_debit:
+            entries.append(post_ledger_entry(
+                conn,user_id=user_id,bucket="gift",entry_type="purchase_debit",
+                amount_toman=gift_debit,idempotency_key=idempotency_key+":gift",
+                reference_type=reference_type,reference_id=reference_id,description=description,
+            ))
+        if cash_debit:
+            entries.append(post_ledger_entry(
+                conn,user_id=user_id,bucket="cash",entry_type="purchase_debit",
+                amount_toman=cash_debit,idempotency_key=idempotency_key+":cash",
+                reference_type=reference_type,reference_id=reference_id,description=description,
+            ))
+        return {"already_processed":False,"entries":entries}
+
+
+def review_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID,
+                      decision: str, review_note: str):
+    if decision not in {"approved","rejected"}:
+        raise ValueError("withdrawal decision must be approved or rejected")
+    note=(review_note or "").strip()
+    if not note or len(note)>500:
+        raise ValueError("a review note between 1 and 500 characters is required")
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM withdrawal_requests WHERE id=%s",(withdrawal_id,))
+            owner=cur.fetchone()
+            if not owner:
+                raise LookupError("withdrawal request not found")
+            _lock_wallet(conn,owner["user_id"])
+            cur.execute(
+                """UPDATE withdrawal_requests SET status=%s,reviewed_at=now(),
+                   reviewed_by=%s,review_note=%s
+                   WHERE id=%s AND status='requested'
+                   RETURNING id,user_id,amount_toman,status""",
+                (decision,reviewer_id,note,withdrawal_id),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise ValueError("withdrawal is not awaiting review")
+            cur.execute(
+                """INSERT INTO admin_audit_logs(actor_user_id,action,target_type,target_id,after_state)
+                   VALUES (%s,%s,'withdrawal',%s,
+                           jsonb_build_object('status',%s::text,'amount_toman',%s,'note',%s::text))""",
+                (reviewer_id,f"wallet.withdrawal.{decision}",str(withdrawal_id),
+                 decision,row["amount_toman"],note),
+            )
+            return row
