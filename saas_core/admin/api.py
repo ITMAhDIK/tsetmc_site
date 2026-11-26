@@ -49,7 +49,7 @@ class ReconciliationNoteBody(BaseModel):
 
 class WalletAdjustmentBody(BaseModel):
     bucket: str = Field(pattern="^(cash|gift)$")
-    amount_toman: int = Field(strict=True)
+    amount_toman: int = Field(strict=True,ge=-(2**63)+1,le=2**63-1)
     reason: str = Field(min_length=3,max_length=500)
 
 
