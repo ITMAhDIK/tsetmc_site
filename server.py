@@ -72,6 +72,8 @@ from datetime import datetime, timedelta
 from sector_affinity import SectorAffinityAccumulator, load_sector_reference
 from site_api.dispatch import dispatch_api
 from site_api.errors import ApiError
+from site_api.process_lock import LockAlreadyHeldError, ProcessLock
+from site_api.refresh_runtime import start_refresh_runtime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Jalali (Persian) calendar conversion -- pure Python, no dependency.
@@ -2060,72 +2062,78 @@ class SiteApi:
         return row[0] if row else default
 
     def refresh(self):
-        # Skip the rebuild when the live DB file has not changed since the
-        # last successful refresh: the summaries are already current and a
-        # rebuild of the 13.8M-row holdings table is expensive.
+        """Refresh derived projections with thread and process-level exclusion."""
         with self._refresh_lock:
             try:
-                st = os.stat(self.db_path)
-                fingerprint = "%d:%d" % (st.st_size, int(st.st_mtime))
-            except OSError:
-                fingerprint = None
+                with ProcessLock(self.sidecar_path + ".refresh.lock"):
+                    self._refresh_locked()
+            except LockAlreadyHeldError as exc:
+                self._refresh_error = str(exc)
+                print("[refresh] skipped: %s" % exc, flush=True)
+
+    def _refresh_locked(self):
+        try:
+            st = os.stat(self.db_path)
+            fingerprint = "%d:%d" % (st.st_size, int(st.st_mtime))
+        except OSError:
+            fingerprint = None
+        sc = self.sidecar()
+        try:
+            # Ensure the search-ordering index exists on the CURRENT
+            # sidecar, even when the fingerprint check below skips the
+            # rebuild: the index was added after the first build, and
+            # forcing a full 30-minute rebuild just to create it would
+            # take the API down for nothing. CREATE INDEX IF NOT
+            # EXISTS is a no-op once it is there. (Step 2 creates the
+            # same index on fresh rebuilds.)
+            if sc.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='site_holder_latest'").fetchone():
+                with sc:
+                    sc.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_holder_latest_pct "
+                        "ON site_holder_latest(latest_date DESC, "
+                        "ownership_percent_calc DESC)")
+            if fingerprint is not None:
+                have = self.meta(sc, "db_fingerprint")
+                version = self.meta(sc, "sidecar_version")
+                ownership_schema = self.meta(sc, "ownership_resolver_schema")
+                n_watch = sc.execute(
+                    "SELECT COUNT(*) FROM site_watch").fetchone()[0]
+                history_ready = sc.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='site_holder_history'").fetchone() is not None
+                if have == fingerprint and n_watch > 0 and history_ready and \
+                        version == str(SIDECAR_VERSION) and \
+                        ownership_schema == "resolved-v1-source-exclusions":
+                    print("[refresh] live DB unchanged since last build; "
+                          "summaries are current, skipping rebuild.",
+                          flush=True)
+                    self._refresh_error = None
+                    return
+                if version != str(SIDECAR_VERSION):
+                    print("[refresh] sidecar layout v%s -> v%s; "
+                          "forcing a full rebuild." % (
+                              version, SIDECAR_VERSION), flush=True)
+        finally:
+            sc.close()
+        try:
+            live = self.live()
             sc = self.sidecar()
             try:
-                # Ensure the search-ordering index exists on the CURRENT
-                # sidecar, even when the fingerprint check below skips the
-                # rebuild: the index was added after the first build, and
-                # forcing a full 30-minute rebuild just to create it would
-                # take the API down for nothing. CREATE INDEX IF NOT
-                # EXISTS is a no-op once it is there. (Step 2 creates the
-                # same index on fresh rebuilds.)
-                if sc.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' "
-                        "AND name='site_holder_latest'").fetchone():
+                refresh_summaries(live, sc)
+                if fingerprint is not None:
                     with sc:
                         sc.execute(
-                            "CREATE INDEX IF NOT EXISTS idx_holder_latest_pct "
-                            "ON site_holder_latest(latest_date DESC, "
-                            "ownership_percent_calc DESC)")
-                if fingerprint is not None:
-                    have = self.meta(sc, "db_fingerprint")
-                    version = self.meta(sc, "sidecar_version")
-                    ownership_schema = self.meta(sc, "ownership_resolver_schema")
-                    n_watch = sc.execute(
-                        "SELECT COUNT(*) FROM site_watch").fetchone()[0]
-                    history_ready = sc.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' "
-                        "AND name='site_holder_history'").fetchone() is not None
-                    if have == fingerprint and n_watch > 0 and history_ready and \
-                            version == str(SIDECAR_VERSION) and \
-                            ownership_schema == "resolved-v1-source-exclusions":
-                        print("[refresh] live DB unchanged since last build; "
-                              "summaries are current, skipping rebuild.",
-                              flush=True)
-                        self._refresh_error = None
-                        return
-                    if version != str(SIDECAR_VERSION):
-                        print("[refresh] sidecar layout v%s -> v%s; "
-                              "forcing a full rebuild." % (
-                                  version, SIDECAR_VERSION), flush=True)
+                            "INSERT OR REPLACE INTO site_meta (key, value) "
+                            "VALUES ('db_fingerprint', ?)", (fingerprint,))
+                self._refresh_error = None
             finally:
+                live.close()
                 sc.close()
-            try:
-                live = self.live()
-                sc = self.sidecar()
-                try:
-                    refresh_summaries(live, sc)
-                    if fingerprint is not None:
-                        with sc:
-                            sc.execute(
-                                "INSERT OR REPLACE INTO site_meta (key, value) "
-                                "VALUES ('db_fingerprint', ?)", (fingerprint,))
-                    self._refresh_error = None
-                finally:
-                    live.close()
-                    sc.close()
-            except Exception as e:
-                self._refresh_error = "%r" % (e,)
-                print("[refresh] FAILED: %r" % (e,), flush=True)
+        except Exception as e:
+            self._refresh_error = "%r" % (e,)
+            print("[refresh] FAILED: %r" % (e,), flush=True)
 
     def require_ready(self, sc):
         # Ready only after a full refresh completed AND the expected ownership
@@ -4649,9 +4657,16 @@ def main():
                     help="folder holding the local website entrypoint (docs/ by default; pass . for the legacy ai_studio_code.html)")
     ap.add_argument("--output-dir", default=DEFAULT_OUTPUT,
                     help="folder holding the Excel workbooks")
+    ap.add_argument("--sidecar", default=os.path.join(here, "site_data.sqlite"),
+                    help="path to the derived site SQLite database")
+    ap.add_argument("--refresh-mode", choices=("inline", "external"),
+                    default="inline",
+                    help="inline keeps legacy in-process refresh; external uses site_api.refresh_worker")
     ap.add_argument("--refresh-minutes", type=float, default=10,
-                    help="how often the summary tables are rebuilt (0 = once)")
+                    help="refresh interval in minutes (0 = one pass)")
     args = ap.parse_args()
+    if not math.isfinite(args.refresh_minutes) or args.refresh_minutes < 0:
+        ap.error("--refresh-minutes must be a finite non-negative number")
 
     if not os.path.isfile(args.db):
         print("ERROR: database not found: %s" % args.db)
@@ -4663,15 +4678,14 @@ def main():
 
     # Keep the generated API sidecar beside server.py, not inside docs/,
     # because docs/ is the public Pages directory and may be committed.
-    api = SiteApi(args.db,
-                  os.path.join(here, "site_data.sqlite"),
-                  args.site_dir, args.output_dir)
+    api = SiteApi(args.db, args.sidecar, args.site_dir, args.output_dir)
     Handler.api = api
 
     print("tsetmc_site API server")
     print("  db:     %s (read-only)" % args.db)
     print("  site:   %s" % args.site_dir)
     print("  output: %s" % args.output_dir)
+    print("  sidecar:%s" % args.sidecar)
     try:
         live = api.live()
         try:
@@ -4681,18 +4695,20 @@ def main():
     except Exception as e:
         print("WARNING: could not open the live DB: %r" % (e,))
 
-    print("building the first summary in the background (on the first run "
-          "this scans the holdings table once and can take a while; later "
-          "starts reuse it instantly when the database has not changed) ...",
-          flush=True)
-    threading.Thread(target=api.refresh, daemon=True).start()
-
-    if args.refresh_minutes and args.refresh_minutes > 0:
-        def _loop():
-            while True:
-                time.sleep(args.refresh_minutes * 60)
-                api.refresh()
-        threading.Thread(target=_loop, daemon=True).start()
+    _refresh_threads = start_refresh_runtime(
+        api, args.refresh_mode, args.refresh_minutes
+    )
+    if args.refresh_mode == "inline":
+        print("building summaries with the legacy in-process refresh mode ...",
+              flush=True)
+    else:
+        worker_command = (
+            "python -m site_api.refresh_worker --db %s --sidecar %s "
+            "--refresh-minutes %s"
+            % (repr(args.db), repr(args.sidecar), args.refresh_minutes)
+        )
+        print("[refresh] external worker mode selected. Start a separate "
+              "terminal and run:\n  " + worker_command, flush=True)
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print("listening on http://%s:%d/ -- open it in the browser" % (args.host, args.port),
