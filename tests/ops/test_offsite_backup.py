@@ -36,6 +36,8 @@ def _prepare(tmp_path: Path):
         "SAAS_BACKUP_REMOTE": "s3:private-bucket/tloomberg",
         "SAAS_BACKUP_DIR": str(backup_dir),
         "RCLONE_CAPTURE": str(capture),
+        "RCLONE_LOCAL_ARCHIVE": str(archive),
+        "RCLONE_LOCAL_CHECKSUM": str(checksum_file),
         "PATH": str(bin_dir) + os.pathsep + env["PATH"],
     })
     return archive, capture, env
@@ -52,11 +54,11 @@ def test_offsite_backup_uploads_only_age_archive_and_checksum_immutably(tmp_path
     )
     assert result.returncode == 0, result.stderr
     calls = capture.read_text(encoding="utf-8").splitlines()
-    assert len(calls) == 4
+    assert len(calls) == 6
     assert all("--immutable" in line and "--checksum" in line for line in calls[:2])
     assert archive.name in calls[0]
     assert archive.name + ".sha256" in calls[1]
-    assert "Off-host encrypted backup uploaded:" in result.stdout
+    assert "Off-host encrypted backup uploaded and verified:" in result.stdout
 
 
 def test_offsite_backup_refuses_plaintext_or_unencrypted_artifacts(tmp_path):
@@ -102,3 +104,16 @@ def test_offsite_backup_requires_named_remote_and_encrypted_archive(tmp_path):
     assert result.returncode == 2
     assert "rclone remote" in result.stderr
     assert not capture.exists()
+
+def test_offsite_backup_detects_remote_object_corruption(tmp_path):
+    archive, capture, env = _prepare(tmp_path)
+    env["RCLONE_CORRUPT_REMOTE"] = "1"
+    result = subprocess.run(
+        ["bash", str(SCRIPT), str(archive)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 4
+    assert "Off-host backup content verification failed" in result.stderr
