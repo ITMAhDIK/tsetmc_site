@@ -45,6 +45,7 @@ services:
       SAAS_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS browser origins}
       SAAS_OTP_HMAC_SECRET: ${SAAS_OTP_HMAC_SECRET:?Set a dedicated random OTP HMAC secret}
       SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set a dedicated Fernet key}
+      SAAS_SUPERADMIN_PHONE_E164: ${SAAS_SUPERADMIN_PHONE_E164:?Set the verified bootstrap admin phone in protected server secrets}
       SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
       SAAS_DB_POOL_MIN: ${SAAS_DB_POOL_MIN:-1}
       SAAS_DB_POOL_MAX: ${SAAS_DB_POOL_MAX:-8}
@@ -82,6 +83,41 @@ services:
     networks:
       saas-backend:
         ipv4_address: 172.31.240.20
+
+  saas-sms-worker:
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
+    command:
+      - python
+      - scripts/saas_sms_worker.py
+    environment:
+      APP_ENV: production
+      SAAS_DATABASE_URL: ${SAAS_DATABASE_URL:?Set the separate low-privilege runtime database connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+      SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set the dedicated Fernet key}
+      SMS_PROVIDER: ${SMS_PROVIDER:?Set SMS_PROVIDER=kavenegar}
+      SMS_API_KEY: ${SMS_API_KEY:?Set the Kavenegar API key in protected server secrets}
+      SMS_SENDER: ${SMS_SENDER:?Set your approved Kavenegar sender line}
+      SAAS_NOTIFICATION_POLL_SECONDS: ${SAAS_NOTIFICATION_POLL_SECONDS:-2}
+    depends_on:
+      saas-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
 
   saas-edge:
     image: caddy:2-alpine
