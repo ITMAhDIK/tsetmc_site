@@ -67,8 +67,17 @@ remain out-of-band; actual bank payout and provider payment overrides are not
 allowed. Frontend UI and database/security integration tests remain. No market
 data DB or service changes.
 
-## Phase 9 — Production readiness
-Threat model, security review, automated/load tests, backup/restore, monitoring,
-incident response, deployment automation and legal review.
+## Phase 9 — Production readiness (engineering foundation implemented; release gates open)
+Phase 9A–D on feat/tloomberg-saas-production-readiness-phase9 now includes:
+- Threat model, trust boundaries, explicit release gates and NOT READY status.
+- Dependency vulnerability audit (pip-audit), high-severity/high-confidence Bandit, Dependabot weekly checks for Python, GitHub Actions and Docker images, and pinned Actions commit SHAs. Latest confirmed run: Python suite 166 passed; dependency audit and security scan jobs passed.
+- Production startup configuration checks, explicit host/CORS allow-lists, cookie CSRF origin checks, security headers, readiness endpoint, structured redacted request logs and bounded PostgreSQL connection pool.
+- Argon2id dummy verification for unknown user logins, serialized concurrent OTP rate limits, exact payment-event and admin-wallet idempotency, append-only wallet/reconciliation/admin audit tables.
+- Checksummed migration runner with advisory locking, per-migration transactions, drift detection, exact DB identity check, explicit rejection of unknown/non-empty schema without migration ledger, and bounded grants to a pre-created runtime role.
+- PostgreSQL 16 CI integration suite (166 Python tests on the verified Phase 9 head) for authentication, RBAC and object isolation, standard-user denial across current staff/admin/analytics-admin GET routes, support internal-note confidentiality, consent analytics, payment settlement/replay, gateway fail-closed behavior, wallet concurrency/idempotency, OTP concurrency and immutable records.
+- Age-encrypted custom-format PostgreSQL backup with SHA-256 and isolated decryption/restore. CI runs an ephemeral PostgreSQL 16 backup → encrypted archive → decryption → restore rehearsal using a separately provisioned read-only backup role; it asserts that role cannot mutate tables and verifies remote backup/restore TLS fail-closed behavior.
+- Non-root API Docker image and hardened production Compose template with one-shot migration prerequisite, read-only filesystem, dropped capabilities, bounded process count, Caddy automatic HTTPS, public metadata-minimal readiness route, fixed proxy trust boundary, and external/unpublished PostgreSQL.
+- A bounded, read-only HTTPS staging probe for /health and /ready with public-DNS checks and explicit non-production operator approval.
 
+**Not production-complete.** PR #17 remains Draft and unmerged. Phases 1–8 remain separate unmerged Draft dependencies. Existing production DB baseline adoption, complete route-level RBAC/object-isolation matrix, official payment/SMS/bank sandbox tests, edge/IP/device/distributed rate limiting and WAF, independent penetration review, encrypted off-host backup retention/RPO/RTO and a real disaster-recovery drill, production monitoring/on-call and incident exercise, executed staging load/soak/failure tests, actual host/DNS/TLS deployment and rollback, and jurisdiction-specific legal/privacy review remain required before public production. No migration has been applied to a live/market DB; no production deployment or live-host load test was attempted.
 CRM is explicitly deferred.
