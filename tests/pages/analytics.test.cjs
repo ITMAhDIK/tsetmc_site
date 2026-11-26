@@ -211,3 +211,23 @@ test("401 from consent endpoint leaves tracking disabled", async () => {
   assert.equal(sdk.trackPage({ page: "market" }), false);
   assert.equal(sdk.getState().queuedEvents, 0);
 });
+
+
+test("initial route is recorded only once when SDK and React initialize together", async () => {
+  const win = makeWindow();
+  const { fetchImpl } = makeFetch(true);
+  const sdk = createAnalyticsSdk({
+    windowRef: win,
+    documentRef: null,
+    config: { apiBase: "https://api.example.test" },
+    fetchImpl,
+  });
+
+  await sdk.init();
+  assert.equal(sdk.getState().queuedEvents, 2);
+  assert.equal(
+    sdk.trackPage({ page: "market" }, { initial: true }),
+    false,
+  );
+  assert.equal(sdk.getState().queuedEvents, 2);
+});
