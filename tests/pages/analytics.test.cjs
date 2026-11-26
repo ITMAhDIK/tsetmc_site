@@ -80,7 +80,7 @@ test("API base rejects insecure external origins and accepts HTTPS or same-origi
 test("identifier allow-list never passes raw text or personal content", () => {
   assert.equal(safeIdentifier("nav-market", "other"), "nav-market");
   assert.equal(safeIdentifier("Buy ABC now", "other"), "other");
-  assert.equal(safeIdentifier("phone_0912", "other"), "other");
+  assert.equal(safeIdentifier("09121234567", "other"), "other");
 });
 
 test("no API config means no network activity and no event collection", async () => {
