@@ -101,6 +101,8 @@ def set_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reason:
                 raise LookupError("user not found")
             if before["status"]==status:
                 return {"id":user_id,"status":status,"changed":False}
+            if before["status"] not in {"active","suspended"}:
+                raise ValueError("deleted or pending accounts cannot be reactivated or changed from the console")
             cur.execute("""SELECT EXISTS(
                 SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
                 WHERE ur.user_id=%s AND r.code='superadmin') AS is_superadmin""",(user_id,))
@@ -232,8 +234,8 @@ def adjust_wallet(conn, *, actor_id: UUID, user_id: UUID, bucket: str, amount_to
     note=(reason or "").strip()
     if bucket not in {"cash","gift"} or isinstance(amount_toman,bool) or not isinstance(amount_toman,int) or amount_toman==0:
         raise ValueError("wallet adjustment requires a bucket and non-zero integer Toman amount")
-    if not note or len(note)>500 or not idempotency_key or len(idempotency_key)>120:
-        raise ValueError("reason and idempotency key are required")
+    if not note or len(note)>500 or not idempotency_key or idempotency_key.strip()!=idempotency_key or len(idempotency_key)>120:
+        raise ValueError("reason and a non-blank idempotency key are required")
     entry_type="admin_credit" if amount_toman>0 else "admin_debit"
     with conn.transaction():
         with conn.cursor() as cur:
@@ -241,13 +243,13 @@ def adjust_wallet(conn, *, actor_id: UUID, user_id: UUID, bucket: str, amount_to
             cur.execute("SELECT id FROM users WHERE id=%s",(user_id,))
             if not cur.fetchone():
                 raise LookupError("user not found")
-            cur.execute("""SELECT id,user_id,bucket,entry_type,amount_toman,reference_type,reference_id
+            cur.execute("""SELECT id,user_id,bucket,entry_type,amount_toman,reference_type,reference_id,description
                            FROM wallet_ledger_entries WHERE idempotency_key=%s FOR UPDATE""",(idempotency_key,))
             existing=cur.fetchone()
             if existing:
-                expected=(user_id,bucket,entry_type,amount_toman,"admin_adjustment",None)
+                expected=(user_id,bucket,entry_type,amount_toman,"admin_adjustment",None,note)
                 actual=tuple(existing[k] for k in
-                    ("user_id","bucket","entry_type","amount_toman","reference_type","reference_id"))
+                    ("user_id","bucket","entry_type","amount_toman","reference_type","reference_id","description"))
                 if actual!=expected:
                     raise ValueError("idempotency key was reused with different wallet adjustment data")
                 return existing
