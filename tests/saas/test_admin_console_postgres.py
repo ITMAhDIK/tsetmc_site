@@ -61,11 +61,11 @@ def test_console_permissions_user_management_and_session_revocation(migrated_adm
                 assert client.get("/admin/console/ui",headers=admin_headers).status_code==403
                 assert client.get("/admin/console/overview",headers=admin_headers).status_code==403
                 cookie_token=root_headers["Authorization"].split(" ",1)[1]
-                client.cookies.set("tloomberg_session",cookie_token,domain="testserver",path="/")
+                cookie_headers={"Cookie":f"tloomberg_session={cookie_token}"}
+                assert client.get("/auth/me",headers=cookie_headers).status_code==200
                 csrf_blocked=client.patch(f"/admin/console/users/{target}/status",
-                    json={"status":"suspended","reason":"missing origin"})
+                    headers=cookie_headers,json={"status":"suspended","reason":"missing origin"})
                 assert csrf_blocked.status_code==403
-                client.cookies.delete("tloomberg_session",domain="testserver",path="/")
                 listing=client.get("/admin/console/users?q=target",headers=admin_headers)
                 assert listing.status_code==200
                 assert any(row["id"]==str(target) for row in listing.json()["users"])
