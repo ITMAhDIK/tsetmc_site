@@ -146,6 +146,7 @@ def test_production_configuration_rejects_wildcard_hosts_and_shared_secrets(monk
     shared_key = Fernet.generate_key().decode("ascii")
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", shared_key)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", shared_key)
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
 
     with pytest.raises(ConfigurationError, match="OTP and outbox encryption secrets"):
         auth_api.validate_production_configuration()
