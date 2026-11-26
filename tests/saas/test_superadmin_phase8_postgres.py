@@ -39,7 +39,7 @@ def make_user(conn, label):
     conn.execute(
         """INSERT INTO users(id,public_id,username,status,password_hash)
            VALUES (%s,%s,%s,'active','test-hash')""",
-        (user_id,str(user_id),f"{label}_{user_id.hex[:12]}"),
+        (user_id,user_id.hex[:32],f"{label}_{user_id.hex[:12]}"),
     )
     return user_id
 
