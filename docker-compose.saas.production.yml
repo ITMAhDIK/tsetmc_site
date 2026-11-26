@@ -149,7 +149,7 @@ services:
       - saas-backend
 
   saas-edge:
-    image: caddy:2-alpine
+    image: ${SAAS_EDGE_IMAGE:?Set an immutable SaaS edge image reference}
     environment:
       SAAS_DOMAIN: ${SAAS_DOMAIN:?Set the public API domain with DNS pointing to this host}
     depends_on:
@@ -160,7 +160,6 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ./Caddyfile.saas:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
