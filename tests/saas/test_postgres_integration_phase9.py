@@ -696,12 +696,12 @@ def test_standard_user_is_denied_every_staff_and_admin_read_route(db, client):
 
 
 def _insert_page_view_sequence(conn, user_id, session_id, paths):
-    for index, page_path in enumerate(paths):
+    for page_path in paths:
         conn.execute(
             """INSERT INTO analytics_events
                (user_id,anonymous_id,session_id,event_name,page_path,occurred_at)
-               VALUES (%s,NULL,%s,'page_view',%s,now()+(%s * interval '1 second'))""",
-            (user_id, session_id, page_path, index),
+               VALUES (%s,NULL,%s,'page_view',%s,now())""",
+            (user_id, session_id, page_path),
         )
     conn.commit()
 
@@ -739,6 +739,16 @@ def test_repeated_path_reports_are_session_scoped_private_and_audited(db, client
     _insert_page_view_sequence(
         db, users[0][0]["id"], second_session, ["/market", "/company/:id"]
     )
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT COUNT(DISTINCT occurred_at) AS timestamp_count,
+                      array_agg(event_order ORDER BY event_order) AS event_orders
+               FROM analytics_events WHERE session_id=%s""",
+            (target_session_ids[0],),
+        )
+        ordering = cur.fetchone()
+    assert ordering["timestamp_count"] == 1
+    assert ordering["event_orders"] == sorted(ordering["event_orders"])
     # Non-page events must never enter navigation sequence reports.
     db.execute(
         """INSERT INTO analytics_events
