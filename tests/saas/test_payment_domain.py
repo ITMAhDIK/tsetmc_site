@@ -73,3 +73,73 @@ def test_unconfigured_gateway_verification_and_refund_fail_closed(provider):
         gateway.verify(provider_order_id="gateway-1", callback_data={})
     with pytest.raises(PaymentNotConfigured):
         gateway.refund(provider_order_id="gateway-1", amount_toman=1000, idempotency_key="refund-123456")
+
+
+def test_processed_provider_event_retry_is_idempotent():
+    from contextlib import nullcontext
+    from uuid import uuid4
+    from saas_core.payments.settlement import settle_provider_callback
+
+    order_id = uuid4()
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def execute(self, query, params=None):
+            self.query = query
+        def fetchone(self):
+            return {"order_id": order_id, "processing_status": "processed"}
+
+    class Connection:
+        def transaction(self):
+            return nullcontext()
+        def cursor(self):
+            return Cursor()
+
+    verified = VerifiedPayment(
+        provider_event_id="evt-retry",
+        provider_order_id="gateway-1",
+        amount_toman=899000,
+        success=True,
+    )
+    result = settle_provider_callback(
+        Connection(), order_id=order_id, attempt_id=uuid4(),
+        provider="snappay", verified=verified, payload_sha256="a" * 64,
+    )
+    assert result == {"already_processed": True, "order_id": order_id}
+
+
+def test_provider_event_cannot_be_replayed_against_another_order():
+    from contextlib import nullcontext
+    from uuid import uuid4
+    from saas_core.payments.settlement import settle_provider_callback
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def execute(self, query, params=None):
+            self.query = query
+        def fetchone(self):
+            return {"order_id": uuid4(), "processing_status": "processed"}
+
+    class Connection:
+        def transaction(self):
+            return nullcontext()
+        def cursor(self):
+            return Cursor()
+
+    verified = VerifiedPayment(
+        provider_event_id="evt-replay",
+        provider_order_id="gateway-1",
+        amount_toman=899000,
+        success=True,
+    )
+    with pytest.raises(PaymentRejected, match="another order"):
+        settle_provider_callback(
+            Connection(), order_id=uuid4(), attempt_id=uuid4(),
+            provider="snappay", verified=verified, payload_sha256="b" * 64,
+        )

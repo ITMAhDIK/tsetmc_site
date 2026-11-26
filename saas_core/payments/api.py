@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 from saas_core.auth.api import current_user, get_conn
 from .domain import PaymentNotConfigured, PaymentRejected, PaymentRequest
 from .gateways import get_gateway
+from .settlement import settle_provider_callback
 from .repository import (
     attach_provider_checkout, create_payment_attempt, create_subscription_order,
     find_attempt_by_provider_order, get_order_for_user, mark_attempt_failed,
-    settle_verified_payment,
 )
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -123,7 +123,7 @@ async def provider_return(provider: str, request: Request, conn=Depends(get_conn
         digest = hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        result = settle_verified_payment(
+        result = settle_provider_callback(
             conn, order_id=attempt["order_id"], attempt_id=attempt["attempt_id"],
             provider=provider, verified=verified, payload_sha256=digest,
         )
