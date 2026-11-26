@@ -25,7 +25,7 @@ from .repository import (
     authenticate_session, consume_phone_otp, login_password,
     register_password_user, request_phone_otp, revoke_session, create_session,
 )
-from .service import AuthenticationError, ConfigurationError
+from .service import AuthenticationError, ConfigurationError, normalize_phone
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 COOKIE_NAME = "tloomberg_session"
@@ -75,6 +75,13 @@ def validate_production_configuration() -> None:
         raise ConfigurationError("SAAS_EXPECTED_DATABASE_NAME is required in production")
     if len(otp_secret) < 32:
         raise ConfigurationError("SAAS_OTP_HMAC_SECRET must contain at least 32 characters")
+    bootstrap_phone = os.getenv("SAAS_SUPERADMIN_PHONE_E164", "").strip()
+    if not bootstrap_phone:
+        raise ConfigurationError("SAAS_SUPERADMIN_PHONE_E164 is required in production")
+    try:
+        normalize_phone(bootstrap_phone)
+    except ValueError as exc:
+        raise ConfigurationError("SAAS_SUPERADMIN_PHONE_E164 must be a valid E.164 number") from exc
     if not fernet_key:
         raise ConfigurationError("SAAS_OUTBOX_FERNET_KEY is required in production")
     if otp_secret == fernet_key:
@@ -392,10 +399,19 @@ def phone_verify(body: OtpVerifyBody, response: Response, conn=Depends(get_conn)
 
 
 @app.get("/auth/me")
-def me(user=Depends(current_user)):
+def me(user=Depends(current_user), conn=Depends(get_conn)):
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT COALESCE(array_agg(r.code ORDER BY r.code),'{}') AS roles
+               FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+               WHERE ur.user_id=%s""",
+            (user["id"],),
+        )
+        roles = cur.fetchone()["roles"]
     return {"user": {
         "id": str(user["id"]), "public_id": user["public_id"], "username": user["username"],
         "display_name": user["display_name"], "account_type": user["account_type"],
+        "roles": roles, "is_superadmin": "superadmin" in roles,
     }}
 
 
