@@ -387,3 +387,35 @@ def test_admin_user_directory_exposes_internal_id_only_to_staff(service):
             "GET", "/api/v1/site-admin/users", {}, {}, target, "http://localhost:8000"
         )
     assert denied.value.status == 403
+
+
+def test_analytics_routes_require_temporary_password_change_before_use(service):
+    user = signed_in(service, "analytics_password_gate_user")
+    user["must_change_password"] = 1
+    with pytest.raises(AccountError) as denied:
+        service.dispatch(
+            "GET", "/api/v1/analytics/consent", {}, {},
+            user, "http://localhost:8000",
+        )
+    assert denied.value.status == 403
+
+
+def test_route_analysis_rejects_ranges_above_the_bounded_event_cap(service, monkeypatch):
+    import site_accounts
+
+    user = signed_in(service, "analytics_route_cap_user")
+    dispatch_consent(service, user, True)
+    page_views(service, user, ["/market", "/stock", "/shareholders"])
+    superadmin = signed_in(service, "analytics_route_cap_superadmin", role="super_admin")
+    monkeypatch.setattr(site_accounts, "MAX_ANALYTICS_PATH_EVENTS", 2)
+
+    with pytest.raises(AccountError) as exc:
+        service.dispatch(
+            "GET",
+            f"/api/v1/analytics/admin/users/{user['id']}/paths",
+            {"days": ["30"], "max_steps": ["3"]},
+            {},
+            superadmin,
+            "http://localhost:8000",
+        )
+    assert exc.value.status == 413
