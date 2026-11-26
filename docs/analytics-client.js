@@ -40,6 +40,7 @@
 
   function enqueue(eventName, fields) {
     if (!state.enabled || !state.pagePath || state.transportUnavailable) return;
+    if (state.queue.length >= 200) state.queue.shift();
     state.queue.push({
       client_event_id: uuid(),
       event_name: eventName,
