@@ -5,12 +5,16 @@ SaaS test database whose schema migrations 001–005 have been applied.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import uuid
+from io import BytesIO
 
 import pytest
 
 from saas_core.domain.admin_console import AdminConflict, AdminConsoleService
+from saas_core.http.admin_api import CSRF_COOKIE, SESSION_COOKIE, SaasAdminAPI
 
 
 DATABASE_URL = os.environ.get("SAAS_TEST_DATABASE_URL")
@@ -123,3 +127,77 @@ def test_last_active_superadmin_guard_rolls_back_real_status_change():
             (str(target),),
         )
         assert cursor.fetchone()[0] == 0
+
+
+
+def _session(cursor, user_id):
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    csrf = uuid.uuid4().hex + uuid.uuid4().hex
+    cursor.execute(
+        """
+        INSERT INTO sessions
+          (user_id,token_hash,expires_at,mfa_verified_at,csrf_token_hash)
+        VALUES (%s,%s,now()+interval '1 hour',now(),%s)
+        """,
+        (
+            user_id,
+            hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            hashlib.sha256(csrf.encode("utf-8")).hexdigest(),
+        ),
+    )
+    return token, csrf
+
+
+def _wsgi_get(api, token, csrf, path):
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+        captured["headers"] = headers
+
+    environ = {
+        "REQUEST_METHOD": "GET",
+        "PATH_INFO": path,
+        "QUERY_STRING": "",
+        "HTTP_COOKIE": f"{SESSION_COOKIE}={token}; {CSRF_COOKIE}={csrf}",
+        "wsgi.input": BytesIO(b""),
+        "CONTENT_LENGTH": "0",
+        "SERVER_NAME": "admin.example.test",
+        "SERVER_PORT": "443",
+        "wsgi.url_scheme": "https",
+    }
+    body = b"".join(api(environ, start_response))
+    return captured["status"], json.loads(body.decode("utf-8"))
+
+
+def test_admin_http_api_authenticates_mfa_session_and_enforces_database_roles():
+    with _connect() as connection, connection.cursor() as cursor:
+        superadmin = _user(cursor, "HTTP integration superadmin")
+        regular_user = _user(cursor, "HTTP integration regular user")
+        cursor.execute("SELECT id FROM roles WHERE code='superadmin'")
+        superadmin_role = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO user_roles(user_id,role_id) VALUES (%s,%s)",
+            (superadmin, superadmin_role),
+        )
+        superadmin_session = _session(cursor, superadmin)
+        regular_session = _session(cursor, regular_user)
+
+    api = SaasAdminAPI(
+        connection_factory=_connect,
+        allowed_origins={"https://admin.example.test"},
+    )
+
+    status, payload = _wsgi_get(
+        api, *superadmin_session, "/api/v1/admin/overview"
+    )
+    assert status.startswith("200")
+    assert payload["ok"] is True
+    assert "users_total" in payload["data"]
+
+    status, payload = _wsgi_get(
+        api, *regular_session, "/api/v1/admin/overview"
+    )
+    assert status.startswith("403")
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "permission_denied"
