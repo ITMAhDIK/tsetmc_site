@@ -25,9 +25,15 @@ security.
 A user has immutable internal UUID plus public ID/username. Password, Google
 OAuth and phone OTP identities are linked through auth_identities. Linking
 requires proof of control of both identities. Purchases require verified phone.
-Passwords should use Argon2id; OTPs are hashed, short-lived, rate-limited and
-single-use. Sessions store token hashes and can be revoked. Superadmin is
-provisioned out-of-band, never by public signup.
+The active browser flows are Argon2id username/password and six-digit phone
+OTP. Google OAuth and cross-provider identity linking are not currently exposed
+as active browser flows. OTPs are HMAC-protected, short-lived, rate-limited and
+single-use; signup OTPs are bound to the exact terms/privacy versions presented
+when requested. Sessions store token hashes and can be revoked. The bootstrap
+superadmin phone is configured out-of-band and receives the role only after
+successful OTP verification. Privileged sessions additionally require TOTP
+MFA with an independently encrypted seed, replay protection and a 12-hour
+verification window.
 
 ## Payment lifecycle
 Seed plans: monthly 30 days / 899,000 Toman; quarterly 90 days / 2,499,000
@@ -63,7 +69,14 @@ passwords, payment fields, bank details, private ticket messages or keystrokes.
 Provide consent, retention, deletion and audited user-level analytics access.
 
 ## Deployment
-Use HTTPS, secure HttpOnly SameSite cookies, CSRF protection, rate limiting,
-secret management, independent database credentials, independent backups,
-restore drills, migrations, health checks and audit/alerting.
+The deployment template has two independent deployables: a read-only Market
+API/Sidecar platform and a separate FastAPI/PostgreSQL SaaS platform. SaaS login,
+admin and legal pages are served by a same-origin HTTPS Edge image so
+HttpOnly/Secure/SameSite=Lax session cookies remain first-party. The Market
+source SQLite is mounted read-only and public production routes are restricted
+to read-only market and side-effect-free screener requests. Use independent
+database credentials, protected secrets, encrypted backup/restore, migration
+checksums, health/readiness, route-level Prometheus metrics and audit logs.
+The Prometheus configuration is private; Alertmanager delivery, host monitoring
+and on-call still require environment provisioning.
 CRM is deferred and will integrate via stable user IDs and audited APIs.
