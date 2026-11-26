@@ -2289,12 +2289,12 @@
 
     // --- Account & Plans: server-verified phone OTP session ---
     function AccountAndPlansPage({ plan, setPlan, onAuthChange }) {
-      const saasApiBase = (
-        window.TLOOMBERG_ANALYTICS_CONFIG &&
-        window.TLOOMBERG_ANALYTICS_CONFIG.apiBase
+      let saasApiBase = String(
+        window.TLOOMBERG_ANALYTICS_CONFIG && window.TLOOMBERG_ANALYTICS_CONFIG.apiBase
           ? window.TLOOMBERG_ANALYTICS_CONFIG.apiBase
           : ''
-      ).replace(/\\/+$/, '');
+      );
+      while (saasApiBase.endsWith('/')) saasApiBase = saasApiBase.slice(0, -1);
       const [phone, setPhone] = useState('');
       const [otp, setOtp] = useState('');
       const [step, setStep] = useState('phone');
@@ -2806,6 +2806,7 @@
     function App() {
       const [page, setPage] = useState('market');
       const [activeSymbol, setActiveSymbol] = useState('');
+      const [authUser, setAuthUser] = useState(null);
       const [theme, setTheme] = useState(getInitialTheme);
       const [currency, setCurrency] = useState('IRR');
       const [dateMode, setDateMode] = useState('jalali');
@@ -2860,6 +2861,19 @@
       const [searchResults, setSearchResults] = useState([]);
 
       useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
+
+      useEffect(() => {
+        const base = window.TLOOMBERG_ANALYTICS_CONFIG && window.TLOOMBERG_ANALYTICS_CONFIG.apiBase
+          ? String(window.TLOOMBERG_ANALYTICS_CONFIG.apiBase).replace(/\\/+$/, '')
+          : '';
+        if (!base) { setAuthUser(null); return; }
+        let cancelled = false;
+        fetch(base + '/auth/me', { credentials: 'include' })
+          .then(response => response.ok ? response.json() : null)
+          .then(result => { if (!cancelled) setAuthUser(result && result.user ? result.user : null); })
+          .catch(() => { if (!cancelled) setAuthUser(null); });
+        return () => { cancelled = true; };
+      }, []);
 
       useEffect(() => {
         try { window.localStorage.setItem('tloomberg-theme', theme); } catch (_) {}
@@ -2941,7 +2955,7 @@
             </div>
             <div className="app-nav-wrap">
               <nav className="app-nav" aria-label="بخش‌های سامانه">
-                {NAV_PAGES.map(n => (
+                {NAV_PAGES.filter(n => n.id !== 'admin' || Boolean(authUser && authUser.is_superadmin)).map(n => (
                   <button key={n.id} onClick={() => navigateTo(n.id)} data-analytics-id={n.id} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
                     {n.label}
                   </button>
@@ -2957,7 +2971,7 @@
             {page === 'investor-history' && <InvestorHistoryPage />}
             {page === 'screener' && <ScreenerPage onOpenStock={openStock} />}
             {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
-            {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} />}
+            {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} onAuthChange={setAuthUser} />}
             {page === 'admin' && <AdminDashboardPage />}
           </main>
         </div>
