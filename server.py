@@ -2721,9 +2721,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        configured = [
+            item.strip() for item in os.getenv("MARKET_ALLOWED_ORIGINS", "").split(",")
+            if item.strip()
+        ]
+        origin = self.headers.get("Origin", "").strip()
+        if configured:
+            if origin in configured:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+        elif os.getenv("MARKET_PUBLIC_READ_ONLY", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            # Unrestricted CORS is retained only for explicit local development.
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Request-ID")
 
     def _serve_file(self, path):
         site_dir = os.path.abspath(self.api.site_dir)
@@ -2786,6 +2797,22 @@ class Handler(BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         status = 200
         try:
+            if path == "/healthz":
+                self._send_json(200, {"status": "ok", "service": "market-api"})
+                return
+            if path == "/readyz":
+                sc = self.api.sidecar()
+                try:
+                    self.api.require_ready(sc)
+                finally:
+                    sc.close()
+                live = self.api.live()
+                try:
+                    live.execute("SELECT 1").fetchone()
+                finally:
+                    live.close()
+                self._send_json(200, {"status": "ready", "service": "market-api"})
+                return
             if path in ("/", "/index.html"):
                 pages_entry = os.path.join(self.api.site_dir, "index.html")
                 entry = "index.html" if os.path.isfile(pages_entry) else "ai_studio_code.html"
@@ -2880,6 +2907,9 @@ def main():
                for name in ("index.html", "ai_studio_code.html")):
         print("ERROR: index.html or ai_studio_code.html not found in %s" % args.site_dir)
         raise SystemExit(2)
+    if os.getenv("MARKET_PUBLIC_READ_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}:
+        if not os.getenv("MARKET_ALLOWED_ORIGINS", "").strip():
+            ap.error("MARKET_ALLOWED_ORIGINS must be explicit in public read-only mode")
 
     # Keep the generated API sidecar beside server.py, not inside docs/,
     # because docs/ is the public Pages directory and may be committed.
