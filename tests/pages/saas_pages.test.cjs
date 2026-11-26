@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..', '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
-const inlineScripts = html => [...html.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)]
+const inlineScripts = html => [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
   .map(match => match[1].trim())
   .filter(Boolean);
 
@@ -67,7 +67,7 @@ test('Caddy serves static SaaS pages and proxies only the versioned API prefix',
   assert.match(caddy, /handle_path \/api\/v1\/\*/);
   assert.match(caddy, /reverse_proxy saas-api:8000/);
   assert.match(caddy, /@private path \/internal\/\*/);
-  assert.doesNotMatch(caddy, /reverse_proxy[^\\n]*internal\\/metrics/);
+  assert.doesNotMatch(caddy, /reverse_proxy[^\\n]*internal\/metrics/);
 });
 
 test('edge image bundles login, admin and both legal pages', () => {
