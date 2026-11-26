@@ -52,7 +52,7 @@
 - Provider-backed refund reconciliation and actual bank payouts.
 - Outbound notifications, export jobs, bulk actions and advanced search indexing.
 - Two-person approval workflow for large wallet adjustments.
-- PostgreSQL integration, concurrent superadmin/role changes, end-to-end RBAC matrix and security review have not been run.
+- Independent PostgreSQL 16 integration tests now exercise authenticated API access, RBAC separation, account/session changes, role protections, plan/subscription updates, append-only reconciliation notes, wallet idempotency and withdrawal review. Concurrent stress testing and independent security review remain outstanding.
 
 ## Validation status
-Pure policy/input tests are included. Keep this PR Draft. Do not expose the console publicly or apply the migration until database integration and security tests are complete.
+Pure policy/input tests and PostgreSQL/API integration tests are included. Keep this PR Draft. Do not expose the console publicly or apply the migration until database integration and security tests are complete.
