@@ -100,6 +100,8 @@ def test_assignment_requires_active_support_agent_and_is_audited(migrated_suppor
         grant_role(conn,admin,"admin")
         grant_role(conn,agent,"support")
         ticket=new_ticket(conn,owner)
+        with pytest.raises(AuthorizationDenied):
+            assign_ticket(conn,ticket_id=ticket["id"],actor_id=ordinary_user,assignee_id=agent)
         assigned=assign_ticket(conn,ticket_id=ticket["id"],actor_id=admin,assignee_id=agent)
         assert assigned["assigned_to"]==agent
         with pytest.raises(AuthorizationDenied):

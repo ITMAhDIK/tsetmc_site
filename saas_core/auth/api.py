@@ -126,3 +126,8 @@ app.include_router(wallet_router)
 # Support routes share authenticated sessions and isolated SaaS persistence.
 from saas_core.support.api import router as support_router
 app.include_router(support_router)
+
+
+# Product analytics uses the same authenticated SaaS session and isolated database.
+from saas_core.analytics.api import router as analytics_router
+app.include_router(analytics_router)

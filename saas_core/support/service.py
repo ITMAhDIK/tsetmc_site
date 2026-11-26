@@ -183,6 +183,7 @@ def list_staff_tickets(conn, *, status: str | None=None, assigned_to: UUID | Non
 
 def assign_ticket(conn, *, ticket_id: UUID, actor_id: UUID, assignee_id: UUID):
     with conn.transaction():
+        require_permission(conn,actor_id,"tickets.manage")
         require_permission(conn,assignee_id,"tickets.manage")
         with conn.cursor() as cur:
             cur.execute(

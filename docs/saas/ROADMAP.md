@@ -35,9 +35,12 @@
 - Permission checks for tickets.manage and faq.manage; staff mutations and FAQ changes are audited.
 - User-facing ticket reads never include internal notes.
 
-## Phase 7 — Product analytics
-Consent, click/navigation/scroll/active-time events, heatmaps, funnels, retention
-and permission-gated user-level analysis.
+## Phase 7 — Product analytics (backend implemented; frontend/privacy gates remain)
+- Opt-in account consent and revocation; allow-listed, idempotent authenticated event ingestion.
+- Page views, clicks, navigation, scroll depth, active duration and explicit funnel steps.
+- Permission-gated aggregate overview, funnels, weekly retention and audited user-level activity.
+- Heatmap data is component interaction intensity only; no pointer tracking or keystroke capture.
+- Frontend instrumentation, deletion/retention policy and legal/privacy review remain.
 
 ## Phase 8 — Superadmin console
 Users, roles, subscriptions, payment reconciliation, wallets, withdrawals,

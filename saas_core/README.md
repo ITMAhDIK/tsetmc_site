@@ -45,3 +45,11 @@ sandbox verification and dedicated service implementations.
 - User ticket reads filter internal notes at the SQL query; no client-side hiding.
 - Migration `schema/004_support.sql` adds query indexes only and is re-runnable.
 - Support records remain in the isolated SaaS PostgreSQL database.
+
+
+## Product analytics (Phase 7)
+- analytics/service.py implements opt-in consent, allow-listed event ingestion and aggregate reports.
+- analytics/api.py exposes authenticated ingestion and permission-gated aggregate/user-level analytics.
+- Migration schema/005_analytics.sql adds event idempotency and analytics permissions; it is re-runnable.
+- Product analytics is off until the account explicitly opts in. User-level analysis requires analytics.users.read and is audited.
+- Raw form values, secrets, payment data and support-ticket content are not accepted as event payloads.
