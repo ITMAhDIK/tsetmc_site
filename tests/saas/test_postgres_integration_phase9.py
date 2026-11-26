@@ -50,7 +50,8 @@ def verify_disposable_saas_database():
                 "SAAS_TEST_DATABASE_NAME"
             )
         required = ("users", "sessions", "payment_orders", "wallet_ledger_entries",
-                    "tickets", "analytics_events", "payment_reconciliation_notes")
+                    "tickets", "analytics_events", "payment_reconciliation_notes",
+                    "phone_verifications", "user_admin_mfa", "legal_acceptances")
         row = conn.execute(
             "SELECT " + ", ".join(
                 f"to_regclass('public.{name}') IS NOT NULL AS {name}" for name in required
