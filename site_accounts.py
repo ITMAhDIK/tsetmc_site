@@ -1305,7 +1305,7 @@ class AccountService:
             if q:
                 pattern = "%" + q + "%"
                 rows = con.execute(
-                    "SELECT public_id,username,display_name,email,phone,role,is_active,created_at "
+                    "SELECT id,public_id,username,display_name,email,phone,role,is_active,created_at "
                     "FROM site_users WHERE username LIKE ? OR public_id LIKE ? "
                     "OR display_name LIKE ? OR email LIKE ? ORDER BY id DESC LIMIT 100",
                     (pattern, pattern, pattern, pattern)).fetchall()
