@@ -2863,9 +2863,10 @@
       useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
 
       useEffect(() => {
-        const base = window.TLOOMBERG_ANALYTICS_CONFIG && window.TLOOMBERG_ANALYTICS_CONFIG.apiBase
-          ? String(window.TLOOMBERG_ANALYTICS_CONFIG.apiBase).replace(/\\/+$/, '')
+        let base = window.TLOOMBERG_ANALYTICS_CONFIG && window.TLOOMBERG_ANALYTICS_CONFIG.apiBase
+          ? String(window.TLOOMBERG_ANALYTICS_CONFIG.apiBase)
           : '';
+        while (base.endsWith('/')) base = base.slice(0, -1);
         if (!base) { setAuthUser(null); return; }
         let cancelled = false;
         fetch(base + '/auth/me', { credentials: 'include' })
