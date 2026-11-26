@@ -55,15 +55,34 @@ consent, authenticated consent-gated event batches, server-derived user/session
 identity, event deduplication, privacy-minimized page/click/scroll/active-time
 fields, aggregate overview/pages/heatmap/sequential funnels/retention reports,
 minimum-cohort suppression and separately permission-gated user-level event
-history. Anonymous tracking, frontend SDK/banner, dashboard UI and automatic
-retention scheduling remain. No market-data database or service changes.
+history. A consent-gated browser SDK/banner is now wired into the Pages frontend
+for route changes, UI clicks, scroll thresholds and active time. Live telemetry
+remains disabled until a deployed API and real login/session cookie topology are
+configured. Admin analytics dashboard UI and automatic retention scheduling
+remain. No market-data database or service changes.
 
-## Phase 8 — Superadmin console
-Users, roles, subscriptions, payment reconciliation, wallets, withdrawals,
-referrals, support queues, analytics and audit.
+## Phase 8 — Superadmin console (API foundation started)
+Implemented on feat/tloomberg-saas-superadmin-phase8: superadmin-only dashboard
+and APIs for user management, support/admin role assignment, plans, subscriptions,
+payment reconciliation notes, wallet inspection and audited ledger adjustments,
+withdrawal review, referral visibility and audit logs. The account page now
+supports phone OTP login; first-time verified phones create standard accounts,
+and only a backend match with the protected bootstrap phone secret receives
+the superadmin role. The browser cannot choose roles. A superadmin-only UI gate
+is present. Actual bank payout and provider payment overrides are not allowed.
+No market-data DB or service changes.
 
-## Phase 9 — Production readiness
-Threat model, security review, automated/load tests, backup/restore, monitoring,
-incident response, deployment automation and legal review.
+## Phase 9 — Production readiness (engineering foundation implemented; release gates open)
+Phase 9A–D on feat/tloomberg-saas-production-readiness-phase9 now includes:
+- Threat model, trust boundaries, explicit release gates and NOT READY status.
+- Dependency vulnerability audit (pip-audit), high-severity/high-confidence Bandit, Dependabot weekly checks for Python, GitHub Actions and Docker images, and pinned Actions commit SHAs. Latest confirmed combined-branch run: Python suite 198 passed in 12.83s; dependency audit, security analysis, and PostgreSQL backup/restore drill passed.
+- Production startup configuration checks, explicit host/CORS allow-lists, cookie CSRF origin checks, security headers, readiness endpoint, structured redacted request logs and bounded PostgreSQL connection pool.
+- Argon2id dummy verification for unknown user logins, serialized concurrent OTP rate limits, exact payment-event and admin-wallet idempotency, append-only wallet/reconciliation/admin audit tables.
+- Checksummed migration runner with advisory locking, per-migration transactions, drift detection, exact DB identity check, explicit rejection of unknown/non-empty schema without migration ledger, and bounded grants to a pre-created runtime role.
+- PostgreSQL 16 CI integration suite (198 Python tests on the verified combined analytics/auth/Phases 7–9 head) for authentication, RBAC and object isolation, standard-user denial across current staff/admin/analytics-admin GET routes, support internal-note confidentiality, consent analytics, payment settlement/replay, gateway fail-closed behavior, wallet concurrency/idempotency, OTP concurrency and immutable records.
+- Age-encrypted custom-format PostgreSQL backup with SHA-256 and isolated decryption/restore. CI runs an ephemeral PostgreSQL 16 backup → encrypted archive → decryption → restore rehearsal using a separately provisioned read-only backup role; it asserts that role cannot mutate tables and verifies remote backup/restore TLS fail-closed behavior.
+- Non-root API Docker image and hardened production Compose template with one-shot migration prerequisite, read-only filesystem, dropped capabilities, bounded process count, Caddy automatic HTTPS, public metadata-minimal readiness route, fixed proxy trust boundary, and external/unpublished PostgreSQL.
+- A bounded, read-only HTTPS staging probe for /health and /ready with public-DNS checks and explicit non-production operator approval.
 
+**Not production-complete.** PR #17 remains Draft and unmerged. Phases 1–8 remain separate unmerged Draft dependencies. Existing production DB baseline adoption, complete route-level RBAC/object-isolation matrix, official payment/SMS/bank sandbox tests, edge/IP/device/distributed rate limiting and WAF, independent penetration review, encrypted off-host backup retention/RPO/RTO and a real disaster-recovery drill, production monitoring/on-call and incident exercise, executed staging load/soak/failure tests, actual host/DNS/TLS deployment and rollback, and jurisdiction-specific legal/privacy review remain required before public production. No migration has been applied to a live/market DB; no production deployment or live-host load test was attempted.
 CRM is explicitly deferred.

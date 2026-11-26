@@ -1,11 +1,14 @@
 """Security primitives for SaaS authentication."""
 from __future__ import annotations
-import hashlib, hmac, os, secrets
+import hashlib, hmac, os, re, secrets
 from datetime import datetime, timedelta, timezone
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 _PASSWORDS = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2)
+# A random process-local Argon2id hash keeps unknown-user login attempts on the
+# same expensive verification path as known accounts.
+_DUMMY_PASSWORD_HASH = _PASSWORDS.hash(secrets.token_urlsafe(32))
 SESSION_TTL = timedelta(days=14)
 OTP_TTL = timedelta(minutes=5)
 OTP_MAX_ATTEMPTS = 5
@@ -23,11 +26,9 @@ def _required_secret(name: str) -> bytes:
     return value.encode("utf-8")
 
 def normalize_phone(phone: str) -> str:
-    value = phone.strip()
-    if len(value) > 16 or not value.startswith("+") or not value[1:].isdigit():
-        raise ValueError("phone must be in E.164 format")
-    if not 8 <= len(value[1:]) <= 15 or value[1] == "0":
-        raise ValueError("phone must be a valid E.164 number")
+    value = phone.strip() if isinstance(phone, str) else ""
+    if not re.fullmatch(r"\+[1-9][0-9]{7,14}", value):
+        raise ValueError("phone must be a valid E.164 number using ASCII digits")
     return value
 
 def hash_password(password: str) -> str:

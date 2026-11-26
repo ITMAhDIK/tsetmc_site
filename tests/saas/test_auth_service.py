@@ -10,9 +10,10 @@ def test_password_hash_verifies_and_is_not_plaintext():
 def test_password_policy_rejects_short_passwords():
     with pytest.raises(ValueError): hash_password("short")
 
-def test_phone_requires_e164():
+def test_phone_requires_ascii_e164():
     assert normalize_phone("+989121234567")=="+989121234567"
     with pytest.raises(ValueError): normalize_phone("09121234567")
+    with pytest.raises(ValueError): normalize_phone("+۹۸۹۱۲۱۲۳۴۵۶۷")
 
 def test_session_token_is_random_and_only_hash_is_persisted():
     first,second=new_session_token(),new_session_token()

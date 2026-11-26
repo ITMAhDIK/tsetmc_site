@@ -408,3 +408,139 @@ def purge_expired_events(conn, *, retention_days: int = DEFAULT_RETENTION_DAYS) 
                 (retention_days,),
             )
             return cur.rowcount
+
+
+def repeated_paths(
+    conn,
+    *,
+    days: int = 30,
+    max_steps: int = 5,
+    min_repetitions: int = 2,
+    limit: int = 50,
+    user_id: UUID | None = None,
+    actor_user_id: UUID | None = None,
+):
+    """Report repeated contiguous page-view paths without crossing sessions.
+
+    Aggregate reports suppress path patterns seen by fewer than the minimum
+    distinct-user cohort. User-level inspection requires an actor identity and
+    writes an audit record. Paths come only from consented page_view events.
+    """
+    days = _window_days(days)
+    if isinstance(max_steps, bool) or not isinstance(max_steps, int) or not 2 <= max_steps <= 5:
+        raise ValueError("max_steps must be between 2 and 5")
+    if (
+        isinstance(min_repetitions, bool)
+        or not isinstance(min_repetitions, int)
+        or not 2 <= min_repetitions <= 10_000
+    ):
+        raise ValueError("min_repetitions must be between 2 and 10000")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    if user_id is not None and not isinstance(user_id, UUID):
+        raise ValueError("user_id must be a UUID")
+    if user_id is not None and not isinstance(actor_user_id, UUID):
+        raise ValueError("actor_user_id is required for user-level path reports")
+
+    # Aggregate reports are intentionally suppressed for small audiences.
+    if user_id is None:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT COUNT(DISTINCT user_id)::bigint AS users
+                   FROM analytics_events
+                   WHERE user_id IS NOT NULL AND session_id IS NOT NULL
+                     AND event_name='page_view'
+                     AND occurred_at >= now()-(%s * interval '1 day')""",
+                (days,),
+            )
+            active_users = cur.fetchone()["users"]
+        if active_users < MIN_ANALYTICS_COHORT:
+            return {
+                "suppressed": True,
+                "minimum_cohort": MIN_ANALYTICS_COHORT,
+                "paths": [],
+            }
+
+    user_filter = " AND e.user_id=%s" if user_id is not None else ""
+    params = [days]
+    if user_id is not None:
+        params.append(user_id)
+    params.extend([max_steps, min_repetitions])
+    if user_id is None:
+        params.append(MIN_ANALYTICS_COHORT)
+    params.append(limit)
+
+    having_user_clause = (
+        " AND COUNT(DISTINCT user_id)>=%s" if user_id is None else ""
+    )
+    query = f"""
+        WITH ordered_views AS (
+            SELECT
+                e.user_id,
+                e.session_id,
+                e.page_path,
+                e.occurred_at,
+                e.id,
+                LEAD(e.page_path,1) OVER route_order AS next_1,
+                LEAD(e.page_path,2) OVER route_order AS next_2,
+                LEAD(e.page_path,3) OVER route_order AS next_3,
+                LEAD(e.page_path,4) OVER route_order AS next_4
+            FROM analytics_events e
+            WHERE e.user_id IS NOT NULL
+              AND e.session_id IS NOT NULL
+              AND e.event_name='page_view'
+              AND e.occurred_at >= now()-(%s * interval '1 day')
+              {user_filter}
+            WINDOW route_order AS (
+                PARTITION BY e.user_id,e.session_id
+                ORDER BY e.event_order,e.id
+            )
+        ),
+        path_patterns AS (
+            SELECT
+                user_id,
+                session_id,
+                occurred_at AS started_at,
+                pattern.path_length,
+                pattern.path
+            FROM ordered_views
+            CROSS JOIN LATERAL (
+                VALUES
+                    (2,ARRAY[page_path,next_1]::text[]),
+                    (3,ARRAY[page_path,next_1,next_2]::text[]),
+                    (4,ARRAY[page_path,next_1,next_2,next_3]::text[]),
+                    (5,ARRAY[page_path,next_1,next_2,next_3,next_4]::text[])
+            ) AS pattern(path_length,path)
+            WHERE pattern.path_length <= %s
+              AND array_position(pattern.path,NULL) IS NULL
+        )
+        SELECT
+            path_length,
+            path,
+            COUNT(*)::bigint AS repetitions,
+            COUNT(DISTINCT session_id)::bigint AS sessions,
+            COUNT(DISTINCT user_id)::bigint AS users,
+            MAX(started_at) AS last_occurrence_at
+        FROM path_patterns
+        GROUP BY path_length,path
+        HAVING COUNT(*) >= %s {having_user_clause}
+        ORDER BY repetitions DESC,users DESC,sessions DESC,path_length DESC,path
+        LIMIT %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(query, tuple(params))
+        rows = cur.fetchall()
+
+        if user_id is not None:
+            cur.execute(
+                """INSERT INTO admin_audit_logs
+                   (actor_user_id,action,target_type,target_id)
+                   VALUES (%s,'analytics.user_paths.read','user',%s)""",
+                (actor_user_id, str(user_id)),
+            )
+
+    return {
+        "suppressed": False,
+        "minimum_cohort": MIN_ANALYTICS_COHORT if user_id is None else None,
+        "paths": rows,
+    }

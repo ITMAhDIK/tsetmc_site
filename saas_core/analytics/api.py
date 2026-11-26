@@ -9,7 +9,7 @@ from saas_core.auth.authorization import AuthorizationDenied, require_permission
 from .service import (
     DEFAULT_RETENTION_DAYS, get_consent, heatmap, normalize_page_path,
     funnel, overview, purge_expired_events, record_events, retention,
-    top_pages, update_consent, user_event_history,
+    top_pages, update_consent, user_event_history, repeated_paths,
 )
 
 router=APIRouter(prefix="/analytics",tags=["analytics"])
@@ -142,6 +142,47 @@ def admin_user_events(user_id:UUID,limit:int=Query(default=100,ge=1,le=200),
                       user=Depends(current_user),conn=Depends(get_conn)):
     _require(conn,user["id"],"analytics.users.read")
     return {"user_id":str(user_id),"events":user_event_history(conn,user_id=user_id,limit=limit)}
+
+
+@router.get("/admin/paths")
+def admin_repeated_paths(
+    days:int=Query(default=30,ge=1,le=730),
+    max_steps:int=Query(default=5,ge=2,le=5),
+    min_repetitions:int=Query(default=2,ge=2,le=10_000),
+    limit:int=Query(default=50,ge=1,le=100),
+    user=Depends(current_user),conn=Depends(get_conn),
+):
+    _require(conn,user["id"],"analytics.read")
+    return {
+        "days":days,
+        "max_steps":max_steps,
+        **repeated_paths(
+            conn,days=days,max_steps=max_steps,
+            min_repetitions=min_repetitions,limit=limit,
+        ),
+    }
+
+
+@router.get("/admin/users/{user_id}/paths")
+def admin_user_repeated_paths(
+    user_id:UUID,
+    days:int=Query(default=30,ge=1,le=730),
+    max_steps:int=Query(default=5,ge=2,le=5),
+    min_repetitions:int=Query(default=2,ge=2,le=10_000),
+    limit:int=Query(default=50,ge=1,le=100),
+    user=Depends(current_user),conn=Depends(get_conn),
+):
+    _require(conn,user["id"],"analytics.users.read")
+    return {
+        "user_id":str(user_id),
+        "days":days,
+        "max_steps":max_steps,
+        **repeated_paths(
+            conn,days=days,max_steps=max_steps,
+            min_repetitions=min_repetitions,limit=limit,
+            user_id=user_id,actor_user_id=user["id"],
+        ),
+    }
 
 
 @router.delete("/admin/retention/expired")
