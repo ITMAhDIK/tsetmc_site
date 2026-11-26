@@ -250,40 +250,42 @@ def test_superadmin_role_revocation_waits_for_global_role_lock():
     lock_connection = _connect()
     lock_cursor = lock_connection.cursor()
     lock_cursor.execute("SELECT id FROM roles WHERE code='superadmin' FOR UPDATE")
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(
+        _service().revoke_role,
+        actor_user_id=actor,
+        target_user_id=target,
+        role_code="superadmin",
+        request_id="it-role-lock",
+    )
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
-                _service().revoke_role,
-                actor_user_id=actor,
-                target_user_id=target,
-                role_code="superadmin",
-                request_id="it-role-lock",
-            )
-            deadline = time.monotonic() + 5
-            waiting_on_role_lock = False
-            while time.monotonic() < deadline:
-                with _connect() as probe, probe.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        SELECT EXISTS (
-                          SELECT 1 FROM pg_stat_activity
-                          WHERE datname=current_database()
-                            AND pid<>pg_backend_pid()
-                            AND wait_event_type='Lock'
-                            AND query ILIKE '%SELECT id FROM roles%'
-                            AND query ILIKE '%FOR UPDATE%'
-                        )
-                        """
+        deadline = time.monotonic() + 5
+        waiting_on_role_lock = False
+        while time.monotonic() < deadline:
+            with _connect() as probe, probe.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT EXISTS (
+                      SELECT 1 FROM pg_stat_activity
+                      WHERE datname=current_database()
+                        AND pid<>pg_backend_pid()
+                        AND wait_event_type='Lock'
+                        AND query ILIKE '%SELECT id FROM roles%'
+                        AND query ILIKE '%FOR UPDATE%'
                     )
-                    waiting_on_role_lock = cursor.fetchone()[0]
-                if waiting_on_role_lock:
-                    break
-                time.sleep(0.05)
-            assert waiting_on_role_lock, "role revocation did not wait for the superadmin lock"
+                    """
+                )
+                waiting_on_role_lock = cursor.fetchone()[0]
+            if waiting_on_role_lock:
+                break
+            time.sleep(0.05)
+        assert waiting_on_role_lock, "role revocation did not wait for the superadmin lock"
     finally:
+        # Release the row lock before waiting for the worker thread to finish.
         lock_connection.commit()
         lock_cursor.close()
         lock_connection.close()
+        executor.shutdown(wait=True)
 
     result = future.result(timeout=5)
     assert result["revoked"] is True
