@@ -110,7 +110,7 @@ def staff_queue(status:str|None=None,assigned_to:UUID|None=None,limit:int=100,of
     _require(conn,user)
     try:
         return {"tickets":list_staff_tickets(
-            conn,status=status,assigned_to=assigned_to,limit=limit,offset=offset
+            conn,actor_id=user["id"],status=status,assigned_to=assigned_to,limit=limit,offset=offset
         )}
     except ValueError as exc:
         raise HTTPException(status_code=422,detail=str(exc)) from exc
@@ -120,7 +120,7 @@ def staff_queue(status:str|None=None,assigned_to:UUID|None=None,limit:int=100,of
 def staff_ticket_detail(ticket_id:UUID,user=Depends(current_user),conn=Depends(get_conn)):
     _require(conn,user)
     try:
-        return get_staff_ticket(conn,ticket_id=ticket_id)
+        return get_staff_ticket(conn,actor_id=user["id"],ticket_id=ticket_id)
     except LookupError as exc:
         _not_found(exc)
 

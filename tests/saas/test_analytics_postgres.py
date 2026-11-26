@@ -19,7 +19,7 @@ def migrated_analytics_database():
     schema=os.path.join(root,"saas_core","schema")
     with psycopg.connect(DSN,autocommit=True,row_factory=dict_row) as conn:
         for name in ("001_initial.sql","002_payment_lifecycle.sql","003_wallet_referrals.sql",
-                     "004_support.sql","005_analytics.sql","006_order_terms_snapshot.sql","005_analytics.sql","006_order_terms_snapshot.sql"):
+                     "004_support.sql","005_analytics.sql","006_order_terms_snapshot.sql"):
             with open(os.path.join(schema,name),encoding="utf-8") as stream:
                 conn.execute(stream.read())
     yield
@@ -155,3 +155,74 @@ def test_scroll_and_active_time_events_require_their_measurement(migrated_analyt
         with pytest.raises(ValueError,match="unsupported fields"):
             record_events(conn,user_id=user,events=[event(metadata=["secret"])])
         assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)).fetchone()["n"]==0
+
+
+
+def test_analytics_api_uses_phase_two_sessions_for_consent_reports_and_self_deletion(migrated_analytics_database):
+    from saas_core.auth.api import app,get_conn
+    from saas_core.auth.repository import create_session
+
+    with connect() as conn:
+        owner=make_user(conn,"api-owner")
+        ordinary=make_user(conn,"api-ordinary")
+        analyst=make_user(conn,"api-analyst")
+        superadmin=make_user(conn,"api-superadmin")
+        grant(conn,analyst,"admin")
+        grant(conn,superadmin,"superadmin")
+        owner_token,_=create_session(conn,owner)
+        ordinary_token,_=create_session(conn,ordinary)
+        analyst_token,_=create_session(conn,analyst)
+        superadmin_token,_=create_session(conn,superadmin)
+        conn.commit()
+
+        def database_connection():
+            yield conn
+
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                owner_headers={"Authorization":f"Bearer {owner_token}"}
+                ordinary_headers={"Authorization":f"Bearer {ordinary_token}"}
+                analyst_headers={"Authorization":f"Bearer {analyst_token}"}
+                superadmin_headers={"Authorization":f"Bearer {superadmin_token}"}
+
+                event_id=uuid4()
+                event_payload={
+                    "event_id":str(event_id),"session_id":str(uuid4()),
+                    "event_name":"page_view","page_path":"/pricing",
+                    "occurred_at":datetime.now(timezone.utc).isoformat(),"metadata":{},
+                }
+                assert client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload]}).status_code==403
+                consent=client.put("/analytics/consent",headers=owner_headers,json={"product_analytics":True})
+                assert consent.status_code==200
+                first=client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload]})
+                assert first.status_code==202 and first.json()=={"accepted":1,"duplicates":0}
+                duplicate=client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload]})
+                assert duplicate.status_code==202 and duplicate.json()=={"accepted":0,"duplicates":1}
+
+                changed={**event_payload,"page_path":"/checkout"}
+                assert client.post("/analytics/events",headers=owner_headers,json={"events":[changed]}).status_code==422
+                assert client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload],"email":"private@example.com"}).status_code==422
+                today=date.today()
+                assert client.get(f"/analytics/admin/overview?start={today}&end={today}",headers=ordinary_headers).status_code==403
+                overview=client.get(f"/analytics/admin/overview?start={today}&end={today}",headers=analyst_headers)
+                assert overview.status_code==200
+                assert any(row["page_path"]=="/pricing" for row in overview.json()["top_pages"])
+                assert client.get(f"/analytics/admin/users/{owner}?start={today}&end={today}",headers=analyst_headers).status_code==403
+                personal=client.get(f"/analytics/admin/users/{owner}?start={today}&end={today}",headers=superadmin_headers)
+                assert personal.status_code==200
+                assert personal.json()["user_id"]==str(owner)
+                assert conn.execute(
+                    "SELECT count(*) AS n FROM admin_audit_logs WHERE action='analytics.user_activity.viewed' AND actor_user_id=%s",
+                    (superadmin,),
+                ).fetchone()["n"]==1
+
+                deleted=client.delete("/analytics/data",headers=owner_headers)
+                assert deleted.status_code==200
+                assert deleted.json()=={"deleted_events":1,"product_analytics":False}
+                assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(owner,)).fetchone()["n"]==0
+                assert conn.execute("SELECT product_analytics FROM analytics_consents WHERE user_id=%s",(owner,)).fetchone()["product_analytics"] is False
+                assert conn.execute("SELECT count(*) AS n FROM analytics_consent_history WHERE user_id=%s",(owner,)).fetchone()["n"]==2
+                assert client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload]}).status_code==403
+        finally:
+            app.dependency_overrides.pop(get_conn,None)

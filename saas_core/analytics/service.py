@@ -273,3 +273,22 @@ def get_user_activity(conn, *, actor_id: UUID, user_id: UUID, start: date, end: 
             )
             return {"user_id":str(user_id),"start":start.isoformat(),"end":end.isoformat(),
                     "by_event":by_event,"pages":pages}
+
+
+
+def delete_own_analytics_data(conn, *, user_id: UUID):
+    """Delete the caller's product events and revoke collection in one transaction.
+
+    The consent audit trail is deliberately retained; event payloads are removed.
+    """
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE id=%s FOR UPDATE",(user_id,))
+            if not cur.fetchone():
+                raise LookupError("user not found")
+        # Nested transaction uses a savepoint and preserves the account-row lock.
+        set_consent(conn,user_id=user_id,enabled=False)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM analytics_events WHERE user_id=%s",(user_id,))
+            deleted=cur.rowcount
+        return {"deleted_events":deleted,"product_analytics":False}

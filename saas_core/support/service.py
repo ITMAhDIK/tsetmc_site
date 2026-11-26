@@ -113,7 +113,8 @@ def get_user_ticket(conn, *, user_id: UUID, ticket_id: UUID):
     return {"ticket":ticket,"messages":_ticket_messages(conn,ticket_id,False)}
 
 
-def get_staff_ticket(conn, *, ticket_id: UUID):
+def get_staff_ticket(conn, *, actor_id: UUID, ticket_id: UUID):
+    require_permission(conn,actor_id,"tickets.manage")
     with conn.cursor() as cur:
         cur.execute(
             """SELECT t.id,ticket_number,t.user_id,t.assigned_to,t.subject,t.category,t.priority,
@@ -151,8 +152,9 @@ def reply_user_ticket(conn, *, user_id: UUID, ticket_id: UUID, message: str):
             return reply
 
 
-def list_staff_tickets(conn, *, status: str | None=None, assigned_to: UUID | None=None,
+def list_staff_tickets(conn, *, actor_id: UUID, status: str | None=None, assigned_to: UUID | None=None,
                        limit: int=100, offset: int=0):
+    require_permission(conn,actor_id,"tickets.manage")
     if not 1 <= limit <= 200 or offset < 0:
         raise ValueError("invalid ticket pagination")
     if status is not None and status not in _TICKET_STATUSES:

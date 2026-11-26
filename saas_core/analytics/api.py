@@ -6,11 +6,13 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from saas_core.auth.api import current_user, get_conn
 from saas_core.auth.authorization import AuthorizationDenied, require_permission
-from .service import get_funnels, get_overview, get_retention, get_user_activity, record_events, set_consent
+from .service import (delete_own_analytics_data, get_funnels, get_overview, get_retention,
+    get_user_activity, record_events, set_consent)
 
 router=APIRouter(prefix="/analytics",tags=["analytics"])
 
 class ConsentBody(BaseModel):
+    model_config=ConfigDict(extra="forbid")
     product_analytics: bool
 
 class EventBody(BaseModel):
@@ -29,6 +31,7 @@ class EventBody(BaseModel):
     metadata: dict=Field(default_factory=dict)
 
 class EventBatch(BaseModel):
+    model_config=ConfigDict(extra="forbid")
     events: list[EventBody]=Field(min_length=1,max_length=50)
 
 
@@ -48,6 +51,14 @@ def _dates(start: date, end: date):
 @router.put("/consent")
 def consent(body:ConsentBody,user=Depends(current_user),conn=Depends(get_conn)):
     return {"consent":set_consent(conn,user_id=user["id"],enabled=body.product_analytics)}
+
+@router.delete("/data")
+def delete_my_analytics_data(user=Depends(current_user),conn=Depends(get_conn)):
+    try:
+        return delete_own_analytics_data(conn,user_id=user["id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=404,detail="user not found") from exc
+
 
 @router.post("/events",status_code=202)
 def ingest(body:EventBatch,user=Depends(current_user),conn=Depends(get_conn)):

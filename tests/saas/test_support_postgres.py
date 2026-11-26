@@ -25,7 +25,7 @@ def migrated_support_database():
     schema=os.path.join(root,"saas_core","schema")
     with psycopg.connect(DSN,autocommit=True,row_factory=dict_row) as conn:
         for name in ("001_initial.sql","002_payment_lifecycle.sql","003_wallet_referrals.sql",
-                     "004_support.sql","004_support.sql"):
+                     "004_support.sql"):
             with open(os.path.join(schema,name),encoding="utf-8") as stream:
                 conn.execute(stream.read())
     yield
@@ -83,7 +83,7 @@ def test_internal_notes_are_visible_to_staff_but_never_to_ticket_owner(migrated_
         )
         assert note["is_internal_note"] is True
         owner_view=get_user_ticket(conn,user_id=owner,ticket_id=ticket["id"])
-        staff_view=get_staff_ticket(conn,ticket_id=ticket["id"])
+        staff_view=get_staff_ticket(conn,actor_id=staff,ticket_id=ticket["id"])
         assert len(owner_view["messages"])==1
         assert all(not m["is_internal_note"] for m in owner_view["messages"])
         assert len(staff_view["messages"])==2
@@ -111,6 +111,12 @@ def test_assignment_requires_active_support_agent_and_is_audited(migrated_suppor
             """SELECT count(*) AS n FROM admin_audit_logs
                WHERE action='support.ticket.assigned' AND target_id=%s""",(str(ticket["id"]),)
         ).fetchone()["n"]==1
+        with pytest.raises(AuthorizationDenied):
+            list_staff_tickets(conn,actor_id=ordinary_user)
+        with pytest.raises(AuthorizationDenied):
+            get_staff_ticket(conn,actor_id=ordinary_user,ticket_id=ticket["id"])
+        assert list_staff_tickets(conn,actor_id=admin)
+        assert get_staff_ticket(conn,actor_id=agent,ticket_id=ticket["id"])["ticket"]["id"]==ticket["id"]
 
 
 def test_staff_reply_answers_ticket_and_user_reply_reopens_it(migrated_support_database):
@@ -158,9 +164,9 @@ def test_staff_queue_filters_status_and_assignee(migrated_support_database):
         second=new_ticket(conn,owner,"Second request")
         assign_ticket(conn,ticket_id=first["id"],actor_id=staff,assignee_id=staff)
         change_ticket_status(conn,ticket_id=second["id"],actor_id=staff,new_status="waiting")
-        queue=list_staff_tickets(conn,status="open",assigned_to=staff)
+        queue=list_staff_tickets(conn,actor_id=staff,status="open",assigned_to=staff)
         assert [row["id"] for row in queue]==[first["id"]]
-        waiting=list_staff_tickets(conn,status="waiting")
+        waiting=list_staff_tickets(conn,actor_id=staff,status="waiting")
         assert [row["id"] for row in waiting]==[second["id"]]
 
 
@@ -240,5 +246,97 @@ def test_support_api_uses_phase_two_sessions_and_phase_two_rbac(migrated_support
             revoke_session(conn,staff_token)
             conn.commit()
             assert client.get("/support/admin/tickets",headers={"Authorization":f"Bearer {staff_token}"}).status_code==401
+        finally:
+            app.dependency_overrides.pop(get_conn,None)
+
+
+
+def test_support_complete_api_lifecycle_uses_phase_two_sessions_and_keeps_internal_notes_private(migrated_support_database):
+    from saas_core.auth.api import app,get_conn
+    from saas_core.auth.repository import create_session,revoke_session
+
+    with connect() as conn:
+        owner=make_user(conn)
+        other=make_user(conn)
+        staff=make_user(conn)
+        faq_admin=make_user(conn)
+        grant_role(conn,staff,"support")
+        grant_role(conn,faq_admin,"admin")
+        owner_token,_=create_session(conn,owner)
+        other_token,_=create_session(conn,other)
+        staff_token,_=create_session(conn,staff)
+        faq_admin_token,_=create_session(conn,faq_admin)
+        conn.commit()
+
+        def database_connection():
+            yield conn
+
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                owner_headers={"Authorization":f"Bearer {owner_token}"}
+                other_headers={"Authorization":f"Bearer {other_token}"}
+                staff_headers={"Authorization":f"Bearer {staff_token}"}
+                admin_headers={"Authorization":f"Bearer {faq_admin_token}"}
+
+                created=client.post("/support/tickets",headers=owner_headers,json={
+                    "subject":"Subscription access issue","category":"billing","message":"My access has not updated",
+                })
+                assert created.status_code==201
+                ticket_id=created.json()["ticket"]["id"]
+
+                assert client.get("/support/tickets",headers=owner_headers).status_code==200
+                assert client.get(f"/support/tickets/{ticket_id}",headers=other_headers).status_code==404
+                assert client.get("/support/admin/tickets",headers=other_headers).status_code==403
+
+                queue=client.get("/support/admin/tickets?status=open",headers=staff_headers)
+                assert queue.status_code==200
+                assigned=client.post(f"/support/admin/tickets/{ticket_id}/assign",
+                    headers=staff_headers,json={"assignee_user_id":str(staff)})
+                assert assigned.status_code==200
+
+                note=client.post(f"/support/admin/tickets/{ticket_id}/notes",
+                    headers=staff_headers,json={"message":"Check payment event reconciliation"})
+                assert note.status_code==201
+                reply=client.post(f"/support/admin/tickets/{ticket_id}/messages",
+                    headers=staff_headers,json={"message":"We are reviewing the issue"})
+                assert reply.status_code==201
+
+                owner_view=client.get(f"/support/tickets/{ticket_id}",headers=owner_headers)
+                assert owner_view.status_code==200
+                assert all(not item["is_internal_note"] for item in owner_view.json()["messages"])
+                assert any(item["body"]=="We are reviewing the issue" for item in owner_view.json()["messages"])
+                assert not any(item["body"]=="Check payment event reconciliation" for item in owner_view.json()["messages"])
+
+                user_reply=client.post(f"/support/tickets/{ticket_id}/messages",
+                    headers=owner_headers,json={"message":"Thank you; please confirm when complete"})
+                assert user_reply.status_code==201
+                assert client.get(f"/support/tickets/{ticket_id}",headers=owner_headers).json()["ticket"]["status"]=="open"
+
+                closed=client.patch(f"/support/admin/tickets/{ticket_id}/status",
+                    headers=staff_headers,json={"status":"closed","note":"Resolved after review"})
+                assert closed.status_code==200
+                assert client.post(f"/support/tickets/{ticket_id}/messages",
+                    headers=owner_headers,json={"message":"One more question"}).status_code==409
+
+                faq=client.post("/support/admin/faqs",headers=admin_headers,json={
+                    "slug":"subscription-access","question":"When does access activate?",
+                    "answer":"After payment confirmation.","published":True,
+                })
+                assert faq.status_code==201
+                assert client.post("/support/admin/faqs",headers=staff_headers,json={
+                    "slug":"support-cannot-publish","question":"Not allowed?","answer":"No.","published":True,
+                }).status_code==403
+                public_faq=client.get("/support/faqs")
+                assert public_faq.status_code==200
+                assert any(item["slug"]=="subscription-access" for item in public_faq.json()["faqs"])
+
+                assert conn.execute(
+                    "SELECT count(*) AS n FROM admin_audit_logs WHERE target_type='ticket' AND target_id=%s",
+                    (ticket_id,),
+                ).fetchone()["n"]>=4
+                revoke_session(conn,staff_token)
+                conn.commit()
+                assert client.get("/support/admin/tickets",headers=staff_headers).status_code==401
         finally:
             app.dependency_overrides.pop(get_conn,None)
