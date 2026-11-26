@@ -162,6 +162,8 @@ def staff_note(ticket_id:UUID,body:MessageBody,user=Depends(current_user),conn=D
         )}
     except LookupError as exc:
         _not_found(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422,detail=str(exc)) from exc
 
 
 @router.patch("/admin/tickets/{ticket_id}/status")

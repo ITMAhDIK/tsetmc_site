@@ -234,6 +234,9 @@ def test_support_api_uses_phase_two_sessions_and_phase_two_rbac(migrated_support
             assert client.get(f"/support/tickets/{ticket['id']}",headers={"Authorization":f"Bearer {other_token}"}).status_code==404
             assert client.get("/support/admin/tickets",headers={"Authorization":f"Bearer {other_token}"}).status_code==403
             assert client.get("/support/admin/tickets",headers={"Authorization":f"Bearer {staff_token}"}).status_code==200
+            invalid_note=client.post(f"/support/admin/tickets/{ticket['id']}/notes",
+                headers={"Authorization":f"Bearer {staff_token}"},json={"message":"   "})
+            assert invalid_note.status_code==422
             revoke_session(conn,staff_token)
             conn.commit()
             assert client.get("/support/admin/tickets",headers={"Authorization":f"Bearer {staff_token}"}).status_code==401

@@ -40,3 +40,11 @@
 - PostgreSQL integration tests cover ownership isolation, internal-note privacy, status transitions, staff permission gates, assignment, FAQ publication and audit logging.
 - All records remain in the isolated SaaS PostgreSQL database. No market-data DB, collector, public market API or GitHub Pages static preview changes.
 - No email/SMS notifications or external helpdesk integration are claimed in this phase; they remain future notification work.
+
+
+## Regression test coverage and phase boundaries
+- PostgreSQL integration tests verify owner-only ticket reads, internal-note filtering in SQL, FAQ publication gates, staff assignment/status/reply behavior and audit records.
+- The API integration test creates real Phase 2 bearer sessions, verifies owner isolation, confirms a support role can access the staff queue, confirms a normal user receives 403, and verifies revoked sessions receive 401.
+- Assignment authorization is enforced both at the API boundary and inside the service; the actor and assignee must both have tickets.manage, and the assignee must be active.
+- Support references the shared SaaS user and permission model from Phases 1–2. It intentionally does not couple ticket operations to Phase 3 profile fields, Phase 4 payment settlement, or Phase 5 wallet/referral ledgers. Those domains remain separate; a ticket may discuss them but support never reads or mutates their records.
+- The API maps invalid internal-note text to a client validation response rather than leaking an unhandled server error.
