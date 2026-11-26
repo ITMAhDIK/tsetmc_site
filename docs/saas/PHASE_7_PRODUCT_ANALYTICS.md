@@ -39,16 +39,18 @@
 - All reads and writes target the dedicated SaaS PostgreSQL database. No market database, market API, collector or GitHub Pages market frontend is involved.
 
 ## Not included
-- Frontend consent banner/event SDK and admin analytics dashboard UI. Until the frontend SDK is wired to `POST /analytics/events`, the database and reports are ready but the live GitHub Pages site will not automatically send activity events.
+- Frontend consent banner and browser SDK are now wired into `docs/index.html`. The SDK records page views/navigation, allow-listed UI clicks, scroll thresholds and foreground-active time only after authenticated server-side opt-in. It is disabled by default until `docs/analytics-config.js` points to the real SaaS API and the website has working SaaS login/session integration.
+- Admin analytics dashboard UI, automatic retention scheduler/worker, and production API/domain/session configuration remain outstanding.
 - Automatic retention scheduler/worker; only a bounded manual purge operation and helper are present.
 - Cross-device anonymous identity stitching, marketing attribution and export APIs.
 - PostgreSQL integration, high-volume ingestion/load tests, dashboard query benchmarks and privacy/security review have not been run.
 
 ## Validation status
-- Full combined Python suite: **187 passed in 9.54s** on PostgreSQL 16 CI.
+- Full combined Python suite: **187 passed in 11.86s** on PostgreSQL 16 CI.
+- Frontend SDK: **9 Node.js tests passed**; `node --check` passed for both browser scripts.
 - All nine SaaS migrations (001–009) applied with checksums and the migration lock; the migration history check passed.
 - PostgreSQL route tests verify repeated two/three-step paths, exact repetition/session/user counts, same-timestamp ordering via `event_order`, no cross-session stitching, exclusion of non-page-view events, aggregate minimum-cohort suppression, user-level RBAC and audit logging.
 - The standard-user route matrix also includes both new GET endpoints and confirms denial without analytics permissions.
 - Dependency audit, Bandit analysis, encrypted backup/isolated restore, Docker/Compose/Caddy checks passed in the same CI revision.
 
-The CI database is a disposable PostgreSQL 16 service. The live GitHub Pages frontend is not yet wired to send events, and no persistent production database or backend host has been provisioned. Keep the API private until frontend integration, hosting, privacy and operational review are complete.
+The CI database is a disposable PostgreSQL 16 service. The frontend SDK is present but live collection remains disabled until a persistent SaaS API host, same-site domain/cookie setup and real login integration are configured. No live website visitor events have been collected. Keep the API private until hosting, authentication, privacy and operational review are complete.
