@@ -132,7 +132,7 @@ services:
     volumes:
       - ./deploy/monitoring/prometheus.saas.yml:/etc/prometheus/prometheus.yml:ro
       - ./deploy/monitoring/alerts.saas.yml:/etc/prometheus/alerts.yml:ro
-      - ${SAAS_METRICS_TOKEN_FILE:?Set a protected file containing the scrape bearer token}:/run/secrets/saas_metrics_token:ro
+      - ${SAAS_METRICS_TOKEN_FILE:-/etc/tloomberg-saas/secrets/prometheus_token}:/run/secrets/saas_metrics_token:ro
       - prometheus_data:/prometheus
     expose:
       - "9090"
