@@ -240,3 +240,49 @@ def test_wallet_adjustment_requires_strict_integer_and_exact_idempotent_payload(
                 assert client.post(base,headers=headers,json=blank_key).status_code==422
         finally:
             app.dependency_overrides.pop(get_conn,None)
+
+
+
+def test_console_cannot_reactivate_or_modify_suspended_superadmin(migrated_admin_database):
+    from saas_core.auth.api import app,get_conn
+    with connect() as conn:
+        root=make_user(conn,"rootreactivate")
+        protected=make_user(conn,"protectedreactivate")
+        grant(conn,root,"superadmin");grant(conn,protected,"superadmin")
+        conn.execute("UPDATE users SET status='suspended' WHERE id=%s",(protected,))
+        headers=session(conn,root)
+        conn.commit()
+        def database_connection():
+            yield conn
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                response=client.patch(f"/admin/console/users/{protected}/status",headers=headers,
+                    json={"status":"active","reason":"attempted superadmin reactivation"})
+                assert response.status_code==422
+                assert conn.execute("SELECT status FROM users WHERE id=%s",(protected,)).fetchone()["status"]=="suspended"
+        finally:
+            app.dependency_overrides.pop(get_conn,None)
+
+
+def test_wallet_adjustment_rejects_bigint_overflow_before_database_write(migrated_admin_database):
+    from saas_core.auth.api import app,get_conn
+    with connect() as conn:
+        root=make_user(conn,"rootoverflow"); customer=make_user(conn,"overflowcustomer")
+        grant(conn,root,"superadmin")
+        conn.execute("INSERT INTO wallet_accounts(user_id) VALUES (%s)",(customer,))
+        headers=session(conn,root)
+        conn.commit()
+        def database_connection():
+            yield conn
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                response=client.post(f"/admin/console/wallets/{customer}/adjust",headers=headers,json={
+                    "bucket":"cash","amount_toman":9223372036854775808,"reason":"overflow",
+                    "idempotency_key":f"overflow-{uuid4()}"})
+                assert response.status_code==422
+                assert conn.execute("SELECT count(*) AS n FROM wallet_ledger_entries WHERE user_id=%s",
+                    (customer,)).fetchone()["n"]==0
+        finally:
+            app.dependency_overrides.pop(get_conn,None)
