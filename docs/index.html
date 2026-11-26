@@ -2623,7 +2623,7 @@
           restoreAppScroll(Number(route.scrollY)||0);
         };
         window.addEventListener('popstate',onPopState);
-        if (window.TloombergAnalytics) window.TloombergAnalytics.trackPage({page,activeSymbol,portfolioInvestor});
+        if (window.TloombergAnalytics) window.TloombergAnalytics.trackPage({page,activeSymbol,portfolioInvestor},{initial:true});
         return ()=>window.removeEventListener('popstate',onPopState);
       }, []);
       const openInvestor = (id) => navigateTo('portfolio',{portfolioInvestor:id});
