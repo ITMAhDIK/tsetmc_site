@@ -7,6 +7,7 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 
+from saas_core.auth.authorization import AuthorizationDenied
 from saas_core.wallet.wallet_repository import (
     get_wallet_balances, post_ledger_entry, request_withdrawal, cancel_withdrawal,
     review_withdrawal, settle_withdrawal, spend_wallet,
@@ -46,6 +47,13 @@ def make_user(conn):
                VALUES (%s,%s,%s,'active',%s,now())""",
             (uid,str(uid)[:32],f"wallet-{uid.hex[:16]}",f"+4915{str(uid.int)[:10]}"),
         )
+    return uid
+
+
+def make_admin(conn):
+    uid=make_user(conn)
+    role_id=conn.execute("SELECT id FROM roles WHERE code='admin'").fetchone()["id"]
+    conn.execute("INSERT INTO user_roles(user_id,role_id) VALUES (%s,%s)",(uid,role_id))
     return uid
 
 
@@ -116,7 +124,7 @@ def test_wallet_spend_is_gift_first_idempotent_and_ledger_immutable(migrated_wal
 def test_withdrawal_reserves_cash_then_approval_and_confirmed_payout_debit(migrated_wallet_database):
     with connect() as conn:
         user=make_user(conn)
-        reviewer=make_user(conn)
+        reviewer=make_admin(conn)
         bank=make_verified_bank(conn,user)
         credit(conn,user,"cash",500_000,f"cash-{uuid4()}")
         request=request_withdrawal(
@@ -129,11 +137,17 @@ def test_withdrawal_reserves_cash_then_approval_and_confirmed_payout_debit(migra
             decision="approved",review_note="Bank account verification reviewed",
         )
         assert approved["status"]=="approved"
+        result_ref=f"bank-transfer-{uuid4()}"
         result=settle_withdrawal(
             conn,withdrawal_id=request["id"],reviewer_id=reviewer,
-            idempotency_key=f"paid-{request['id']}",payout_reference=f"bank-transfer-{uuid4()}",
+            idempotency_key=f"paid-{request['id']}",payout_reference=result_ref,
         )
         assert result["status"]=="paid"
+        replay=settle_withdrawal(
+            conn,withdrawal_id=request["id"],reviewer_id=reviewer,
+            idempotency_key=f"paid-{request['id']}",payout_reference=result_ref,
+        )
+        assert replay["already_processed"] is True
         balances=get_wallet_balances(conn,user)
         assert balances.cash_toman==300_000
         assert balances.reserved_cash_toman==0
@@ -278,7 +292,7 @@ def test_cancelled_withdrawal_releases_reservation_exactly_once(migrated_wallet_
 def test_rejected_withdrawal_releases_reservation_and_writes_audit(migrated_wallet_database):
     with connect() as conn:
         user=make_user(conn)
-        reviewer=make_user(conn)
+        reviewer=make_admin(conn)
         bank=make_verified_bank(conn,user)
         credit(conn,user,"cash",300_000,f"cash-{uuid4()}")
         request=request_withdrawal(
@@ -302,7 +316,7 @@ def test_rejected_withdrawal_releases_reservation_and_writes_audit(migrated_wall
 def test_approved_withdrawal_cannot_be_cancelled_by_owner(migrated_wallet_database):
     with connect() as conn:
         user=make_user(conn)
-        reviewer=make_user(conn)
+        reviewer=make_admin(conn)
         bank=make_verified_bank(conn,user)
         credit(conn,user,"cash",300_000,f"cash-{uuid4()}")
         request=request_withdrawal(
@@ -407,3 +421,23 @@ def test_referral_code_generation_is_stable_for_existing_user(migrated_wallet_da
         second=ensure_referral_code(conn,user)
         assert first==second
         assert 16 <= len(first) <= 24
+
+
+def test_wallet_service_rejects_unauthorized_withdrawal_review(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn);unprivileged=make_user(conn)
+        bank=make_verified_bank(conn,user)
+        credit(conn,user,"cash",100_000,f"cash-{uuid4()}")
+        request=request_withdrawal(conn,user_id=user,amount_toman=50_000,bank_account_id=bank,idempotency_key=f"review-auth-{uuid4()}")
+        with pytest.raises(AuthorizationDenied):
+            review_withdrawal(conn,withdrawal_id=request["id"],reviewer_id=unprivileged,decision="approved",review_note="Not authorized")
+        assert conn.execute("SELECT status FROM withdrawal_requests WHERE id=%s",(request["id"],)).fetchone()["status"]=="requested"
+
+def test_ledger_entry_types_enforce_credit_and_debit_signs(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        with pytest.raises(ValueError,match="must be credits"):
+            post_ledger_entry(conn,user_id=user,bucket="cash",entry_type="topup",amount_toman=-1,idempotency_key=f"bad-topup-{uuid4()}")
+        with pytest.raises(ValueError,match="must be debits"):
+            post_ledger_entry(conn,user_id=user,bucket="cash",entry_type="purchase_debit",amount_toman=1,idempotency_key=f"bad-debit-{uuid4()}")
+        assert get_wallet_balances(conn,user).cash_toman==0

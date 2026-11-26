@@ -15,6 +15,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from saas_core.payments.domain import PaymentRejected, VerifiedPayment
+from saas_core.auth.authorization import AuthorizationDenied
 from saas_core.payments.repository import (
     attach_provider_checkout, claim_refund, create_payment_attempt,
     create_subscription_order, enqueue_stale_payment_reconciliation,
@@ -54,6 +55,13 @@ def make_user(conn, *, verified=True):
             (user_id, str(user_id)[:32], f"pay-{user_id.hex[:16]}",
              phone if verified else None, datetime.now(timezone.utc) if verified else None),
         )
+    return user_id
+
+
+def make_admin(conn):
+    user_id=make_user(conn)
+    role_id=conn.execute("SELECT id FROM roles WHERE code='admin'").fetchone()["id"]
+    conn.execute("INSERT INTO user_roles(user_id,role_id) VALUES (%s,%s)",(user_id,role_id))
     return user_id
 
 
@@ -176,14 +184,15 @@ def test_expiry_cancels_orders_and_releases_attempts(migrated_test_database):
 def test_refund_request_is_idempotent_and_full_refund_reverses_subscription(migrated_test_database):
     with connect() as conn:
         user_id, order, attempt, provider_ref = make_pending_order(conn)
+        admin_id=make_admin(conn)
         settle_provider_callback(
             conn, order_id=order["id"], attempt_id=attempt["id"], provider="snappay",
             verified=verified_for(provider_ref), payload_sha256="d" * 64,
         )
         key = f"refund-{uuid4()}"
-        first = request_full_refund(conn, order_id=order["id"], requested_by=user_id,
+        first = request_full_refund(conn, order_id=order["id"], requested_by=admin_id,
                                     idempotency_key=key, reason="duplicate purchase")
-        second = request_full_refund(conn, order_id=order["id"], requested_by=user_id,
+        second = request_full_refund(conn, order_id=order["id"], requested_by=admin_id,
                                      idempotency_key=key, reason="duplicate purchase")
         assert first["id"] == second["id"]
         claimed = claim_refund(conn, refund_id=first["id"])
@@ -225,14 +234,15 @@ def test_refund_worker_keeps_request_queued_until_gateway_is_configured(migrated
 
 def test_reconciliation_case_requires_resolution_and_is_audited(migrated_test_database):
     with connect() as conn:
-        user_id, order, attempt, _ = make_pending_order(conn)
+        _, order, attempt, _ = make_pending_order(conn)
+        admin_id=make_admin(conn)
         conn.execute("UPDATE payment_attempts SET created_at=now()-interval '2 hours' WHERE id=%s",
                      (attempt["id"],))
         enqueue_stale_payment_reconciliation(conn, older_than_minutes=30)
         case = next(item for item in list_payment_reconciliation_cases(conn)
                     if item["payment_attempt_id"] == attempt["id"])
         resolved = resolve_payment_reconciliation_case(
-            conn, case_id=case["id"], resolved_by=user_id,
+            conn, case_id=case["id"], resolved_by=admin_id,
             resolution_note="Provider status checked in merchant portal",
         )
         assert resolved["status"] == "resolved"
@@ -240,3 +250,24 @@ def test_reconciliation_case_requires_resolution_and_is_audited(migrated_test_da
             "SELECT count(*) AS n FROM admin_audit_logs WHERE target_id=%s",
             (str(case["id"]),),
         ).fetchone()["n"] == 1
+
+
+def test_expired_order_rejects_late_success_callback_even_before_expiry_worker(migrated_test_database):
+    with connect() as conn:
+        _,order,attempt,provider_ref=make_pending_order(conn)
+        conn.execute("UPDATE payment_orders SET expires_at=now()-interval '1 second' WHERE id=%s",(order["id"],))
+        with pytest.raises(PaymentRejected,match="expired"):
+            settle_provider_callback(
+                conn,order_id=order["id"],attempt_id=attempt["id"],provider="snappay",
+                verified=verified_for(provider_ref),payload_sha256="f"*64,
+            )
+        assert conn.execute("SELECT status FROM payment_orders WHERE id=%s",(order["id"],)).fetchone()["status"]=="pending"
+        assert conn.execute("SELECT count(*) AS n FROM subscriptions WHERE payment_order_id=%s",(order["id"],)).fetchone()["n"]==0
+
+def test_refund_and_reconciliation_services_reject_non_admin_actor(migrated_test_database):
+    with connect() as conn:
+        user_id,order,attempt,provider_ref=make_pending_order(conn)
+        settle_provider_callback(conn,order_id=order["id"],attempt_id=attempt["id"],provider="snappay",
+            verified=verified_for(provider_ref),payload_sha256="1"*64)
+        with pytest.raises(AuthorizationDenied):
+            request_full_refund(conn,order_id=order["id"],requested_by=user_id,idempotency_key=f"unauthorized-{uuid4()}")

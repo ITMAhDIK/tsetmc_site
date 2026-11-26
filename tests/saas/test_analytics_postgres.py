@@ -82,10 +82,14 @@ def test_batch_is_idempotent_and_user_identity_is_server_bound(migrated_analytic
         assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)).fetchone()["n"]==1
         stored=conn.execute("SELECT user_id,consent_version FROM analytics_events WHERE client_event_id=%s",(item["event_id"],)).fetchone()
         assert stored["user_id"]==user and stored["consent_version"]=="product-analytics-v1"
+        changed={**item,"page_path":"/different-page"}
+        with pytest.raises(ValueError,match="reused with different event data"):
+            record_events(conn,user_id=user,events=[changed])
 
 def test_overview_funnel_and_retention_reports_use_aggregates(migrated_analytics_database):
     with connect() as conn:
-        user=make_user(conn);set_consent(conn,user_id=user,enabled=True)
+        user=make_user(conn);admin=make_user(conn,"analytics-admin");grant(conn,admin,"admin")
+        set_consent(conn,user_id=user,enabled=True)
         now=datetime.now(timezone.utc)
         record_events(conn,user_id=user,events=[
             event("page_view",occurred_at=now,page_path="/pricing"),
@@ -94,13 +98,13 @@ def test_overview_funnel_and_retention_reports_use_aggregates(migrated_analytics
             event("funnel_step",occurred_at=now,page_path="/checkout",metadata={"funnel_name":"subscribe","funnel_step":2}),
         ])
         today=date.today()
-        overview=get_overview(conn,start=today,end=today)
+        overview=get_overview(conn,actor_id=admin,start=today,end=today)
         assert sum(row["events"] for row in overview["daily"])>=4
         assert "/pricing" in {row["page_path"] for row in overview["top_pages"]}
         assert any(row["component_id"]=="pricing-plan-card" for row in overview["component_activity"])
-        funnel=get_funnels(conn,start=today,end=today)
+        funnel=get_funnels(conn,actor_id=admin,start=today,end=today)
         assert [(row["step"],row["users"]) for row in funnel]==[(1,1),(2,1)]
-        retention=get_retention(conn,start=today-timedelta(days=1),end=today)
+        retention=get_retention(conn,actor_id=admin,start=today-timedelta(days=1),end=today)
         assert retention and any(row["retained_users"]>=1 for row in retention)
 
 def test_user_level_activity_requires_separate_permission_and_is_audited(migrated_analytics_database):
@@ -126,3 +130,28 @@ def test_analytics_routes_and_phase_six_permissions_remain_registered(migrated_a
         from saas_core.auth.authorization import has_permission
         assert has_permission(conn,support,"tickets.manage")
         assert not has_permission(conn,support,"analytics.read")
+
+
+def test_aggregate_report_service_requires_analytics_permission(migrated_analytics_database):
+    with connect() as conn:
+        ordinary=make_user(conn)
+        today=date.today()
+        with pytest.raises(AuthorizationDenied):
+            get_overview(conn,actor_id=ordinary,start=today,end=today)
+        with pytest.raises(AuthorizationDenied):
+            get_funnels(conn,actor_id=ordinary,start=today,end=today)
+        with pytest.raises(AuthorizationDenied):
+            get_retention(conn,actor_id=ordinary,start=today,end=today)
+
+def test_scroll_and_active_time_events_require_their_measurement(migrated_analytics_database):
+    with connect() as conn:
+        user=make_user(conn);set_consent(conn,user_id=user,enabled=True)
+        with pytest.raises(ValueError,match="require scroll_depth_pct"):
+            record_events(conn,user_id=user,events=[event("scroll")])
+        with pytest.raises(ValueError,match="require active_duration_ms"):
+            record_events(conn,user_id=user,events=[event("active_time")])
+        with pytest.raises(ValueError,match="normalized path"):
+            record_events(conn,user_id=user,events=[event(page_path="/account/./profile")])
+        with pytest.raises(ValueError,match="unsupported fields"):
+            record_events(conn,user_id=user,events=[event(metadata=["secret"])])
+        assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)).fetchone()["n"]==0
