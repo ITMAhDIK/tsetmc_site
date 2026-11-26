@@ -7,6 +7,8 @@ on:
       - main
     paths:
       - "docs/**"
+      - "saas_core/**"
+      - "tests/saas/**"
       - "ui-refresh.css"
       - ".github/workflows/pages-investor-preview.yml"
       - "tools/inspect_pages_workbooks.py"
@@ -39,8 +41,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install workbook reader
-        run: python -m pip install --disable-pip-version-check openpyxl
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check openpyxl pytest
+
+      - name: Test SaaS wallet and schema contracts
+        run: python -m pytest tests/saas -q
 
       - name: Inspect uploaded workbook schemas
         run: python tools/inspect_pages_workbooks.py
@@ -90,15 +95,16 @@ jobs:
 
           page = Path("docs/index.html").read_text(encoding="utf-8")
           for required in ("tloomberg_demo_menu=", "setMenuOpen", "demoMenuRole ? 'منو' : 'ورود'",
-                           "تنظیمات نمایش", "تقویم", "واحد پول", "تم سایت",
-                           "logoutDemoMenu"):
+                           "AccountMenuDrawer", "app-drawer-panel", "خرید اشتراک ویژه",
+                           "تاریخچهٔ کیف پول", "مدیریت داده‌های بازار", "ChartAccessContext",
+                           "۲٬۴۹۹٬۰۰۰", "۸۹۹٬۰۰۰", "اسنپ‌پی", "دیجی‌پی", "logoutDemoMenu"):
               if required not in page:
                   raise SystemExit(f"Missing account menu behavior: {required}")
           if 'className="app-toolbar"' in page or 'app-tool-button' in page:
               raise SystemExit("Old standalone display settings remain in the top bar")
-          css = Path("ui-refresh.css").read_text(encoding="utf-8")
-          if ".app-menu-panel" not in css or ".app-menu-setting" not in css:
-              raise SystemExit("Account/settings menu styles are missing")
+          css = Path("docs/ui-refresh.css").read_text(encoding="utf-8")
+          if ".app-drawer-panel" not in css or ".app-drawer-backdrop" not in css or ".app-premium-chart-lock" not in css:
+              raise SystemExit("Right-side account drawer or premium chart lock styles are missing")
           nav = re.search(r"const NAV_PAGES = \[(.*?)\];", page, flags=re.S)
           if not nav:
               raise SystemExit("Main navigation definition not found")

@@ -34,3 +34,11 @@ Payment gateways, SMS, Google OAuth, production authentication and withdrawal
 processing are intentionally not represented as live integrations yet.
 They require merchant credentials, current provider contracts, secrets,
 sandbox verification and dedicated service implementations.
+
+
+## Feature entitlement extension
+
+- Migration 002 adds free/premium feature entitlements, a separate market-data-manager role, phone-based referral invitations, analytics consent history and event indexes.
+- The free plan currently includes only the basic market overview and basic stock page; charts and advanced analysis belong to the two paid plans.
+- Market-data administration is a staff permission, not a subscription feature.
+- The menu and checkout are frontend previews. SMS, Google sign-in, live payments, tickets and analytics collection need a deployed API.

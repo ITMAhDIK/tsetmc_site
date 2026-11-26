@@ -62,7 +62,8 @@
   <div id="root"></div>
 
   <script type="text/babel" data-presets="react">
-    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+    const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
+    const ChartAccessContext = React.createContext({ allowed: false, onUpgrade: () => {} });
 
     // --- 1. API Client ---
     const API_BASE = window.location.protocol.startsWith('http') && window.location.port === '8000'
@@ -255,6 +256,27 @@
     };
 
     // --- 3. Reusable UI Components ---
+    function PremiumChartGate({ onUpgrade }) {
+      return (
+        <section className="app-premium-chart-lock" aria-label="نمودار ویژهٔ کاربران دارای اشتراک">
+          <div className="app-premium-chart-blur" aria-hidden="true">
+            <div className="app-premium-chart-bars">
+              <i style={{ height: '38%' }} /><i style={{ height: '61%' }} /><i style={{ height: '47%' }} />
+              <i style={{ height: '78%' }} /><i style={{ height: '55%' }} /><i style={{ height: '88%' }} />
+              <i style={{ height: '68%' }} /><i style={{ height: '94%' }} /><i style={{ height: '72%' }} />
+            </div>
+            <div className="app-premium-chart-lines"><i /><i /><i /><i /></div>
+          </div>
+          <div className="app-premium-chart-message">
+            <span className="app-premium-lock-icon" aria-hidden="true">⌑</span>
+            <strong>این نمودار مخصوص کاربران دارای اشتراک ویژه است</strong>
+            <small>برای مشاهدهٔ نمودارها و ابزارهای تحلیلی، اشتراک ویژه را انتخاب کن.</small>
+            <button type="button" onClick={onUpgrade}>مشاهدهٔ اشتراک‌ها</button>
+          </div>
+        </section>
+      );
+    }
+
     // Chart with: area/line/candlestick/bar types, event markers, Jalali
     // axis ticks (per DATE_MODE), right-edge anchoring (zooming out never
     // leaves empty space on the right), fullscreen, and simple drawing
@@ -262,6 +284,7 @@
     // Markers + ohlc are memoized by the parent (JSON key) so the chart
     // is not rebuilt on every render.
     function LWChart({ data, ohlc, type = 'area', height = 250, theme = 'dark', color = '#2962ff', unitLabel = '٪', markers = [], dateMode = 'jalali', enableDrawing = false, allowFullscreen = true, onHover = null }) {
+      const chartAccess = useContext(ChartAccessContext);
       const ref = useRef(null);
       const wrapRef = useRef(null);
       const chartRef = useRef(null);
@@ -302,7 +325,7 @@
       }, [data, ohlc, type]);
 
       useEffect(() => {
-        if (!ref.current || !window.LightweightCharts || cleanData.length === 0) return;
+        if (!chartAccess.allowed || !ref.current || !window.LightweightCharts || cleanData.length === 0) return;
         const isLight = theme === 'light';
         const tickFmt = (time) => fmtGregorianDate(String(time).slice(0, 10));
         const chart = window.LightweightCharts.createChart(ref.current, {
@@ -374,7 +397,7 @@
         });
         ro.observe(ref.current);
         return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
-      }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, logScale, autoScale]);
+      }, [cleanData, height, theme, color, unitLabel, type, markersKey, dateMode, logScale, autoScale, chartAccess.allowed]);
 
       // --- drawing overlay ---
       const pointFromEvent = (e) => {
@@ -455,6 +478,7 @@
         );
       };
 
+      if (!chartAccess.allowed) return <PremiumChartGate onUpgrade={chartAccess.onUpgrade} />;
       if (!window.LightweightCharts) return <div className="p-4 text-xs text-amber-400">کتابخانه نمودار بارگذاری نشد.</div>;
       if (cleanData.length === 0) return <div className="p-6 text-center text-xs text-[var(--text-secondary)]">سری زمانی معتبری برای رسم نمودار در این بازه موجود نیست.</div>;
       return (
@@ -2292,31 +2316,66 @@
     }
 
     // --- 10. Page 7: Account & Plans (Local Placeholder) ---
-    function AccountAndPlansPage({ plan, setPlan }) {
+    function AccountAndPlansPage() {
+      const [selectedPlan, setSelectedPlan] = useState('premium_monthly');
+      const [paymentMethod, setPaymentMethod] = useState('snappay');
+      const [purchasePhone, setPurchasePhone] = useState('');
+      const planOptions = [
+        { code: 'premium_monthly', title: 'اشتراک ویژه یک‌ماهه', duration: '۳۰ روز', price: '۸۹۹٬۰۰۰', note: 'برای شروع و استفادهٔ ماهانه' },
+        { code: 'premium_quarterly', title: 'اشتراک ویژه سه‌ماهه', duration: '۹۰ روز', price: '۲٬۴۹۹٬۰۰۰', note: 'برای استفادهٔ پیوسته در یک دورهٔ سه‌ماهه' },
+      ];
+      const selected = planOptions.find(item => item.code === selectedPlan) || planOptions[0];
+      const digits = String(purchasePhone).replace(/[^\d۰-۹٠-٩]/g, '');
+      const phoneLooksValid = digits.length >= 10 && digits.length <= 13;
+
       return (
-        <div className="space-y-3 text-xs">
-          <div className="p-3 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
-            حالت اجرای محلی: سیستم احراز هویت ابری (Supabase) در نسخه ویندوز محلی غیرفعال است و تغییر سطح دسترسی زیر صرفاً نمایشی است.
+        <div className="app-plans-page">
+          <header className="app-plans-heading">
+            <span>عضویت تلومبرگ</span>
+            <h1>خرید اشتراک</h1>
+            <p>با اشتراک ویژه به نمودارها، تحلیل‌های عمیق سهام‌داران، پرتفوی و ابزارهای تحلیلی دسترسی پیدا می‌کنی.</p>
+          </header>
+          <div className="app-plan-grid">
+            {planOptions.map(item => (
+              <button key={item.code} type="button" className={'app-plan-card ' + (selectedPlan === item.code ? 'is-selected' : '')}
+                onClick={() => setSelectedPlan(item.code)} aria-pressed={selectedPlan === item.code}>
+                <span className="app-plan-card-top"><strong>{item.title}</strong><small>{item.duration}</small></span>
+                <span className="app-plan-price"><b>{item.price}</b><small>تومان</small></span>
+                <span className="app-plan-note">{item.note}</span>
+                <span className="app-plan-select">{selectedPlan === item.code ? 'انتخاب شده' : 'انتخاب این طرح'}</span>
+              </button>
+            ))}
           </div>
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex justify-between items-center">
-            <div>
-              <div className="font-bold text-sm">حساب کاربری محلی و سطح دسترسی</div>
-              <div className="text-[var(--text-secondary)]">در اجرای محلی، تمام امکانات تحلیلی بدون محدودیت در دسترس شماست.</div>
+          <section className="app-plan-benefits">
+            <strong>دسترسی اشتراک ویژه</strong>
+            <p>هر دو طرح، تمام امکانات ویژهٔ کاربران را فعال می‌کنند. مدیریت داده‌های بازار یک مجوز مدیریتی مستقل است و با خرید اشتراک فعال نمی‌شود.</p>
+          </section>
+          <section className="app-payment-panel">
+            <div className="app-payment-panel-heading">
+              <div><h2>تکمیل خرید</h2><p>شماره تماس خریدار باید در مرحلهٔ پرداخت احراز هویت شود.</p></div>
+              <span>پرداخت امن</span>
             </div>
-            <button onClick={() => setPlan(p => p === 'free' ? 'premium' : 'free')} className="px-3 py-1.5 rounded bg-blue-600 text-white">
-              سطح نمایشی: {plan}
+            <label className="app-payment-label" htmlFor="subscription-phone">شماره تماس خریدار</label>
+            <input id="subscription-phone" className="app-payment-phone" type="tel" inputMode="tel" autoComplete="tel"
+              value={purchasePhone} onChange={event => setPurchasePhone(event.target.value)} placeholder="مثلاً ۰۹۱۲۱۲۳۴۵۶۷" />
+            <small className="app-payment-help">تا زمان اتصال API احراز هویت، این شماره فقط در همین صفحه می‌ماند و ارسال یا ذخیره نمی‌شود.</small>
+            <div className="app-payment-label">روش پرداخت با اعتبار</div>
+            <div className="app-payment-methods">
+              <button type="button" className={'app-payment-method ' + (paymentMethod === 'snappay' ? 'is-selected' : '')}
+                onClick={() => setPaymentMethod('snappay')} aria-pressed={paymentMethod === 'snappay'}>
+                <strong>اسنپ‌پی</strong><small>پرداخت با اعتبار اسنپ‌پی</small>
+              </button>
+              <button type="button" className={'app-payment-method ' + (paymentMethod === 'digipay' ? 'is-selected' : '')}
+                onClick={() => setPaymentMethod('digipay')} aria-pressed={paymentMethod === 'digipay'}>
+                <strong>دیجی‌پی</strong><small>پرداخت با اعتبار دیجی‌پی</small>
+              </button>
+            </div>
+            <div className="app-payment-summary"><span>{selected.title}</span><strong>{selected.price} تومان</strong></div>
+            <button type="button" className="app-payment-submit" disabled={!phoneLooksValid}>
+              ادامه و پرداخت با {paymentMethod === 'snappay' ? 'اسنپ‌پی' : 'دیجی‌پی'}
             </button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="p-4 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-1.5">
-              <h3 className="font-bold text-sm">طرح رایگان (Free)</h3>
-              <p className="text-[var(--text-secondary)]">نمای بازار، صفحات پایه نمادها، محدودیت تاریخچه سهام‌داری و ۱ دیده‌بان.</p>
-            </div>
-            <div className="p-4 rounded border border-emerald-500/40 bg-[var(--bg-panel)] space-y-1.5">
-              <h3 className="font-bold text-sm text-emerald-400">طرح حرفه‌ای (Premium)</h3>
-              <p className="text-[var(--text-secondary)]">تاریخچه کامل، بازسازی پرتفوی چندشرکتی، غربالگر پیشرفته و خروجی اکسل/CSV.</p>
-            </div>
-          </div>
+            <p className="app-payment-disabled-note">درگاه‌ها تا زمان دریافت دسترسی پذیرندگی، اتصال API و آزمایش callback امن، غیرفعال هستند. این دکمه هنوز تراکنشی ایجاد نمی‌کند.</p>
+          </section>
         </div>
       );
     }
@@ -2556,6 +2615,221 @@
       );
     }
 
+    // --- Account menu drawer -------------------------------------------------
+    // UI preview only: identity, balances, roles and transactions are server-owned.
+    function AccountMenuDrawer({ open, onClose, demoMenuRole, dateMode, setDateMode, currency, setCurrency, theme, setTheme, onNavigate, onLogout }) {
+      const [view, setView] = useState('home');
+      const [supportExpanded, setSupportExpanded] = useState(true);
+
+      useEffect(() => {
+        if (!open) return;
+        setView('home');
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => { document.body.style.overflow = previousOverflow; };
+      }, [open]);
+
+      if (!open) return null;
+      const demo = Boolean(demoMenuRole);
+      const superadminPreview = demoMenuRole === 'superadmin';
+      const SettingChoice = ({ label, aLabel, aValue, bLabel, bValue, value, onChange }) => (
+        <div className="app-drawer-setting-row">
+          <span>{label}</span>
+          <div className="app-drawer-segment" role="group" aria-label={label}>
+            <button type="button" className={value === aValue ? 'is-active' : ''} onClick={() => onChange(aValue)}>{aLabel}</button>
+            <button type="button" className={value === bValue ? 'is-active' : ''} onClick={() => onChange(bValue)}>{bLabel}</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <>
+          <button type="button" className="app-drawer-backdrop" onClick={onClose} aria-label="بستن منو" />
+          <aside className="app-drawer-panel" role="dialog" aria-modal="true" aria-label="منوی حساب کاربری" dir="rtl">
+            <header className="app-drawer-header">
+              <div className="app-drawer-brand">
+                <img src="./tloomberg.webp" alt="" />
+                <span><small>فضای کاربری</small><strong>تلومبرگ</strong></span>
+              </div>
+              <button type="button" className="app-drawer-close" onClick={onClose} aria-label="بستن">×</button>
+            </header>
+            <div className="app-drawer-scroll">
+              {view === 'home' && (
+                <>
+                  <section className="app-drawer-user-card">
+                    <div className="app-drawer-user-avatar">{superadminPreview ? 'مد' : demo ? 'ک' : 'م'}</div>
+                    <div className="app-drawer-user-copy">
+                      <strong>{superadminPreview ? 'مدیر کل' : demo ? 'کاربر تلومبرگ' : 'مهمان تلومبرگ'}</strong>
+                      <small>{demo ? 'حالت آزمایشی · هویت از سرور تأیید نشده' : 'برای دسترسی به پروفایل وارد حساب شو'}</small>
+                    </div>
+                    <span className="app-drawer-status-dot" />
+                  </section>
+                  {!demo && (
+                    <a className="app-drawer-login" href="./saas/">
+                      <span><strong>ورود یا ساخت حساب</strong><small>با شماره تماس یا حساب گوگل</small></span><b>←</b>
+                    </a>
+                  )}
+                  <div className="app-drawer-group-label">حساب و اشتراک</div>
+                  <button type="button" className="app-drawer-nav-item" onClick={() => setView('profile')}>
+                    <span className="app-drawer-nav-icon">♙</span>
+                    <span><strong>پروفایل</strong><small>اطلاعات حساب، نوع عضویت، کیف پول و دعوت دوستان</small></span><b>‹</b>
+                  </button>
+                  <button type="button" className="app-drawer-nav-item app-drawer-nav-primary" onClick={() => { onNavigate('account'); onClose(); }}>
+                    <span className="app-drawer-nav-icon">✦</span>
+                    <span><strong>خرید اشتراک ویژه</strong><small>یک‌ماهه ۸۹۹٬۰۰۰ · سه‌ماهه ۲٬۴۹۹٬۰۰۰ تومان</small></span><b>‹</b>
+                  </button>
+                  <div className="app-drawer-group-label app-drawer-group-button">
+                    <span>پشتیبانی</span><button type="button" onClick={() => setSupportExpanded(value => !value)} aria-expanded={supportExpanded}>{supportExpanded ? '−' : '+'}</button>
+                  </div>
+                  {supportExpanded && (
+                    <div className="app-drawer-support-links">
+                      <button type="button" onClick={() => setView('faq')}><span>؟</span>سوالات متداول <b>‹</b></button>
+                      <button type="button" onClick={() => setView('ticket-new')}><span>＋</span>تیکت جدید <b>‹</b></button>
+                      <button type="button" onClick={() => setView('ticket-history')}><span>▤</span>تاریخچهٔ تیکت‌ها <b>‹</b></button>
+                    </div>
+                  )}
+                  <div className="app-drawer-group-label">تنظیمات نمایش</div>
+                  <section className="app-drawer-settings-card">
+                    <SettingChoice label="تقویم" aLabel="شمسی" aValue="jalali" bLabel="میلادی" bValue="gregorian" value={dateMode} onChange={setDateMode} />
+                    <SettingChoice label="واحد پول" aLabel="ریال" aValue="IRR" bLabel="تومان" bValue="IRT" value={currency} onChange={setCurrency} />
+                    <SettingChoice label="پوسته" aLabel="روشن" aValue="light" bLabel="تیره" bValue="dark" value={theme} onChange={setTheme} />
+                    <button type="button" className="app-drawer-more-settings" onClick={() => setView('settings')}>تنظیمات کامل و حریم خصوصی <b>‹</b></button>
+                  </section>
+                  {superadminPreview && (
+                    <>
+                      <div className="app-drawer-group-label">مدیریت · پیش‌نمایش سوپرادمین</div>
+                      <button type="button" className="app-drawer-nav-item" onClick={() => setView('admin')}>
+                        <span className="app-drawer-nav-icon">⚙</span>
+                        <span><strong>مدیریت سامانه</strong><small>کاربران، نقش‌ها، پشتیبانی و تحلیل رفتار</small></span><b>‹</b>
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+
+              {view !== 'home' && <button type="button" className="app-drawer-back" onClick={() => setView('home')}>→ بازگشت به منو</button>}
+
+              {view === 'profile' && (
+                <section className="app-drawer-view">
+                  <div className="app-drawer-view-heading"><small>حساب کاربری</small><h2>پروفایل من</h2></div>
+                  <div className="app-drawer-detail-card">
+                    <div className="app-drawer-card-title">اطلاعات حساب</div>
+                    <div className="app-drawer-detail-row"><span>شناسهٔ عمومی</span><strong>پس از اتصال حساب</strong></div>
+                    <div className="app-drawer-detail-row"><span>نام کاربری</span><strong>ثبت‌نشده در حالت نمایشی</strong></div>
+                    <div className="app-drawer-detail-row"><span>شماره تماس</span><strong>نیازمند احراز هویت</strong></div>
+                    <div className="app-drawer-detail-row"><span>ایمیل</span><strong>نیازمند تأیید ایمیل</strong></div>
+                    <div className="app-drawer-detail-row"><span>نوع حساب</span><strong>{demo ? 'عادی · نمایشی' : 'مهمان'}</strong></div>
+                    <div className="app-drawer-detail-row"><span>وضعیت اشتراک</span><strong>از سرور استعلام می‌شود</strong></div>
+                  </div>
+                  <div className="app-drawer-detail-card">
+                    <div className="app-drawer-card-title">کیف پول</div>
+                    <div className="app-drawer-wallet-total"><small>موجودی کل</small><strong>— <small>تومان</small></strong></div>
+                    <div className="app-drawer-wallet-grid">
+                      <div><small>موجودی نقدی</small><strong>—</strong></div><div><small>قابل برداشت</small><strong>—</strong></div><div><small>هدیه و دعوت</small><strong>—</strong></div>
+                    </div>
+                    <p className="app-drawer-note">هدیهٔ دعوت قابل برداشت نیست. برداشت فقط از موجودی نقدیِ حاصل از واریزهای خود کاربر، پس از کسر برداشت‌های رزروشده و خریدهای انجام‌شده مجاز است.</p>
+                    <div className="app-drawer-disabled-actions"><button type="button" disabled>شارژ کیف پول</button><button type="button" disabled>درخواست برداشت</button></div>
+                    <button type="button" className="app-drawer-text-link" onClick={() => setView('wallet-history')}>مشاهدهٔ تاریخچهٔ واریز، برداشت و هدیه <b>‹</b></button>
+                  </div>
+                  <div className="app-drawer-detail-card">
+                    <div className="app-drawer-card-title">دعوت از دوستان</div>
+                    <div className="app-drawer-invite-code">کد دعوت پس از ساخت حساب ایجاد می‌شود</div>
+                    <p className="app-drawer-note">پس از ثبت‌نام و تأیید شمارهٔ یک کاربر جدید با کد شما، ۱۰۰٬۰۰۰ تومان اعتبار هدیه به کیف پول شما اضافه می‌شود. هدیه قابل برداشت نیست و پیامک اطلاع‌رسانی برای دعوت‌کننده ارسال می‌شود.</p>
+                    <label className="app-drawer-field-label">شمارهٔ دوست برای دعوت</label>
+                    <input type="tel" disabled placeholder="پس از اتصال سرویس دعوت فعال می‌شود" />
+                    <button type="button" className="app-drawer-disabled-button" disabled>ثبت دعوت / کپی کد</button>
+                  </div>
+                  <div className="app-drawer-detail-card">
+                    <div className="app-drawer-card-title">تاریخچهٔ کیف پول</div>
+                    <div className="app-drawer-empty">پس از اتصال دیتابیس حساب، واریز، برداشت، خرید اشتراک و هدیهٔ دعوت با تاریخ، مبلغ و وضعیت نمایش داده می‌شوند.</div>
+                  </div>
+                </section>
+              )}
+
+              {view === 'wallet-history' && (
+                <section className="app-drawer-view">
+                  <div className="app-drawer-view-heading"><small>کیف پول</small><h2>تاریخچهٔ تراکنش‌ها</h2></div>
+                  <div className="app-drawer-detail-card"><div className="app-drawer-empty">تراکنش‌های واقعی کیف پول هنوز به این صفحه متصل نیستند. در نسخهٔ نهایی هر واریز، برداشت، خرید، برگشت وجه و هدیهٔ دعوت جداگانه ثبت می‌شود.</div></div>
+                </section>
+              )}
+
+              {view === 'settings' && (
+                <section className="app-drawer-view">
+                  <div className="app-drawer-view-heading"><small>شخصی‌سازی</small><h2>تنظیمات</h2></div>
+                  <div className="app-drawer-settings-card">
+                    <SettingChoice label="تقویم" aLabel="شمسی" aValue="jalali" bLabel="میلادی" bValue="gregorian" value={dateMode} onChange={setDateMode} />
+                    <SettingChoice label="واحد پول" aLabel="ریال" aValue="IRR" bLabel="تومان" bValue="IRT" value={currency} onChange={setCurrency} />
+                    <SettingChoice label="پوستهٔ سایت" aLabel="روشن" aValue="light" bLabel="تیره" bValue="dark" value={theme} onChange={setTheme} />
+                  </div>
+                  <div className="app-drawer-detail-card">
+                    <div className="app-drawer-card-title">حریم خصوصی و تحلیل تجربهٔ کاربری</div>
+                    <p className="app-drawer-note">تحلیل کلیک‌ها، عمق اسکرول و مدت مکث فقط پس از رضایت روشن کاربر فعال می‌شود. رمز، کد یک‌بارمصرف، شماره تماس، ایمیل، اطلاعات پرداخت و متن خصوصی تیکت ثبت نمی‌شوند.</p>
+                    <span className="app-drawer-pending-tag">پنل رضایت و اتصال ثبت رویدادها در انتظار API است</span>
+                  </div>
+                </section>
+              )}
+
+              {view === 'faq' && (
+                <section className="app-drawer-view">
+                  <div className="app-drawer-view-heading"><small>مرکز راهنما</small><h2>سوالات متداول</h2></div>
+                  {[
+                    ['چطور اشتراک بخرم؟','طرح یک‌ماهه یا سه‌ماهه را انتخاب می‌کنی، شمارهٔ تماس را تأیید می‌کنی و سپس از طریق اسنپ‌پی یا دیجی‌پی پرداخت می‌کنی. اتصال واقعی درگاه هنوز فعال نشده است.'],
+                    ['هدیهٔ دعوت قابل برداشت است؟','خیر. هدیه در موجودی کل دیده می‌شود اما قابل برداشت نیست؛ فقط ماندهٔ نقدی حاصل از واریزهای کاربر قابل برداشت است.'],
+                    ['چطور با پشتیبانی ارتباط بگیرم؟','از قسمت تیکت جدید درخواستت را ثبت می‌کنی و وضعیت و پاسخ را در تاریخچهٔ تیکت می‌بینی. سرویس تیکت هنوز به API وصل نیست.'],
+                    ['اطلاعات حساب به دیتابیس بورس وصل است؟','خیر. دیتابیس حساب، پرداخت و رفتار کاربران از دیتابیس اطلاعات بازار و سهام جداست.'],
+                  ].map(([question, answer]) => (
+                    <details key={question} className="app-drawer-faq-item"><summary>{question}</summary><p>{answer}</p></details>
+                  ))}
+                </section>
+              )}
+
+              {view === 'ticket-new' && (
+                <section className="app-drawer-view">
+                  <div className="app-drawer-view-heading"><small>پشتیبانی</small><h2>تیکت جدید</h2></div>
+                  <div className="app-drawer-detail-card">
+                    <span className="app-drawer-pending-tag">ارسال تیکت پس از اتصال API فعال می‌شود</span>
+                    <label className="app-drawer-field-label">موضوع</label><input disabled placeholder="موضوع تیکت" />
+                    <label className="app-drawer-field-label">دسته‌بندی</label><select disabled><option>انتخاب دسته‌بندی</option><option>حساب کاربری</option><option>پرداخت و کیف پول</option><option>مشکل فنی</option></select>
+                    <label className="app-drawer-field-label">متن پیام</label><textarea disabled rows="5" placeholder="متن درخواست شما..." />
+                    <button type="button" disabled className="app-drawer-disabled-button">ارسال تیکت</button>
+                  </div>
+                </section>
+              )}
+
+              {view === 'ticket-history' && (
+                <section className="app-drawer-view">
+                  <div className="app-drawer-view-heading"><small>پشتیبانی</small><h2>تاریخچهٔ تیکت‌ها</h2></div>
+                  <div className="app-drawer-detail-card">
+                    <div className="app-drawer-empty">با اتصال سامانهٔ تیکت، شماره، موضوع، وضعیت، کارشناس پاسخ‌گو و پیام‌های هر تیکت نمایش داده می‌شود.</div>
+                    <button type="button" className="app-drawer-secondary-action" onClick={() => setView('ticket-new')}>ایجاد تیکت جدید</button>
+                  </div>
+                </section>
+              )}
+
+              {view === 'admin' && superadminPreview && (
+                <section className="app-drawer-view">
+                  <div className="app-drawer-view-heading"><small>پنل مدیر کل</small><h2>مدیریت سامانه</h2></div>
+                  <span className="app-drawer-pending-tag">پیش‌نمایش؛ نقش واقعی فقط از سرور خوانده می‌شود</span>
+                  <div className="app-drawer-detail-card">
+                    <button type="button" className="app-drawer-admin-action" disabled><strong>افزودن ادمین</strong><small>اختصاص نقش admin با ثبت مدیر اعطاکننده</small></button>
+                    <button type="button" className="app-drawer-admin-action" disabled><strong>افزودن ادمین پشتیبانی</strong><small>نقش support با دسترسی فقط به تیکت‌ها</small></button>
+                    <button type="button" className="app-drawer-admin-action" disabled><strong>مدیریت کاربران و دسترسی‌ها</strong><small>نقش‌ها بر اساس مجوزهای RBAC</small></button>
+                    <button type="button" className="app-drawer-admin-action" disabled><strong>گزارش رفتار کاربران</strong><small>کلیک‌ها، اسکرول، زمان مکث و مسیرهای پرتردد</small></button>
+                    <button type="button" className="app-drawer-admin-action" disabled><strong>مدیریت داده‌های بازار</strong><small>مجوز مستقل، خارج از اشتراک مشتریان</small></button>
+                  </div>
+                </section>
+              )}
+            </div>
+            <footer className="app-drawer-footer">
+              {demo ? <button type="button" className="app-drawer-logout" onClick={onLogout}>خروج از حساب آزمایشی <span>↪</span></button>
+                : <a href="./saas/" className="app-drawer-footer-login">ورود به حساب کاربری</a>}
+              <small>اطلاعات مالی و دسترسی‌ها فقط پس از اتصال سرویس حساب نمایش داده می‌شوند.</small>
+            </footer>
+          </aside>
+        </>
+      );
+    }
+
     // --- 12. Root Shell ---
     const NAV_PAGES = [
       { id: 'market', label: 'نمای کلی بازار' },
@@ -2571,17 +2845,22 @@
         const saved = window.localStorage.getItem('tloomberg-theme');
         if (saved === 'light' || saved === 'dark') return saved;
       } catch (_) {}
-      return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
-        ? 'light'
-        : 'dark';
+      return 'light';
+    }
+    function getInitialPreference(key, allowed, fallback) {
+      try {
+        const saved = window.localStorage.getItem(key);
+        if (allowed.includes(saved)) return saved;
+      } catch (_) {}
+      return fallback;
     }
 
     function App() {
       const [page, setPage] = useState('market');
       const [activeSymbol, setActiveSymbol] = useState('');
       const [theme, setTheme] = useState(getInitialTheme);
-      const [currency, setCurrency] = useState('IRR');
-      const [dateMode, setDateMode] = useState('jalali');
+      const [currency, setCurrency] = useState(() => getInitialPreference('tloomberg-currency', ['IRR','IRT'], 'IRR'));
+      const [dateMode, setDateMode] = useState(() => getInitialPreference('tloomberg-calendar', ['jalali','gregorian'], 'jalali'));
       // Bump after the global flips so every fmtDate/fmtGregorianDate call
       // re-renders with the new mode (the module-level DATE_MODE alone
       // does not trigger a render, which left tab-4 text dates stale).
@@ -2620,7 +2899,6 @@
         return ()=>window.removeEventListener('popstate',onPopState);
       }, []);
       const openInvestor = (id) => navigateTo('portfolio',{portfolioInvestor:id});
-      const [plan, setPlan] = useState('premium');
       const [quickSearch, setQuickSearch] = useState('');
       const [searchResults, setSearchResults] = useState([]);
       const [menuOpen, setMenuOpen] = useState(false);
@@ -2638,10 +2916,14 @@
       useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
 
       useEffect(() => {
-        try { window.localStorage.setItem('tloomberg-theme', theme); } catch (_) {}
+        try {
+          window.localStorage.setItem('tloomberg-theme', theme);
+          window.localStorage.setItem('tloomberg-currency', currency);
+          window.localStorage.setItem('tloomberg-calendar', dateMode);
+        } catch (_) {}
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.colorScheme = theme;
-      }, [theme]);
+      }, [theme, currency, dateMode]);
       const toggleDateMode = () => setDateMode(m => {
         const next = m === 'jalali' ? 'gregorian' : 'jalali';
         setDateModeGlobal(next);
@@ -2704,34 +2986,11 @@
                 )}
               </div>
               <div className="app-user-menu">
-                <button type="button" className="app-menu-trigger" onClick={() => setMenuOpen(v => !v)} aria-expanded={menuOpen} aria-haspopup="true">
+                <button type="button" className="app-menu-trigger" onClick={() => setMenuOpen(true)} aria-expanded={menuOpen} aria-haspopup="dialog" aria-label="باز کردن منوی حساب کاربری">
                   <span className="app-menu-trigger-icon" aria-hidden="true">☰</span>
                   <strong>{demoMenuRole ? 'منو' : 'ورود'}</strong>
-                  <span className="app-menu-chevron" aria-hidden="true">{menuOpen ? '⌃' : '⌄'}</span>
+                  <span className="app-menu-trigger-hint" aria-hidden="true">حساب و تنظیمات</span>
                 </button>
-                {menuOpen && (
-                  <div className="app-menu-panel" role="menu">
-                    {demoMenuRole ? (
-                      <div className="app-menu-profile">
-                        <span className="app-menu-avatar" aria-hidden="true">♙</span>
-                        <span><strong>{demoMenuRole === 'superadmin' ? 'مدیر کل' : 'کاربر تلومبرگ'}</strong><small>{demoMenuRole === 'superadmin' ? 'سوپرادمین · حالت آزمایشی' : 'کاربر عادی · حالت آزمایشی'}</small></span>
-                      </div>
-                    ) : (
-                      <a href="./saas/" className="app-menu-login" role="menuitem">ورود / ساخت حساب <span aria-hidden="true">←</span></a>
-                    )}
-                    <div className="app-menu-section-title">تنظیمات نمایش</div>
-                    <button type="button" className="app-menu-setting" onClick={toggleDateMode} role="menuitem">
-                      <span>تقویم</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
-                    </button>
-                    <button type="button" className="app-menu-setting" onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} role="menuitem">
-                      <span>واحد پول</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
-                    </button>
-                    <button type="button" className="app-menu-setting" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} role="menuitem">
-                      <span>تم سایت</span><strong>{theme === 'light' ? 'روشن' : 'تیره'}</strong>
-                    </button>
-                    {demoMenuRole && <button type="button" className="app-menu-logout" onClick={logoutDemoMenu} role="menuitem">خروج از حساب آزمایشی</button>}
-                  </div>
-                )}
               </div>
             </div>
             <div className="app-nav-wrap">
@@ -2744,6 +3003,7 @@
               </nav>
             </div>
           </header>
+          <ChartAccessContext.Provider value={{ allowed: window.location.port === "8000" || demoMenuRole === "superadmin" || window.TLOOMBERG_BOOTSTRAP?.entitlements?.includes("shareholders.graphs") === true, onUpgrade: () => navigateTo("account") }}>
           <main className="app-main flex-1">
             {page === 'market' && <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode} />}
             {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
@@ -2751,9 +3011,23 @@
             {page === 'portfolio' && <PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor} />}
             {page === 'investor-history' && <InvestorHistoryPage />}
             {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
-            {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} />}
+            {page === 'account' && <AccountAndPlansPage />}
             {page === 'admin' && <AdminDashboardPage />}
           </main>
+          </ChartAccessContext.Provider>
+          <AccountMenuDrawer
+            open={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            demoMenuRole={demoMenuRole}
+            dateMode={dateMode}
+            setDateMode={setDateMode}
+            currency={currency}
+            setCurrency={setCurrency}
+            theme={theme}
+            setTheme={setTheme}
+            onNavigate={nextPage => navigateTo(nextPage)}
+            onLogout={logoutDemoMenu}
+          />
         </div>
       );
     }
