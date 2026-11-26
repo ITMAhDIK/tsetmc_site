@@ -77,7 +77,7 @@ def test_password_account_can_link_verified_phone_then_create_subscription(migra
         try:
             with TestClient(app) as client:
                 created=client.post("/auth/register",json={
-                    "username":f"phase-link-{uuid4().hex[:10]}",
+                    "username":f"phase_link_{uuid4().hex[:10]}",
                     "password":"a-long-secure-test-password",
                     "display_name":"Cross phase test",
                 })
@@ -122,13 +122,13 @@ def test_linked_phone_cannot_be_claimed_by_a_second_password_account(migrated_cr
         monkeypatch.setattr(auth_api,"COOKIE_SECURE",False)
         try:
             with TestClient(app) as first:
-                r=first.post("/auth/register",json={"username":f"owner-{uuid4().hex[:8]}","password":"a-long-secure-test-password"})
+                r=first.post("/auth/register",json={"username":f"owner_{uuid4().hex[:8]}","password":"a-long-secure-test-password"})
                 assert r.status_code==200
                 assert first.post("/auth/phone/link/request",json={"phone":phone}).status_code==200
                 otp=_latest_otp(conn,cipher,phone)
                 assert first.post("/auth/phone/link/verify",json={"phone":phone,"otp":otp}).status_code==200
             with TestClient(app) as second:
-                r=second.post("/auth/register",json={"username":f"claim-{uuid4().hex[:8]}","password":"a-long-secure-test-password"})
+                r=second.post("/auth/register",json={"username":f"claim_{uuid4().hex[:8]}","password":"a-long-secure-test-password"})
                 assert r.status_code==200
                 assert second.post("/auth/phone/link/request",json={"phone":phone}).status_code==200
                 second_otp=_latest_otp(conn,cipher,phone)
