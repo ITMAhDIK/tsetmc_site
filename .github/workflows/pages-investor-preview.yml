@@ -7,6 +7,8 @@ on:
       - main
     paths:
       - "docs/**"
+      - "server.py"
+      - "tests/test_screener_export_xlsx.py"
       - "saas_core/**"
       - "tests/saas/**"
       - "ui-refresh.css"
@@ -44,8 +46,8 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --disable-pip-version-check openpyxl pytest
 
-      - name: Test SaaS wallet and schema contracts
-        run: python -m pytest tests/saas -q
+      - name: Test SaaS wallet, schema and XLSX contracts
+        run: python -m pytest tests/saas tests/test_screener_export_xlsx.py -q
 
       - name: Parse SaaS PostgreSQL schemas
         run: |
@@ -127,7 +129,8 @@ jobs:
           for required in ("tloomberg_demo_menu=", "setMenuOpen", "demoMenuRole ? 'منو' : 'ورود'",
                            "AccountMenuDrawer", "app-drawer-panel", "خرید اشتراک ویژه",
                            "تاریخچهٔ کیف پول", "مدیریت داده‌های بازار", "ChartAccessContext",
-                           "۲٬۴۹۹٬۰۰۰", "۸۹۹٬۰۰۰", "اسنپ‌پی", "دیجی‌پی", "logoutDemoMenu"):
+                           "۲٬۴۹۹٬۰۰۰", "۸۹۹٬۰۰۰", "اسنپ‌پی", "دیجی‌پی", "logoutDemoMenu",
+                           "دانلود فایل اکسل", "غربال پیشرفتهٔ سهام‌داران و نمادها"):
               if required not in page:
                   raise SystemExit(f"Missing account menu behavior: {required}")
           if 'className="app-toolbar"' in page or 'app-tool-button' in page:
@@ -146,9 +149,17 @@ jobs:
           share_end = page.index("function PortfolioReconstructionPage", share_start)
           if "<AdvancedScreenerPanel onOpenStock={onOpenStock} />" not in page[share_start:share_end]:
               raise SystemExit("Advanced screener is not embedded in Shareholder Analysis")
+          screener_at = page.index("<AdvancedScreenerPanel onOpenStock={onOpenStock} />", share_start)
+          explainer_at = page.index("غربال پیشرفتهٔ سهام‌داران و نمادها", screener_at)
+          if explainer_at < screener_at:
+              raise SystemExit("Shareholder screener explainer must appear below the advanced filter body")
           if "{ id: 'screener'" in page:
               raise SystemExit("Old standalone screener tab still exists")
-          css = Path("ui-refresh.css").read_text(encoding="utf-8")
+          if "ذخیره در دیتابیس" in page or "saved-filters" in page:
+              raise SystemExit("Screener must not persist saved filters from the UI")
+          if "exportCsv" in page or "tsetmc_screener.csv" in page:
+              raise SystemExit("CSV export should be replaced by XLSX")
+          css = Path("docs/ui-refresh.css").read_text(encoding="utf-8")
           if "justify-content:center" not in css:
               raise SystemExit("Primary navigation is not centered")
           PY

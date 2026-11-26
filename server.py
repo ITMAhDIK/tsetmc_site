@@ -38,7 +38,7 @@
 #   GET  /api/v1/portfolios/investors?q&limit
 #   GET  /api/v1/portfolios/<id>/history?ins_code&as_of_date&limit&offset
 #   GET  /api/v1/portfolios/<id>?as_of_date
-#   POST /api/v1/screener/query        POST /api/v1/screener/export (CSV)
+#   POST /api/v1/screener/query        POST /api/v1/screener/export (XLSX)
 #   GET  /api/v1/screener/saved-filters   POST /api/v1/screener/saved-filters
 #   GET  /api/v1/watchlists/default
 #   POST /api/v1/watchlists/default/symbols
@@ -56,6 +56,7 @@ import io
 import heapq
 import itertools
 import json
+import math
 import os
 import re
 import sqlite3
@@ -64,6 +65,8 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from zipfile import ZIP_DEFLATED, ZipFile
+from xml.sax.saxutils import escape as xml_escape
 from datetime import datetime, timedelta
 
 from sector_affinity import SectorAffinityAccumulator, load_sector_reference
@@ -1902,6 +1905,116 @@ def _q_str(params, name, default=""):
 
 def _like(s):
     return "%" + str(s).replace("%", "").replace("_", "") + "%"
+
+
+
+def _xlsx_column_name(index):
+    """Return an Excel column name for a 1-based column index."""
+    result = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def _build_screener_xlsx(rows):
+    """Build an XLSX export with a strict allow-list of public screener fields."""
+    columns = (
+        ("symbol", "نماد"),
+        ("market", "بازار"),
+        ("shareholder_name", "سهام‌دار"),
+        ("ownership_percent_calculated", "درصد مالکیت"),
+        ("shares_change", "تغییر تعداد سهام"),
+        ("disclosed_ownership_percent_sum", "تمرکز مالکیت عمده٪"),
+    )
+
+    def cell_xml(cell_ref, value):
+        if value is None:
+            return '<c r="%s" t="inlineStr"><is><t></t></is></c>' % cell_ref
+        if isinstance(value, bool):
+            return '<c r="%s" t="b"><v>%d</v></c>' % (cell_ref, int(value))
+        if isinstance(value, (int, float, Decimal)):
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError, OverflowError):
+                numeric = float("nan")
+            if math.isfinite(numeric):
+                return '<c r="%s"><v>%s</v></c>' % (cell_ref, str(value))
+        text_value = xml_escape(str(value))
+        return ('<c r="%s" t="inlineStr"><is><t xml:space="preserve">%s</t>'
+                '</is></c>') % (cell_ref, text_value)
+
+    rows_xml = []
+    header = "".join(
+        cell_xml("%s1" % _xlsx_column_name(column_index), title)
+        for column_index, (_, title) in enumerate(columns, start=1)
+    )
+    rows_xml.append('<row r="1">%s</row>' % header)
+
+    for row_index, record in enumerate(rows, start=2):
+        cells = "".join(
+            cell_xml("%s%d" % (_xlsx_column_name(column_index), row_index),
+                     record[key])
+            for column_index, (key, _) in enumerate(columns, start=1)
+        )
+        rows_xml.append('<row r="%d">%s</row>' % (row_index, cells))
+
+    last_row = max(1, len(rows) + 1)
+    worksheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetViews><sheetView workbookViewId="0" rightToLeft="1">'
+        '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+        '</sheetView></sheetViews>'
+        '<sheetFormatPr defaultRowHeight="20"/>'
+        '<cols>'
+        '<col min="1" max="1" width="16" customWidth="1"/>'
+        '<col min="2" max="2" width="18" customWidth="1"/>'
+        '<col min="3" max="3" width="30" customWidth="1"/>'
+        '<col min="4" max="6" width="22" customWidth="1"/>'
+        '</cols>'
+        '<sheetData>%s</sheetData>'
+        '<autoFilter ref="A1:F%d"/>'
+        '</worksheet>'
+    ) % ("".join(rows_xml), last_row)
+
+    workbook = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="نتایج فیلتر" sheetId="1" r:id="rId1"/></sheets>'
+        '</workbook>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    root_relationships = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+    workbook_relationships = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '</Relationships>'
+    )
+
+    output = io.BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", root_relationships)
+        archive.writestr("xl/workbook.xml", workbook)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_relationships)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+    return output.getvalue()
 
 
 class SiteApi:
@@ -4107,6 +4220,7 @@ class SiteApi:
             sc.close()
 
     def screener_export(self, body):
+        """Export the selected filter AST as XLSX, capped and column-allow-listed."""
         limit = 5000
         sql, args, _ = self._screener_query(body, limit)
         sc = self.sidecar()
@@ -4115,16 +4229,13 @@ class SiteApi:
             rows = sc.execute(sql, args + [limit]).fetchall()
         finally:
             sc.close()
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["symbol", "market", "shareholder_name",
-                    "ownership_percent_calculated", "shares_change",
-                    "disclosed_ownership_percent_sum"])
-        for r in rows:
-            w.writerow([r["symbol"], r["market"], r["shareholder_name"],
-                        r["ownership_percent_calculated"], r["shares_change"],
-                        r["disclosed_ownership_percent_sum"]])
-        return buf.getvalue()
+        allowed_columns = (
+            "symbol", "market", "shareholder_name",
+            "ownership_percent_calculated", "shares_change",
+            "disclosed_ownership_percent_sum",
+        )
+        safe_rows = [{key: row[key] for key in allowed_columns} for row in rows]
+        return _build_screener_xlsx(safe_rows)
 
     # -- 7. Saved filters + watchlist (sidecar) ------------------------------
     def saved_filters_list(self):
@@ -4385,6 +4496,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_attachment(self, status, body, content_type, filename):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", 'attachment; filename="%s"' % filename)
+        self._cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def _cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
@@ -4463,6 +4583,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             body = _read_json_body(self) if method in ("POST",) else {}
             payload, status, ctype = self._dispatch(method, path, params, body)
+            if ctype == "xlsx":
+                self._send_attachment(
+                    status, payload,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "tloomberg_shareholder_screener.xlsx")
+                print("%s %s -> %d xlsx %.2fs" % (
+                    method, path, status, time.time() - t0), flush=True)
+                return
             if ctype == "csv":
                 self._send_text(200, payload,
                                 "text/csv; charset=utf-8")
@@ -4521,7 +4649,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST" and rest == ["screener", "query"]:
             return api.screener_query(body), 200, "json"
         if method == "POST" and rest == ["screener", "export"]:
-            return api.screener_export(body), 200, "csv"
+            return api.screener_export(body), 200, "xlsx"
         if method == "GET" and rest == ["screener", "saved-filters"]:
             return api.saved_filters_list(), 200, "json"
         if method == "POST" and rest == ["screener", "saved-filters"]:

@@ -87,7 +87,7 @@ body { font-size:14px; line-height:1.75; }
 .app-nav-wrap { border-top:1px solid color-mix(in srgb,var(--border-subtle) 70%,transparent); }
 .app-nav {
   width:min(100%,1660px); min-height:53px; margin:0 auto;
-  padding:6px clamp(14px,2.5vw,34px); display:flex; align-items:center; gap:7px;
+  padding:6px clamp(14px,2.5vw,34px); display:flex; align-items:center; justify-content:center; gap:7px;
   overflow-x:auto; scrollbar-width:none;
 }
 .app-nav::-webkit-scrollbar { display:none; }
@@ -652,3 +652,35 @@ body { font-size:14px; line-height:1.75; }
   .app-plan-price b { font-size:23px; }
 }
 @media(prefers-reduced-motion:reduce) { .app-drawer-backdrop,.app-drawer-panel { animation:none; } }
+
+/* Drawer typography and animated dismissal */
+.app-drawer-group-label { font-size:12px; }
+.app-drawer-user-copy strong { font-size:14px; }
+.app-drawer-user-copy small { font-size:11px; }
+.app-drawer-login strong { font-size:13px; }
+.app-drawer-login small { font-size:11px; }
+.app-drawer-nav-item strong { font-size:13px; }
+.app-drawer-nav-item small { font-size:11px; }
+.app-drawer-support-links button { font-size:12px; }
+.app-drawer-setting-row > span { font-size:12px; }
+.app-drawer-segment button { font-size:11px; }
+.app-drawer-more-settings,.app-drawer-text-link { font-size:12px; }
+.app-drawer-footer small { font-size:10px; }
+.app-drawer-card-title { font-size:13px; }
+.app-drawer-detail-row span,.app-drawer-detail-row strong { font-size:11px; }
+.app-drawer-wallet-grid small { font-size:10px; }
+.app-drawer-note,.app-drawer-empty,.app-drawer-faq-item p { font-size:11px; }
+.app-drawer-faq-item summary { font-size:12px; }
+.app-drawer-pending-tag { font-size:10px; }
+.app-drawer-field-label { font-size:11px; }
+.app-drawer-detail-card input,.app-drawer-detail-card select,.app-drawer-detail-card textarea { font-size:11px; }
+.app-drawer-view-heading small { font-size:11px; }
+.app-drawer-view-heading h2 { font-size:20px; }
+.app-drawer-logout,.app-drawer-footer-login { font-size:12px; }
+.app-drawer-header-spacer { width:38px; height:36px; }
+.app-drawer-view-back { width:38px; height:36px; display:grid; place-items:center; border:1px solid var(--border-subtle); border-radius:10px; background:var(--bg-elevated); color:var(--accent); font-size:22px; line-height:1; cursor:pointer; }
+.app-drawer-panel.is-closing { animation:appDrawerExit .24s cubic-bezier(.4,0,.8,.2) both; pointer-events:none; }
+.app-drawer-backdrop.is-closing { animation:appDrawerFadeOut .24s ease-in both; pointer-events:none; }
+@keyframes appDrawerExit { from { transform:translateX(0); } to { transform:translateX(102%); } }
+@keyframes appDrawerFadeOut { from { opacity:1; } to { opacity:0; } }
+@media(max-width:680px) { .app-nav { justify-content:flex-start; } }
