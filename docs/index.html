@@ -57,6 +57,9 @@
     ::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
   </style>
   <link rel="stylesheet" href="./ui-refresh.css" />
+  <link rel="stylesheet" href="./analytics.css" />
+  <script src="./analytics-config.js" defer></script>
+  <script src="./analytics.js" defer></script>
 </head>
 <body>
   <div id="root"></div>
@@ -2599,6 +2602,7 @@
         if (Object.prototype.hasOwnProperty.call(updates,'activeSymbol')) setActiveSymbol(updates.activeSymbol);
         if (Object.prototype.hasOwnProperty.call(updates,'portfolioInvestor')) setPortfolioInvestor(updates.portfolioInvestor);
         setPage(nextPage);
+        if (window.TloombergAnalytics) window.TloombergAnalytics.trackPage(next);
         requestAnimationFrame(()=>window.scrollTo(0,0));
       };
       useEffect(() => {
@@ -2606,13 +2610,20 @@
         if (!window.history.state?.appRoute) window.history.replaceState({appRoute:{page,activeSymbol,portfolioInvestor,scrollY:window.scrollY}}, '');
         const onPopState = event => {
           const route = event.state?.appRoute;
-          if (!route) { setPage('market'); setActiveSymbol(''); setPortfolioInvestor(''); window.scrollTo(0,0); return; }
+          if (!route) {
+            setPage('market'); setActiveSymbol(''); setPortfolioInvestor('');
+            if (window.TloombergAnalytics) window.TloombergAnalytics.trackPage({page:'market'});
+            window.scrollTo(0,0);
+            return;
+          }
           setPage(route.page || 'market');
           setActiveSymbol(route.activeSymbol || '');
           setPortfolioInvestor(route.portfolioInvestor || '');
+          if (window.TloombergAnalytics) window.TloombergAnalytics.trackPage(route);
           restoreAppScroll(Number(route.scrollY)||0);
         };
         window.addEventListener('popstate',onPopState);
+        if (window.TloombergAnalytics) window.TloombergAnalytics.trackPage({page,activeSymbol,portfolioInvestor});
         return ()=>window.removeEventListener('popstate',onPopState);
       }, []);
       const openInvestor = (id) => navigateTo('portfolio',{portfolioInvestor:id});
@@ -2664,7 +2675,7 @@
         <div className={`app-shell min-h-screen flex flex-col text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
           <header className="app-header">
             <div className="app-topbar-inner">
-              <button onClick={() => navigateTo('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
+              <button onClick={() => navigateTo('market')} data-analytics-id="app-brand-home" className="app-brand" aria-label="بازگشت به نمای کلی بازار">
                 <img src="https://raw.githubusercontent.com/ITMAhDIK/tsetmc_site/main/width_447.webp" alt="لوگوی تلومبرگ" className="app-brand-logo" />
                 <span className="app-brand-copy"><strong>تلومبرگ</strong><small>TLOOMBERG · تحلیل بازار و مالکیت سهام</small></span>
               </button>
@@ -2689,13 +2700,13 @@
                 )}
               </div>
               <div className="app-toolbar" role="group" aria-label="تنظیمات نمایش">
-                <button onClick={toggleDateMode} className="app-tool-button" title="تغییر تقویم همهٔ تاریخ‌ها">
+                <button onClick={toggleDateMode} data-analytics-id="toolbar-calendar" className="app-tool-button" title="تغییر تقویم همهٔ تاریخ‌ها">
                   <span className="app-tool-label">تاریخ</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
                 </button>
-                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="app-tool-button" title="تغییر واحد پول">
+                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} data-analytics-id="toolbar-currency" className="app-tool-button" title="تغییر واحد پول">
                   <span className="app-tool-label">واحد</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
                 </button>
-                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="app-tool-button" title={theme === 'dark' ? 'تغییر به پوستهٔ روشن' : 'تغییر به پوستهٔ تیره'} aria-label={theme === 'dark' ? 'فعال‌کردن پوستهٔ روشن' : 'فعال‌کردن پوستهٔ تیره'} aria-pressed={theme === 'light'}>
+                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} data-analytics-id="toolbar-theme" className="app-tool-button" title={theme === 'dark' ? 'تغییر به پوستهٔ روشن' : 'تغییر به پوستهٔ تیره'} aria-label={theme === 'dark' ? 'فعال‌کردن پوستهٔ روشن' : 'فعال‌کردن پوستهٔ تیره'} aria-pressed={theme === 'light'}>
                   <span className="app-tool-label">پوسته</span><strong>{theme === 'dark' ? 'روشن' : 'تیره'}</strong>
                 </button>
               </div>
@@ -2703,7 +2714,7 @@
             <div className="app-nav-wrap">
               <nav className="app-nav" aria-label="بخش‌های سامانه">
                 {NAV_PAGES.map(n => (
-                  <button key={n.id} onClick={() => navigateTo(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
+                  <button key={n.id} onClick={() => navigateTo(n.id)} data-analytics-id={n.id} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
                     {n.label}
                   </button>
                 ))}
