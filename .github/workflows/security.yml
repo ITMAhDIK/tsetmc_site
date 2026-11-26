@@ -63,6 +63,7 @@ jobs:
           SAAS_ALLOWED_ORIGINS: https://app.example.com
           SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
           SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          SAAS_SUPERADMIN_PHONE_E164: +989000000001
         run: |
           docker compose -f docker-compose.saas.production.yml config --quiet
           docker run --rm \
