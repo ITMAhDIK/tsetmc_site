@@ -59,6 +59,7 @@ def main() -> int:
         "/api/v1/analytics/events",
         "page_view",
         "active_time",
+        "feature_view",
         "scroll",
         "data-analytics-exclude",
     )
@@ -68,6 +69,8 @@ def main() -> int:
         raise SystemExit("Behavioral events must not be persisted in browser storage.")
     if re.search(r"(?:innerText|textContent|outerHTML|value)\b", client):
         raise SystemExit("The analytics client must never inspect user-entered or rendered text.")
+    if "data-analytics-view" not in html:
+        raise SystemExit("The product feature-view markers are missing from the UI.")
     if "privacy-analytics-panel" not in html or "/api/v1/analytics/consent" not in html:
         raise SystemExit("The explicit analytics consent UI is missing.")
     admin_report_markers = (
