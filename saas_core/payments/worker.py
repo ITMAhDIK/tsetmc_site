@@ -7,7 +7,7 @@ from .domain import PaymentNotConfigured
 from .gateways import get_gateway
 from .repository import (
     claim_refund, enqueue_stale_payment_reconciliation, expire_payment_orders,
-    finish_refund, release_refund_for_retry,
+    finish_refund, release_refund_for_retry, list_requested_refunds,
 )
 
 
@@ -16,7 +16,16 @@ def run_payment_maintenance(conn):
     reconciliation_cases = enqueue_stale_payment_reconciliation(
         conn, older_than_minutes=30, limit=500
     )
-    return {"expired_orders": expired, "reconciliation_cases_created": reconciliation_cases}
+    refund_results = [
+        process_refund(conn, refund_id=refund_id)
+        for refund_id in list_requested_refunds(conn, limit=100)
+    ]
+    return {
+        "expired_orders": expired,
+        "reconciliation_cases_created": reconciliation_cases,
+        "refunds_processed": sum(1 for item in refund_results if item["processed"]),
+        "refunds_waiting_for_provider": sum(1 for item in refund_results if not item["processed"]),
+    }
 
 
 def process_refund(conn, *, refund_id):

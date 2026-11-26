@@ -415,3 +415,42 @@ def list_payment_reconciliation_cases(conn, *, limit: int = 100):
             (limit,),
         )
         return cur.fetchall()
+
+
+
+def list_requested_refunds(conn, *, limit: int = 100):
+    if not 1 <= limit <= 500:
+        raise ValueError("limit must be between 1 and 500")
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id FROM payment_refunds WHERE status='requested'
+               ORDER BY created_at LIMIT %s""", (limit,)
+        )
+        return [row["id"] for row in cur.fetchall()]
+
+
+def resolve_payment_reconciliation_case(conn, *, case_id: UUID, resolved_by: UUID,
+                                        resolution_note: str, dismissed: bool = False):
+    note = (resolution_note or "").strip()
+    if not note or len(note) > 500:
+        raise ValueError("a resolution note between 1 and 500 characters is required")
+    status = "dismissed" if dismissed else "resolved"
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE payment_reconciliation_cases
+                   SET status=%s,resolution_note=%s,resolved_by=%s,resolved_at=now()
+                   WHERE id=%s AND status='open'
+                   RETURNING id,order_id,payment_attempt_id,status,resolution_note,resolved_at""",
+                (status,note,resolved_by,case_id),
+            )
+            case = cur.fetchone()
+            if not case:
+                raise LookupError("open reconciliation case not found")
+            cur.execute(
+                """INSERT INTO admin_audit_logs(actor_user_id,action,target_type,target_id,after_state)
+                   VALUES (%s,%s,'payment_reconciliation_case',%s,
+                           jsonb_build_object('status',%s::text,'note',%s::text))""",
+                (resolved_by,f"payment.reconciliation.{status}",str(case_id),status,note),
+            )
+            return case

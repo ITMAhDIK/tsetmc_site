@@ -15,7 +15,7 @@ from .repository import (
     attach_provider_checkout, create_payment_attempt, create_subscription_order,
     find_attempt_by_provider_order, get_order_for_user, mark_attempt_failed,
     request_full_refund, enqueue_stale_payment_reconciliation,
-    list_payment_reconciliation_cases,
+    list_payment_reconciliation_cases, resolve_payment_reconciliation_case,
 )
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -196,5 +196,30 @@ def get_reconciliation_cases(
     _require_payment_admin(conn, user)
     try:
         return {"cases": list_payment_reconciliation_cases(conn, limit=limit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class ReconciliationResolutionBody(BaseModel):
+    note: str = Field(min_length=1, max_length=500)
+    dismissed: bool = False
+
+
+@router.post("/admin/reconciliation/{case_id}/resolve")
+def resolve_reconciliation(
+    case_id: UUID,
+    body: ReconciliationResolutionBody,
+    user=Depends(current_user),
+    conn=Depends(get_conn),
+):
+    _require_payment_admin(conn, user)
+    try:
+        case = resolve_payment_reconciliation_case(
+            conn, case_id=case_id, resolved_by=user["id"],
+            resolution_note=body.note, dismissed=body.dismissed,
+        )
+        return {"case": case}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="open reconciliation case not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

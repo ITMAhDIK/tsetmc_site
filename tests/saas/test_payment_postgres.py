@@ -19,7 +19,7 @@ from saas_core.payments.repository import (
     attach_provider_checkout, claim_refund, create_payment_attempt,
     create_subscription_order, enqueue_stale_payment_reconciliation,
     expire_payment_orders, finish_refund, list_payment_reconciliation_cases,
-    request_full_refund,
+    request_full_refund, resolve_payment_reconciliation_case,
 )
 from saas_core.payments.settlement import settle_provider_callback
 from saas_core.payments.worker import process_refund
@@ -220,3 +220,22 @@ def test_refund_worker_keeps_request_queued_until_gateway_is_configured(migrated
         status = conn.execute("SELECT status FROM payment_refunds WHERE id=%s",
                               (refund["id"],)).fetchone()["status"]
         assert status == "requested"
+
+
+def test_reconciliation_case_requires_resolution_and_is_audited(migrated_test_database):
+    with connect() as conn:
+        user_id, order, attempt, _ = make_pending_order(conn)
+        conn.execute("UPDATE payment_attempts SET created_at=now()-interval '2 hours' WHERE id=%s",
+                     (attempt["id"],))
+        enqueue_stale_payment_reconciliation(conn, older_than_minutes=30)
+        case = next(item for item in list_payment_reconciliation_cases(conn)
+                    if item["payment_attempt_id"] == attempt["id"])
+        resolved = resolve_payment_reconciliation_case(
+            conn, case_id=case["id"], resolved_by=user_id,
+            resolution_note="Provider status checked in merchant portal",
+        )
+        assert resolved["status"] == "resolved"
+        assert conn.execute(
+            "SELECT count(*) AS n FROM admin_audit_logs WHERE target_id=%s",
+            (str(case["id"]),),
+        ).fetchone()["n"] == 1
