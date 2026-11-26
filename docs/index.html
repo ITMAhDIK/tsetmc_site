@@ -3001,7 +3001,7 @@
               </nav>
             </div>
           </header>
-          <ChartAccessContext.Provider value={{ allowed: window.location.port === "8000" || demoMenuRole === "superadmin" || window.TLOOMBERG_BOOTSTRAP?.entitlements?.includes("shareholders.graphs") === true, onUpgrade: () => navigateTo("account") }}>
+          <ChartAccessContext.Provider value={{ allowed: window.location.port === "8000" || window.TLOOMBERG_BOOTSTRAP?.entitlements?.includes("shareholders.graphs") === true, onUpgrade: () => navigateTo("account") }}>
           <main className="app-main flex-1">
             {page === 'market' && <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode} />}
             {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
