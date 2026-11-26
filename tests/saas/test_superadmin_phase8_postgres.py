@@ -439,28 +439,35 @@ def test_signup_requires_reviewed_current_legal_versions_before_otp_is_queued(ad
 
 
 def test_password_signup_stores_legal_versions_and_issues_secure_same_origin_session(admin_context, monkeypatch):
+    from fastapi.testclient import TestClient
+    from saas_core.auth.api import app
+
     c = admin_context
-    client, conn = c["client"], c["conn"]
+    conn = c["conn"]
     monkeypatch.setenv("SAAS_TERMS_VERSION", "terms-password-v1")
     monkeypatch.setenv("SAAS_PRIVACY_VERSION", "privacy-password-v1")
 
-    response = client.post("/auth/register", json={
-        "username": "legal_signup_user",
-        "password": "a-long-test-password-2026",
-        "display_name": "Legal Signup User",
-        "terms_accepted": True,
-        "terms_version": "terms-password-v1",
-        "privacy_version": "privacy-password-v1",
-    })
-    assert response.status_code == 200, response.text
-    cookie = response.headers.get("set-cookie", "").lower()
-    assert "httponly" in cookie
-    assert "secure" in cookie
-    assert "samesite=lax" in cookie
+    # Secure cookies are intentionally tested over HTTPS, matching the
+    # same-origin Caddy production edge.
+    with TestClient(app, base_url="https://saas.example.com") as client:
+        response = client.post("/auth/register", json={
+            "username": "legal_signup_user",
+            "password": "a-long-test-password-2026",
+            "display_name": "Legal Signup User",
+            "terms_accepted": True,
+            "terms_version": "terms-password-v1",
+            "privacy_version": "privacy-password-v1",
+        })
+        assert response.status_code == 200, response.text
+        cookie = response.headers.get("set-cookie", "").lower()
+        assert "httponly" in cookie
+        assert "secure" in cookie
+        assert "samesite=lax" in cookie
 
-    me = client.get("/auth/me")
-    assert me.status_code == 200
-    user_id = me.json()["user"]["id"]
+        me = client.get("/auth/me")
+        assert me.status_code == 200
+        user_id = me.json()["user"]["id"]
+
     acceptance = conn.execute(
         """SELECT terms_version,privacy_version,source
            FROM legal_acceptances WHERE user_id=%s""",
@@ -491,19 +498,18 @@ def test_password_signup_stores_legal_versions_and_issues_secure_same_origin_ses
     }
 
 
+
 def test_password_signup_rolls_back_user_when_legal_acceptance_write_fails(admin_context, monkeypatch):
     from fastapi.testclient import TestClient
     from saas_core.auth.api import app
 
-    c = admin_context
-    conn = c["conn"]
+    conn = admin_context["conn"]
     monkeypatch.setenv("SAAS_TERMS_VERSION", "terms-rollback-v1")
     monkeypatch.setenv("SAAS_PRIVACY_VERSION", "privacy-rollback-v1")
     conn.execute(
         """CREATE OR REPLACE FUNCTION reject_test_legal_acceptance()
-           RETURNS trigger LANGUAGE plpgsql AS $
-           BEGIN RAISE EXCEPTION 'forced legal acceptance failure'; END;
-           $"""
+           RETURNS trigger LANGUAGE plpgsql AS
+           'BEGIN RAISE EXCEPTION ''forced legal acceptance failure''; END;'"""
     )
     conn.execute(
         """CREATE TRIGGER reject_test_legal_acceptance
@@ -512,7 +518,8 @@ def test_password_signup_rolls_back_user_when_legal_acceptance_write_fails(admin
     )
     conn.commit()
     try:
-        with TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(app, base_url="https://saas.example.com",
+                        raise_server_exceptions=False) as client:
             response = client.post("/auth/register", json={
                 "username": "rollback_legal_user",
                 "password": "a-long-test-password-2026",
@@ -532,6 +539,7 @@ def test_password_signup_rolls_back_user_when_legal_acceptance_write_fails(admin
         conn.execute("DROP TRIGGER IF EXISTS reject_test_legal_acceptance ON legal_acceptances")
         conn.execute("DROP FUNCTION IF EXISTS reject_test_legal_acceptance()")
         conn.commit()
+
 
 
 def test_phone_login_challenge_cannot_create_an_unknown_user(admin_context, monkeypatch):
