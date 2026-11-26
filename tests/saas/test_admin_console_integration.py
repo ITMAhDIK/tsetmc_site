@@ -130,9 +130,26 @@ def test_last_active_superadmin_guard_rolls_back_real_status_change():
             request_id="it-last-superadmin",
         )
 
+    with pytest.raises(AdminConflict, match="last active superadmin"):
+        _service().revoke_role(
+            actor_user_id=target,
+            target_user_id=target,
+            role_code="superadmin",
+            request_id="it-last-superadmin-role",
+        )
+
     with _connect() as connection, connection.cursor() as cursor:
         cursor.execute("SELECT status FROM users WHERE id=%s", (target,))
         assert cursor.fetchone()[0] == "active"
+        cursor.execute(
+            """
+            SELECT count(*) FROM user_roles ur
+            JOIN roles r ON r.id=ur.role_id
+            WHERE ur.user_id=%s AND r.code='superadmin'
+            """,
+            (target,),
+        )
+        assert cursor.fetchone()[0] == 1
         cursor.execute(
             "SELECT count(*) FROM admin_audit_logs WHERE target_id=%s",
             (str(target),),
