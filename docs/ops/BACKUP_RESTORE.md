@@ -2,7 +2,8 @@
 
 Only `SAAS_DATABASE_URL` is honored. The tool never falls back to
 `DATABASE_URL`, refuses an identical `MARKET_DATABASE_URL`, and passes the
-connection URL to PostgreSQL tools via `PGDATABASE`, not command-line arguments.
+URL is parsed into libpq environment variables (`PGHOST`, `PGPORT`, `PGUSER`,
+`PGPASSWORD`, `PGDATABASE` and optional SSL settings), never command-line arguments.
 
 ## Backup and verification
 

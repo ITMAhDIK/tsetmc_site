@@ -94,7 +94,10 @@ def test_healthcheck_does_not_put_database_url_in_command_line():
     assert check_database(env={"SAAS_DATABASE_URL": dsn}, runner=runner)
     command, kwargs = calls[0]
     assert dsn not in command
-    assert kwargs["env"]["PGDATABASE"] == dsn
+    assert kwargs["env"]["PGDATABASE"] == "saas"
+    assert kwargs["env"]["PGHOST"] == "localhost"
+    assert kwargs["env"]["PGUSER"] == "saas"
+    assert kwargs["env"]["PGPASSWORD"] == "secret"
     assert "admin_payment_reviews" in command[-1]
 
 
@@ -142,3 +145,23 @@ def test_staging_load_test_is_get_only_bounded_and_reports_latency():
 def test_staging_load_test_caps_request_count_and_concurrency():
     with pytest.raises(LoadTestError):
         run_readonly_load("https://staging.example.com/health/ready", requests=50000)
+
+
+def test_database_environment_maps_ssl_mode_without_exposing_url():
+    child = saas_db_ops.database_environment({
+        "SAAS_DATABASE_URL": "postgresql://svc:p%40ss@db.example:6432/saas?sslmode=require"
+    })
+    assert child["PGHOST"] == "db.example"
+    assert child["PGPORT"] == "6432"
+    assert child["PGDATABASE"] == "saas"
+    assert child["PGPASSWORD"] == "p@ss"
+    assert child["PGSSLMODE"] == "require"
+    assert not any("postgresql://" in value for value in child.values())
+
+
+def test_database_environment_refuses_same_database_with_different_credentials():
+    with pytest.raises(SaasDbOpsError):
+        saas_db_ops.database_environment({
+            "SAAS_DATABASE_URL": "postgresql://svc-a:secret@db.example:5432/saas",
+            "MARKET_DATABASE_URL": "postgresql://svc-b:other@db.example:5432/saas",
+        })
