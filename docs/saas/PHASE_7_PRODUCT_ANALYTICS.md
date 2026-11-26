@@ -46,8 +46,8 @@
 - PostgreSQL integration, high-volume ingestion/load tests, dashboard query benchmarks and privacy/security review have not been run.
 
 ## Validation status
-- Full combined Python suite: **187 passed in 11.86s** on PostgreSQL 16 CI.
-- Frontend SDK: **9 Node.js tests passed**; `node --check` passed for both browser scripts.
+- Full combined Python suite: **187 passed in 9.28s** on PostgreSQL 16 CI.
+- Frontend SDK: **10 Node.js tests passed**; `node --check` passed for both browser scripts.
 - All nine SaaS migrations (001–009) applied with checksums and the migration lock; the migration history check passed.
 - PostgreSQL route tests verify repeated two/three-step paths, exact repetition/session/user counts, same-timestamp ordering via `event_order`, no cross-session stitching, exclusion of non-page-view events, aggregate minimum-cohort suppression, user-level RBAC and audit logging.
 - The standard-user route matrix also includes both new GET endpoints and confirms denial without analytics permissions.
