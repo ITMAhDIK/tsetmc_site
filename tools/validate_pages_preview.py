@@ -48,7 +48,7 @@ def main() -> int:
     if not ANALYTICS_CLIENT.is_file():
         raise SystemExit("The first-party analytics client is missing from the Pages artifact.")
     if not re.search(
-        r"""<script[^>]+src=["\']\\./analytics-client\\.js["\'][^>]*></script>""",
+        r"""<script[^>]+src=["']\./analytics-client\.js["'][^>]*></script>""",
         html,
         flags=re.IGNORECASE,
     ):
