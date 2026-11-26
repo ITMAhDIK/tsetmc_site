@@ -18,6 +18,8 @@
     listenersAttached: false,
     flushing: false,
     transportUnavailable: false,
+    seenFeatures: new Set(),
+    featureObserver: null,
   };
 
   function uuid() {
@@ -93,6 +95,29 @@
     }
   }
 
+  function observeFeatures() {
+    if (!state.enabled || !state.pagePath || typeof IntersectionObserver !== "function") return;
+    if (state.featureObserver) state.featureObserver.disconnect();
+    state.featureObserver = new IntersectionObserver((entries, observer) => {
+      if (!state.enabled || !isActive()) return;
+      for (const entry of entries) {
+        if (!entry.isIntersecting || entry.intersectionRatio < 0.4) continue;
+        const componentId = String(entry.target.getAttribute("data-analytics-view") || "");
+        if (!/^[A-Za-z0-9_-]{1,80}$/.test(componentId) || state.seenFeatures.has(componentId)) {
+          observer.unobserve(entry.target);
+          continue;
+        }
+        state.seenFeatures.add(componentId);
+        enqueue("feature_view", { component_id: componentId });
+        observer.unobserve(entry.target);
+      }
+    }, { threshold: [0.4] });
+    document.querySelectorAll("[data-analytics-view]").forEach(element => {
+      const componentId = String(element.getAttribute("data-analytics-view") || "");
+      if (!state.seenFeatures.has(componentId)) state.featureObserver.observe(element);
+    });
+  }
+
   function pageChanged(path) {
     if (!state.enabled) return;
     flushActiveTime();
@@ -101,7 +126,9 @@
     if (clean === state.pagePath) return;
     state.pagePath = clean;
     state.scrollDepth = 0;
+    state.seenFeatures.clear();
     enqueue("page_view", {});
+    observeFeatures();
     if (isActive()) state.activeSince = Date.now();
     void flush();
   }
@@ -167,6 +194,7 @@
         if (state.enabled && isActive() && !state.activeSince) {
           state.activeSince = Date.now();
         }
+        observeFeatures();
       });
       window.addEventListener("pagehide", () => {
         flushActiveTime();
@@ -189,6 +217,9 @@
       state.pagePath = null;
       state.activeSince = null;
       state.scrollDepth = 0;
+      state.seenFeatures.clear();
+      if (state.featureObserver) state.featureObserver.disconnect();
+      state.featureObserver = null;
       if (state.flushTimer) window.clearInterval(state.flushTimer);
       if (state.activeTimer) window.clearInterval(state.activeTimer);
       state.flushTimer = null;
@@ -197,6 +228,7 @@
     }
     attachListeners();
     if (isActive()) state.activeSince = Date.now();
+    observeFeatures();
   }
 
   window.TloombergAnalytics = Object.freeze({
