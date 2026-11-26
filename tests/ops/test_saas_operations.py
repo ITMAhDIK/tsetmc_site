@@ -58,7 +58,8 @@ def test_backup_verify_and_restore_are_private_and_keep_dsn_out_of_argv(tmp_path
         env={"SAAS_DATABASE_URL": dsn}, runner=runner,
     )
     assert result["restored"] is True
-    assert any(cmd[0] == "pg_restore" and "--clean" in cmd for cmd, _ in calls)
+    restore_command = next(cmd for cmd, _ in calls if cmd[0] == "pg_restore" and "--clean" in cmd)
+    assert restore_command[restore_command.index("--dbname") + 1] == "saas"
     for command, kwargs in calls:
         assert dsn not in command
         if kwargs["env"] is not None:

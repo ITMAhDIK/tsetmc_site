@@ -191,8 +191,8 @@ def restore_database(backup_file, *, confirmation: str, env=None,
     manifest = verify_backup(backup_file, runner=runner)
     backup = Path(backup_file).expanduser().resolve()
     _run(
-        ["pg_restore", "--clean", "--if-exists", "--no-owner", "--no-acl",
-         "--exit-on-error", str(backup)],
+        ["pg_restore", "--dbname", pg_env["PGDATABASE"], "--clean", "--if-exists",
+         "--no-owner", "--no-acl", "--exit-on-error", str(backup)],
         env=pg_env, runner=runner,
     )
     return {"restored": True, "backup_file": backup.name, "sha256": manifest["sha256"]}
