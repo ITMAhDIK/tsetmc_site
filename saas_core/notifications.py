@@ -52,9 +52,14 @@ class KavenegarSmsSender:
     def send(self, receptor: str, message: str) -> None:
         if not re.fullmatch(r"\+[1-9][0-9]{7,14}", receptor):
             raise SmsDeliveryError("invalid SMS destination")
+        if receptor.startswith("+98") and len(receptor) == 13:
+            # Kavenegar's documented Iranian examples use national format (09...).
+            provider_receptor = "0" + receptor[3:]
+        else:
+            raise SmsDeliveryError("Kavenegar adapter currently supports Iranian +98 destinations only")
         url = f"https://api.kavenegar.com/v1/{self._api_key}/sms/send.json"
         body = urlencode({
-            "receptor": receptor,
+            "receptor": provider_receptor,
             "sender": self._sender,
             "message": message,
         }).encode("utf-8")
