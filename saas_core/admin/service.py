@@ -142,7 +142,7 @@ def change_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reas
                    ) AS is_superadmin""",(user_id,)
             )
             is_superadmin=cur.fetchone()["is_superadmin"]
-            if is_superadmin:
+            if is_superadmin and status=="suspended":
                 # Serialize all superadmin suspension decisions, not merely the
                 # target row, so two concurrent requests cannot remove the last
                 # active superadmins at the same time.
