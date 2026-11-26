@@ -159,6 +159,15 @@
       document.addEventListener("click", onClick, true);
       window.addEventListener("scroll", onScroll, { passive: true });
       document.addEventListener("visibilitychange", onVisibilityChange);
+      window.addEventListener("blur", () => {
+        flushActiveTime();
+        state.activeSince = null;
+      });
+      window.addEventListener("focus", () => {
+        if (state.enabled && isActive() && !state.activeSince) {
+          state.activeSince = Date.now();
+        }
+      });
       window.addEventListener("pagehide", () => {
         flushActiveTime();
         void flush();
