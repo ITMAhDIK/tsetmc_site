@@ -90,3 +90,9 @@ def test_admin_ui_exposes_aggregate_and_superadmin_user_behavior_reports():
     assert "analyticsUserEvents" in html
     assert "تحلیل رفتار کاربران" in html
     assert "تاریخچهٔ رفتار یک کاربر" in html
+
+
+def test_local_app_uses_same_origin_api_by_default():
+    app = (ROOT / "ai_studio_code.html").read_text(encoding="utf-8")
+    assert "window.SITE_API_BASE_URL" in app
+    assert "http://127.0.0.1:8000" not in app
