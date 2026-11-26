@@ -69,7 +69,7 @@ def _page(limit=50, offset=0, maximum=200):
         offset = int(offset)
     except (TypeError, ValueError):
         raise AdminConsoleError("Pagination must use integers.") from None
-    if not 1 <= limit <= maximum or not 0 <= offset <= 1_000_000:
+    if isinstance(limit, bool) or isinstance(offset, bool) or not 1 <= limit <= maximum or not 0 <= offset <= 1_000_000:
         raise AdminConsoleError("Pagination is outside the allowed range.")
     return limit, offset
 
@@ -264,7 +264,7 @@ class AdminConsoleService:
         actor = self._actor(actor_user_id, "users.manage")
         target = _uuid(target_user_id, "target_user_id")
         request = _request_id(request_id)
-        if status not in USER_STATUSES:
+        if not isinstance(status, str) or status not in USER_STATUSES:
             raise AdminConsoleError("Accounts can only be activated or suspended; they are never deleted here.")
         with self._transaction() as cursor:
             cursor.execute("SELECT status FROM users WHERE id=%s FOR UPDATE", (target,))
@@ -298,7 +298,7 @@ class AdminConsoleService:
         actor = self._actor(actor_user_id, "roles.manage")
         target = _uuid(target_user_id, "target_user_id")
         request = _request_id(request_id)
-        if role_code not in ROLE_CODES:
+        if not isinstance(role_code, str) or role_code not in ROLE_CODES:
             raise AdminConsoleError("Role is not valid.")
         with self._transaction() as cursor:
             cursor.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (target,))
@@ -381,7 +381,7 @@ class AdminConsoleService:
     def list_subscriptions(self, *, actor_user_id, status=None, limit=50, offset=0):
         self._actor(actor_user_id, "subscriptions.manage")
         limit, offset = _page(limit, offset)
-        if status is not None and status not in SUBSCRIPTION_STATUSES:
+        if status is not None and (not isinstance(status, str) or status not in SUBSCRIPTION_STATUSES):
             raise AdminConsoleError("Subscription status is invalid.")
         cols = ("id", "user_id", "public_id", "plan_code", "plan_title", "price_toman",
                 "status", "starts_at", "ends_at", "created_at")
@@ -430,7 +430,7 @@ class AdminConsoleService:
         actor = self._actor(actor_user_id, "payments.reconcile")
         order = _uuid(order_id, "order_id")
         request = _request_id(request_id)
-        if outcome not in {"matched", "mismatch", "provider_followup", "blocked"}:
+        if not isinstance(outcome, str) or outcome not in {"matched", "mismatch", "provider_followup", "blocked"}:
             raise AdminConsoleError("Payment review outcome is invalid.")
         note = _text(note, "note", maximum=1000)
         with self._transaction() as cursor:
@@ -492,7 +492,7 @@ class AdminConsoleService:
         actor = self._actor(actor_user_id, "wallet.adjust")
         target = _uuid(target_user_id, "target_user_id")
         request = _request_id(request_id)
-        if bucket not in {"cash", "gift"} or direction not in {"credit", "debit"}:
+        if not isinstance(bucket, str) or bucket not in {"cash", "gift"} or not isinstance(direction, str) or direction not in {"credit", "debit"}:
             raise AdminConsoleError("Wallet bucket or direction is invalid.")
         if not isinstance(amount_toman, int) or isinstance(amount_toman, bool) or not 1 <= amount_toman <= 1_000_000_000:
             raise AdminConsoleError("amount_toman must be a bounded positive integer.")
@@ -571,7 +571,7 @@ class AdminConsoleService:
     def list_withdrawals(self, *, actor_user_id, status=None, limit=50, offset=0):
         self._actor(actor_user_id, "withdrawals.review")
         limit, offset = _page(limit, offset)
-        if status is not None and status not in {"requested", "approved", "rejected", "paid", "cancelled"}:
+        if status is not None and (not isinstance(status, str) or status not in {"requested", "approved", "rejected", "paid", "cancelled"}):
             raise AdminConsoleError("Withdrawal status is invalid.")
         cols = ("id", "user_id", "public_id", "amount_toman", "status",
                 "requested_at", "reviewed_at", "reviewed_by", "paid_at",
@@ -595,7 +595,7 @@ class AdminConsoleService:
         actor = self._actor(actor_user_id, "withdrawals.review")
         withdrawal = _uuid(withdrawal_id, "withdrawal_id")
         request = _request_id(request_id)
-        if decision not in WITHDRAWAL_DECISIONS:
+        if not isinstance(decision, str) or decision not in WITHDRAWAL_DECISIONS:
             raise AdminConsoleError("Withdrawal decision is invalid.")
         note = _text(note, "note", maximum=500) if note is not None else ""
         payout_ref = _text(payout_reference, "payout_reference", maximum=200, required=True) if decision == "paid" else None
@@ -657,7 +657,7 @@ class AdminConsoleService:
     def list_tickets(self, *, actor_user_id, status=None, limit=50, offset=0):
         self._actor(actor_user_id, "tickets.manage")
         limit, offset = _page(limit, offset)
-        if status is not None and status not in TICKET_STATUSES:
+        if status is not None and (not isinstance(status, str) or status not in TICKET_STATUSES):
             raise AdminConsoleError("Ticket status is invalid.")
         cols = ("id", "ticket_number", "user_id", "user_public_id", "assigned_to",
                 "assigned_public_id", "subject", "category", "priority", "status",
@@ -686,11 +686,11 @@ class AdminConsoleService:
             raise AdminConsoleError("Ticket changes must contain only status, priority or assigned_to.")
         normalized = {}
         if "status" in changes:
-            if changes["status"] not in TICKET_STATUSES:
+            if not isinstance(changes["status"], str) or changes["status"] not in TICKET_STATUSES:
                 raise AdminConsoleError("Ticket status is invalid.")
             normalized["status"] = changes["status"]
         if "priority" in changes:
-            if changes["priority"] not in TICKET_PRIORITIES:
+            if not isinstance(changes["priority"], str) or changes["priority"] not in TICKET_PRIORITIES:
                 raise AdminConsoleError("Ticket priority is invalid.")
             normalized["priority"] = changes["priority"]
         if "assigned_to" in changes:

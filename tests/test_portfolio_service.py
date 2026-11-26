@@ -837,8 +837,7 @@ def test_phases_0_to_8_compose_with_separate_market_and_saas_databases(portfolio
     assert admin_overview["users_total"] == 1
 
     # The SaaS service queries stay in their domain and never touch market tables.
-    saas_sql = "
-".join(sql for cursor in saas_cursors for sql, _ in cursor.calls)
+    saas_sql = chr(10).join(sql for cursor in saas_cursors for sql, _ in cursor.calls)
     assert "analytics_events" in saas_sql
     assert "analytics_consents" in saas_sql
     assert "FROM users" in saas_sql
