@@ -63,6 +63,9 @@ jobs:
           SAAS_ALLOWED_ORIGINS: https://app.example.com
           SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
           SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          SAAS_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+          SAAS_TERMS_VERSION: ci-terms-review-version
+          SAAS_PRIVACY_VERSION: ci-privacy-review-version
           SAAS_SUPERADMIN_PHONE_E164: "+989000000001"
           SMS_PROVIDER: kavenegar
           SMS_API_KEY: ci-placeholder-kavenegar-key-123456789
