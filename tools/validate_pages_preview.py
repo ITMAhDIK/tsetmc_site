@@ -79,6 +79,7 @@ def main() -> int:
         "/api/v1/analytics/admin/paths",
         "/api/v1/analytics/admin/users/",
         "analyticsUserEvents",
+        "searchAnalyticsUsers",
         "تحلیل رفتار کاربران",
     )
     if any(marker not in html for marker in admin_report_markers):
