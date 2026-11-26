@@ -1,7 +1,7 @@
 """Authenticated account/dashboard endpoints for the SaaS API."""
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from .service import (
     feature_access, get_preferences, get_profile, list_sessions,
@@ -13,9 +13,11 @@ from ..auth.api import current_user, get_conn
 router = APIRouter(prefix="/account", tags=["account"])
 
 class ProfileUpdate(BaseModel):
+    model_config=ConfigDict(extra="forbid")
     display_name: str | None = Field(default=None, max_length=160)
 
 class PreferencesUpdate(BaseModel):
+    model_config=ConfigDict(extra="forbid")
     theme: str | None = None
     calendar: str | None = None
     currency: str | None = None

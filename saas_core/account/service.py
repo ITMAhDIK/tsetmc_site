@@ -103,8 +103,10 @@ def subscription_history(conn, user_id: UUID):
         cur.execute(
             """SELECT s.id, s.status, s.starts_at, s.ends_at, s.created_at,
                       p.code AS plan_code, p.title AS plan_title,
-                      p.duration_days, p.price_toman
+                      COALESCE(o.duration_days,p.duration_days) AS duration_days,
+                      COALESCE(o.amount_toman,p.price_toman) AS price_toman
                FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+               LEFT JOIN payment_orders o ON o.id=s.payment_order_id
                WHERE s.user_id=%s ORDER BY s.created_at DESC""", (user_id,)
         )
         return cur.fetchall()

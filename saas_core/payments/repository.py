@@ -37,13 +37,13 @@ def create_subscription_order(conn, *, user_id: UUID, plan_code: str, idempotenc
                    VALUES (%s,%s,%s,'created',%s,%s,%s)
                    ON CONFLICT (idempotency_key) DO NOTHING
                    RETURNING id,user_id,plan_id,amount_toman,status,created_at,expires_at""",
-                (user_id, plan["id"], plan["price_toman"], idempotency_key,
+                (user_id, plan["id"], plan["price_toman"], plan["duration_days"], idempotency_key,
                  user["phone_e164"], datetime.now(timezone.utc) + ORDER_TTL),
             )
             order = cur.fetchone()
             if order is None:
                 cur.execute(
-                    """SELECT id,user_id,plan_id,amount_toman,status,created_at,expires_at
+                    """SELECT id,user_id,plan_id,amount_toman,duration_days,status,created_at,expires_at
                        FROM payment_orders WHERE idempotency_key=%s""", (idempotency_key,)
                 )
                 order = cur.fetchone()
@@ -51,7 +51,7 @@ def create_subscription_order(conn, *, user_id: UUID, plan_code: str, idempotenc
                     raise ValueError("idempotency key was already used for a different order")
             order["plan_code"] = plan["code"]
             order["plan_title"] = plan["title"]
-            order["duration_days"] = plan["duration_days"]
+            # Price and duration are immutable order terms captured at creation.
             return order
 
 def get_order_for_user(conn, *, order_id: UUID, user_id: UUID):
@@ -134,9 +134,8 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT o.id,o.user_id,o.plan_id,o.amount_toman,o.status,o.expires_at,
-                          p.duration_days,a.provider,a.provider_order_id,a.status AS attempt_status
+                          o.duration_days,a.provider,a.provider_order_id,a.status AS attempt_status
                    FROM payment_orders o
-                   JOIN plans p ON p.id=o.plan_id
                    JOIN payment_attempts a ON a.order_id=o.id
                    WHERE o.id=%s AND a.id=%s FOR UPDATE OF o,a""",
                 (order_id,attempt_id),
