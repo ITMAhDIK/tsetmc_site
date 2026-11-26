@@ -470,3 +470,101 @@ def test_market_service_rechecks_readiness_after_cache_expiry(portfolio_api):
     with pytest.raises(ApiError) as error:
         portfolio_api.market_overview()
     assert error.value.status == 503
+
+
+def test_phase_0_to_6_services_compose_without_contract_drift(portfolio_api):
+    """One SiteApi instance exercises the Phase 3–6 path after the 0–2 checks.
+
+    Phase 0's manifest and Phase 1/2's HTTP/worker integration tests run in the
+    same pytest suite; this test proves the extracted read services compose
+    over one Sidecar and the Phase 1 dispatcher.
+    """
+    from zipfile import ZipFile
+    from io import BytesIO
+
+    from site_api.analytics_service import AnalyticsService
+    from site_api.market_service import MarketService
+    from site_api.ownership_service import OwnershipService
+
+    assert isinstance(portfolio_api.market_service, MarketService)
+    assert isinstance(portfolio_api.ownership_service, OwnershipService)
+    assert isinstance(portfolio_api.portfolio_service, PortfolioService)
+    assert isinstance(portfolio_api.analytics_service, AnalyticsService)
+
+    side = portfolio_api.sidecar()
+    try:
+        side.execute(
+            """
+            CREATE TABLE IF NOT EXISTS site_corp_action_counts (
+                ins_code TEXT PRIMARY KEY,
+                n INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        side.execute(
+            "INSERT OR REPLACE INTO site_corp_action_counts(ins_code,n) VALUES (?,?)",
+            ("1001", 1),
+        )
+        side.commit()
+    finally:
+        side.close()
+
+    # Phase 3: live market read models use the one shared Sidecar snapshot.
+    overview, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/market/overview", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert overview["summary"]["total_companies"] == 1
+
+    prices, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/stocks/فولاد/prices", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert prices["prices"][0]["close"] == 2600
+
+    # Phase 4 and 5: same shareholder identity and same-date valuation survive
+    # the hop from ownership views to the investor portfolio service.
+    ownership, status, content_type = dispatch_api(
+        portfolio_api,
+        "GET",
+        "/api/v1/stocks/فولاد/ownership-series",
+        {"id_scheme": ["share_id"], "shareholder_id": ["123"]},
+        {},
+    )
+    assert (status, content_type) == (200, "json")
+    assert ownership["company_series"] == [
+        {"time": "2026-11-18", "value": 25.0}
+    ]
+
+    portfolio, status, content_type = dispatch_api(
+        portfolio_api,
+        "GET",
+        "/api/v1/portfolios/share_id:123",
+        {},
+        {},
+    )
+    assert (status, content_type) == (200, "json")
+    assert portfolio["summary"]["confirmed_combined_value_rial"] == 650000
+
+    # Phase 6: screener query and XLSX export are dispatched through the same
+    # API composition root and use the stock/holder rows seeded above.
+    query_body = {
+        "conditions": [{"field": "market", "op": "=", "value": "TSE"}]
+    }
+    screener, status, content_type = dispatch_api(
+        portfolio_api, "POST", "/api/v1/screener/query", {}, query_body
+    )
+    assert (status, content_type) == (200, "json")
+    assert [row["symbol"] for row in screener["rows"]] == ["فولاد"]
+    assert screener["rows"][0]["ownership_percent_calculated"] == 25.0
+    assert "shareholder_id" not in screener["rows"][0]
+
+    workbook, status, content_type = dispatch_api(
+        portfolio_api, "POST", "/api/v1/screener/export", {}, query_body
+    )
+    assert (status, content_type) == (200, "xlsx")
+    with ZipFile(BytesIO(workbook)) as archive:
+        assert archive.testzip() is None
+        worksheet = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert "فولاد" in worksheet
+    assert "shareholder_id" not in worksheet
