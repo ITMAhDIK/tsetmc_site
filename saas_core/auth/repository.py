@@ -113,10 +113,19 @@ def _ensure_bootstrap_superadmin_role(cur, user_id: UUID, verified_phone: str) -
         return True
     return False
 
-def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
+def request_phone_otp(conn, phone: str, purpose: str = "login", *,
+                      terms_version: str | None = None,
+                      privacy_version: str | None = None) -> None:
     phone = normalize_phone(phone)
     if purpose not in {"signup","login","purchase","link_identity","withdrawal"}:
         raise ValueError("unsupported OTP purpose")
+    if purpose == "signup":
+        if not terms_version or not privacy_version:
+            raise ValueError("current terms and privacy versions are required for signup")
+        if len(terms_version) > 80 or len(privacy_version) > 80:
+            raise ValueError("legal versions exceed the supported length")
+    elif terms_version is not None or privacy_version is not None:
+        raise ValueError("legal versions are accepted only for signup")
     otp = new_otp()
     digest = hash_otp(phone, purpose, otp)
     expires = utc_now() + OTP_TTL
@@ -135,8 +144,14 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
                 raise ValueError("too many verification requests; try again later")
             cur.execute("""UPDATE phone_verifications SET consumed_at=now()
                 WHERE phone_e164=%s AND purpose=%s AND consumed_at IS NULL""", (phone,purpose))
-            cur.execute("""INSERT INTO phone_verifications(phone_e164,purpose,otp_hash,expires_at)
-                VALUES (%s,%s,%s,%s)""", (phone,purpose,digest,expires))
+            cur.execute("""INSERT INTO phone_verifications(
+                    phone_e164,purpose,otp_hash,expires_at,
+                    signup_terms_version,signup_privacy_version
+                )
+                VALUES (%s,%s,%s,%s,%s,%s)""",
+                (phone,purpose,digest,expires,
+                 terms_version if purpose == "signup" else None,
+                 privacy_version if purpose == "signup" else None))
             # Encrypt both destination and message body at rest. The SMS worker
             # decrypts them only when dispatching through the configured provider.
             key = os.environ.get("SAAS_OUTBOX_FERNET_KEY", "")
@@ -164,11 +179,23 @@ def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login", *,
     result = None
     with conn.transaction():
         with conn.cursor() as cur:
-            cur.execute("""SELECT id,otp_hash,attempts FROM phone_verifications
+            cur.execute("""SELECT id,otp_hash,attempts,
+                    signup_terms_version,signup_privacy_version
+                FROM phone_verifications
                 WHERE phone_e164=%s AND purpose=%s AND consumed_at IS NULL AND expires_at>now()
                 ORDER BY created_at DESC LIMIT 1 FOR UPDATE""", (phone,purpose))
             challenge = cur.fetchone()
             if not challenge or challenge["attempts"] >= OTP_MAX_ATTEMPTS:
+                invalid = True
+            elif purpose == "signup" and (
+                not challenge["signup_terms_version"]
+                or not challenge["signup_privacy_version"]
+                or challenge["signup_terms_version"] != terms_version
+                or challenge["signup_privacy_version"] != privacy_version
+            ):
+                # A signup challenge is bound to the legal versions that were
+                # actually presented when the OTP was requested. Do not consume
+                # or re-label it if the client changes versions at verification.
                 invalid = True
             elif not verify_otp_hash(challenge["otp_hash"],phone,purpose,otp):
                 # Do not raise inside this transaction: that would roll back the
@@ -200,7 +227,8 @@ def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login", *,
                             """INSERT INTO legal_acceptances
                                (user_id,terms_version,privacy_version,source)
                                VALUES (%s,%s,%s,'phone_otp_signup')""",
-                            (user_id, terms_version, privacy_version),
+                            (user_id, challenge["signup_terms_version"],
+                             challenge["signup_privacy_version"]),
                         )
                     else:
                         user_id = user["id"]
