@@ -568,3 +568,152 @@ def test_phase_0_to_6_services_compose_without_contract_drift(portfolio_api):
         worksheet = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
     assert "فولاد" in worksheet
     assert "shareholder_id" not in worksheet
+
+
+
+def test_phase_0_to_7_market_and_saas_analytics_coexist_without_cross_database_access(
+    portfolio_api,
+):
+    """Exercise market phases 3–6 and the SaaS analytics phase 7 in one test run.
+
+    Phase 0 manifest, Phase 1 HTTP/dispatcher and Phase 2 worker/lock contracts
+    run alongside this integration test in the same full pytest suite.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    from saas_core.domain.product_analytics import ProductAnalyticsService
+
+    # The market/ownership/portfolio/screener chain remains on its own Sidecar.
+    market_payload, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/stocks/فولاد/prices", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert market_payload["prices"][0]["close"] == 2600
+
+    owner_payload, status, content_type = dispatch_api(
+        portfolio_api,
+        "GET",
+        "/api/v1/stocks/فولاد/ownership-series",
+        {"id_scheme": ["share_id"], "shareholder_id": ["123"]},
+        {},
+    )
+    assert (status, content_type) == (200, "json")
+    assert owner_payload["company_series"][0]["value"] == 25.0
+
+    portfolio_payload, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/portfolios/share_id:123", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert portfolio_payload["summary"]["confirmed_combined_value_rial"] == 650000
+
+    screener_payload, status, content_type = dispatch_api(
+        portfolio_api,
+        "POST",
+        "/api/v1/screener/query",
+        {},
+        {"conditions": [{"field": "market", "op": "=", "value": "TSE"}]},
+    )
+    assert (status, content_type) == (200, "json")
+    assert screener_payload["rows"][0]["symbol"] == "فولاد"
+
+    # A separate DB-API connection pool models the independent SaaS database.
+    # The analytics module must never query the market Sidecar or source DB.
+    class AnalyticsCursor:
+        def __init__(self, fetchall=()):
+            self.calls = []
+            self.rowcount = 1
+            self._fetchall = list(fetchall)
+            self.closed = False
+
+        def execute(self, sql, params=None):
+            self.calls.append((sql, params))
+            self.rowcount = 1
+            return self
+
+        def fetchone(self):
+            if self.calls and "SELECT product_analytics" in self.calls[-1][0]:
+                return (True,)
+            return None
+
+        def fetchall(self):
+            return self._fetchall
+
+        def close(self):
+            self.closed = True
+
+    class AnalyticsConnection:
+        def __init__(self, cursor):
+            self._cursor = cursor
+            self.committed = 0
+            self.rolled_back = 0
+            self.closed = False
+
+        def cursor(self):
+            return self._cursor
+
+        def commit(self):
+            self.committed += 1
+
+        def rollback(self):
+            self.rolled_back += 1
+
+        def close(self):
+            self.closed = True
+
+    analytics_cursors = []
+
+    def analytics_connection_factory():
+        cursor = AnalyticsCursor(
+            fetchall=[("/stocks/فولاد", "stock-shareholder-tab", 1, 1, 9000)]
+        )
+        analytics_cursors.append(cursor)
+        return AnalyticsConnection(cursor)
+
+    analytics = ProductAnalyticsService(
+        connection_factory=analytics_connection_factory,
+        permission_checker=lambda _actor, permission: permission == "analytics.read",
+        published_consent_version="privacy-v1",
+        clock=lambda: datetime(2026, 11, 26, 18, 0, tzinfo=timezone.utc),
+    )
+    user_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    actor_id = uuid.UUID("44444444-4444-4444-8444-444444444444")
+    analytics.set_consent(
+        user_id=user_id,
+        product_analytics=True,
+        consent_version="privacy-v1",
+    )
+    result = analytics.ingest_events(
+        [{
+            "event_id": str(uuid.UUID("55555555-5555-4555-8555-555555555555")),
+            "event_name": "click",
+            "page_path": "/stocks/فولاد",
+            "component_id": "stock-shareholder-tab",
+            "element_role": "tab",
+            "metadata": {"action": "open_section"},
+        }],
+        user_id=user_id,
+    )
+    assert result == {"accepted": 1, "duplicates": 0}
+
+    heatmap = analytics.component_heatmap(
+        actor_user_id=actor_id,
+        start_at=datetime(2026, 11, 19, tzinfo=timezone.utc),
+        end_at=datetime(2026, 11, 26, tzinfo=timezone.utc),
+        page_path="/stocks/فولاد",
+    )
+    assert heatmap["rows"][0]["clicks"] == 1
+    assert heatmap["rows"][0]["component_id"] == "stock-shareholder-tab"
+
+    analytics_sql = "\\n".join(sql for cursor in analytics_cursors for sql, _ in cursor.calls)
+    assert "analytics_events" in analytics_sql
+    assert "analytics_consents" in analytics_sql
+    assert "site_watch" not in analytics_sql
+    assert "shareholder_holdings" not in analytics_sql
+
+    # Phase 3 remains healthy after SaaS analytics work has completed.
+    market_again, status, content_type = dispatch_api(
+        portfolio_api, "GET", "/api/v1/market/overview", {}, {}
+    )
+    assert (status, content_type) == (200, "json")
+    assert market_again["summary"]["total_companies"] == 1
