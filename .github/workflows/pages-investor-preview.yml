@@ -176,6 +176,12 @@ jobs:
               raise SystemExit("Linked terms page is missing")
           if 'tloomberg-auth-api' not in page or 'authUser={authUser}' not in page:
               raise SystemExit("Dashboard is not wired to authenticated user profile")
+          preview = Path("docs/investor-preview.html").read_text(encoding="utf-8")
+          for visible_group_id in ('<span class="heat-code">', '${safe(group.code)}</span>',
+                                   '<span>کد گروه</span>', 'بر اساس کد گروه TSETMC',
+                                   'کد رسمی گروه TSETMC'):
+              if visible_group_id in preview:
+                  raise SystemExit(f"Investor history preview still displays a group code: {visible_group_id}")
           if "{ id: 'screener'" in page:
               raise SystemExit("Old standalone screener tab still exists")
           if "ذخیره در دیتابیس" in page or "saved-filters" in page:

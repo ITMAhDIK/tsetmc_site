@@ -57,7 +57,6 @@
     .heat-col{min-width:78px;max-width:104px;display:flex;flex-direction:column;align-items:center;gap:7px;padding:9px 7px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--text);cursor:pointer}
     .heat-col:hover,.heat-col.selected{background:#192235;border-color:#465a7b}
     .heat-name{font-size:10px;line-height:1.6;min-height:34px;text-align:center;display:flex;align-items:center;justify-content:center}
-    .heat-code{font-size:9px;color:var(--muted);direction:ltr}
     .heat-cells{display:grid;grid-template-rows:repeat(5,15px);gap:4px;direction:ltr}
     .heat-cell{width:15px;height:15px;border-radius:3px;background:#1a202b;border:1px solid #273344}
     .heat-cell.active{background:rgba(255,193,7,var(--level));border-color:rgba(255,207,56,.75);box-shadow:0 0 5px rgba(255,193,7,.10)}
@@ -74,6 +73,7 @@
     .group-panel h3{font-size:12px;margin:0 0 8px}
     .positions-table{margin-top:12px}
     .company-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+    .company-kpis.group-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
     .company-kpi{background:var(--raised);border:1px solid #253149;border-radius:9px;padding:10px}
     .company-kpi span{display:block;color:var(--muted);font-size:9px}
     .company-kpi strong{display:block;font-size:13px;margin-top:6px}
@@ -356,7 +356,6 @@
       }).join("");
       return `<button class="heat-col ${g.code===activeCode?"selected":""}" data-group="${safe(g.code)}" title="${safe(g.label)} · امتیاز ${fa(score.toFixed(1))}">
         <span class="heat-name">${safe(g.label)}</span>
-        <span class="heat-code">${safe(g.code)}</span>
         <span class="heat-cells">${cells}</span>
         <span class="heat-score">${fa(score.toFixed(1))}</span>
       </button>`;
@@ -388,9 +387,9 @@
       </tr>`;
     }).join("");
     return `<div class="group-panel">
-      <div class="section-head"><div><h3>${safe(group.label)} <span class="small-muted num">${safe(group.code)}</span></h3><div class="hint">امتیاز علاقه‌مندی: ${fa(Number(group.interest_score||0).toFixed(1))} · تخصیص فعلی: ${pct(group.current_weight_pct)} · گرایش تاریخی: ${pct(group.historical_affinity_pct)}</div></div><span class="tag">${fa(universe.length)} نماد رسمی در رجیستری</span></div>
+      <div class="section-head"><div><h3>${safe(group.label)}</h3><div class="hint">امتیاز علاقه‌مندی: ${fa(Number(group.interest_score||0).toFixed(1))} · تخصیص فعلی: ${pct(group.current_weight_pct)} · گرایش تاریخی: ${pct(group.historical_affinity_pct)}</div></div><span class="tag">${fa(universe.length)} نماد رسمی در رجیستری</span></div>
       <div class="table-wrap"><table><thead><tr><th>نماد</th><th>نام شرکت</th><th>زیرگروه رسمی</th><th>تعداد کل سهامداران</th><th>وضعیت پرتفوی</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty-cell">نمادی برای این گروه در رجیستری موجود نیست.</td></tr>'}</tbody></table></div>
-      <div class="hint">جزئیات کامل شرکت فقط برای نمادهایی در دسترس است که فایل تاریخچهٔ آن‌ها در نمونهٔ ۱۴ اکسل وجود دارد. فهرست بالا بر اساس کد رسمی گروه TSETMC ساخته شده، نه تشخیص متنی نام نماد.</div>
+      <div class="hint">جزئیات کامل شرکت فقط برای نمادهایی در دسترس است که فایل تاریخچهٔ آن‌ها در نمونهٔ ۱۴ اکسل وجود دارد. فهرست بالا بر اساس طبقه‌بندی رسمی گروه‌های TSETMC ساخته شده، نه تشخیص متنی نام نماد.</div>
     </div>`;
   }
 
@@ -639,8 +638,8 @@ function enableNetworkCanvases(root=$("detail")){root.querySelectorAll("svg[data
     }).join("");
     $("detail").innerHTML=`
       <section class="panel section" id="selectedGroupBody">
-        <div class="back-row"><div><h2>${safe(label)}</h2><div class="hint">اعضای رسمی این گروه بر اساس کد گروه TSETMC؛ فهرست کامل رجیستری، مستقل از پوشش فایل‌های اکسل.</div></div><button class="btn" id="backToInvestorGraph">بازگشت به گراف سرمایه‌گذار</button></div>
-        <div class="company-kpis"><div class="company-kpi"><span>نمادهای رسمی گروه</span><strong>${fa(universe.length)}</strong></div><div class="company-kpi"><span>نمادهای این گروه در پرتفوی</span><strong>${fa(positions.length)}</strong></div><div class="company-kpi"><span>امتیاز علاقه‌مندی</span><strong>${group?pct(group.interest_score):"—"}</strong></div><div class="company-kpi"><span>کد گروه</span><strong class="num">${safe(code)}</strong></div></div>
+        <div class="back-row"><div><h2>${safe(label)}</h2><div class="hint">اعضای رسمی این گروه بر اساس طبقه‌بندی TSETMC؛ فهرست کامل رجیستری، مستقل از پوشش فایل‌های اکسل.</div></div><button class="btn" id="backToInvestorGraph">بازگشت به گراف سرمایه‌گذار</button></div>
+        <div class="company-kpis group-kpis"><div class="company-kpi"><span>نمادهای رسمی گروه</span><strong>${fa(universe.length)}</strong></div><div class="company-kpi"><span>نمادهای این گروه در پرتفوی</span><strong>${fa(positions.length)}</strong></div><div class="company-kpi"><span>امتیاز علاقه‌مندی</span><strong>${group?pct(group.interest_score):"—"}</strong></div></div>
         <div class="table-wrap"><table><thead><tr><th>نماد</th><th>زیرگروه رسمی</th><th>وضعیت در پرتفوی</th><th>تعداد سهامداران</th></tr></thead><tbody>${rows||'<tr><td colspan="4" class="empty-cell">نمادی برای این گروه در رجیستری موجود نیست.</td></tr>'}</tbody></table></div>
       </section>`;
     $("backToInvestorGraph")?.addEventListener("click",()=>{selectedGroupCode=null;renderDetail();$("ownershipGraphSection")?.scrollIntoView({behavior:"smooth",block:"start"});commitViewState();});
