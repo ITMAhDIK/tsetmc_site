@@ -68,6 +68,9 @@ def test_pages_preview_includes_the_privacy_consent_analytics_bundle():
     assert "/api/v1/analytics/events" in client
     assert "page_view" in client
     assert "active_time" in client
+    assert "feature_view" in client
+    assert "IntersectionObserver" in client
+    assert "data-analytics-view" in (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
     assert "scroll" in client
     assert "data-analytics-exclude" in client
     # The client must not persist event queues or inspect user-entered/rendered text.
