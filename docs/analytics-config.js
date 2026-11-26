@@ -9,7 +9,6 @@
  */
 window.TLOOMBERG_ANALYTICS_CONFIG = Object.freeze({
   apiBase: "",
-  consentVersion: "v1",
   flushIntervalMs: 10000,
   activeTickMs: 15000,
   maxQueueSize: 200
