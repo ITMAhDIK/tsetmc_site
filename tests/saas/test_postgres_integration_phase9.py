@@ -693,3 +693,140 @@ def test_standard_user_is_denied_every_staff_and_admin_read_route(db, client):
     # Keep a visible test assertion that the full current protected GET surface
     # was exercised, so newly added routes automatically enter this matrix.
     assert len(checked) == len(protected_get_routes)
+
+
+def _insert_page_view_sequence(conn, user_id, session_id, paths):
+    for index, page_path in enumerate(paths):
+        conn.execute(
+            """INSERT INTO analytics_events
+               (user_id,anonymous_id,session_id,event_name,page_path,occurred_at)
+               VALUES (%s,NULL,%s,'page_view',%s,now()+(%s * interval '1 second'))""",
+            (user_id, session_id, page_path, index),
+        )
+    conn.commit()
+
+
+def test_repeated_path_reports_are_session_scoped_private_and_audited(db, client):
+    from uuid import uuid4
+
+    users = []
+    for index in range(5):
+        user, token = _new_user(db, f"phase9_path_user_{index}")
+        users.append((user, token))
+        db.execute(
+            """INSERT INTO analytics_consents
+               (user_id,essential,product_analytics,consent_version)
+               VALUES (%s,TRUE,TRUE,'v1')""",
+            (user["id"],),
+        )
+    superadmin, superadmin_token = _new_user(db, "phase9_path_superadmin")
+    _grant_role(db, superadmin["id"], "superadmin")
+
+    target_session_ids = []
+    for user, _token in users:
+        first_session = uuid4()
+        _insert_page_view_sequence(
+            db,
+            user["id"],
+            first_session,
+            ["/", "/market", "/company/:id", "/", "/market", "/company/:id"],
+        )
+        target_session_ids.append(first_session)
+
+    # The second session starts midway through the same route. It must not
+    # create a synthetic "/" -> "/market" transition across session boundaries.
+    second_session = uuid4()
+    _insert_page_view_sequence(
+        db, users[0][0]["id"], second_session, ["/market", "/company/:id"]
+    )
+    # Non-page events must never enter navigation sequence reports.
+    db.execute(
+        """INSERT INTO analytics_events
+           (user_id,session_id,event_name,page_path,occurred_at)
+           VALUES (%s,%s,'click','/private-component',now())""",
+        (users[0][0]["id"], second_session),
+    )
+    db.commit()
+
+    # Aggregate route patterns require at least five distinct opted-in users.
+    aggregate = client.get(
+        "/analytics/admin/paths?days=30&max_steps=3",
+        headers=_auth(superadmin_token),
+    )
+    assert aggregate.status_code == 200
+    assert aggregate.json()["suppressed"] is False
+    aggregate_pattern = next(
+        item for item in aggregate.json()["paths"]
+        if item["path"] == ["/", "/market", "/company/:id"]
+    )
+    assert aggregate_pattern["repetitions"] == 10
+    assert aggregate_pattern["sessions"] == 5
+    assert aggregate_pattern["users"] == 5
+
+    # User-level inspection is denied to an ordinary account.
+    forbidden = client.get(
+        f"/analytics/admin/users/{users[0][0]['id']}/paths",
+        headers=_auth(users[0][1]),
+    )
+    assert forbidden.status_code == 403
+
+    personal = client.get(
+        f"/analytics/admin/users/{users[0][0]['id']}/paths?days=30&max_steps=3",
+        headers=_auth(superadmin_token),
+    )
+    assert personal.status_code == 200
+    personal_paths = personal.json()["paths"]
+
+    full_path = next(
+        item for item in personal_paths
+        if item["path"] == ["/", "/market", "/company/:id"]
+    )
+    assert full_path["repetitions"] == 2
+    assert full_path["sessions"] == 1
+    assert full_path["users"] == 1
+
+    partial_path = next(
+        item for item in personal_paths
+        if item["path"] == ["/market", "/company/:id"]
+    )
+    assert partial_path["repetitions"] == 3
+    assert partial_path["sessions"] == 2
+    assert not any("/private-component" in item["path"] for item in personal_paths)
+
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT COUNT(*) AS total FROM admin_audit_logs
+               WHERE actor_user_id=%s AND action='analytics.user_paths.read'
+                 AND target_id=%s""",
+            (superadmin["id"], str(users[0][0]["id"])),
+        )
+        assert cur.fetchone()["total"] == 1
+
+
+def test_aggregate_repeated_paths_are_suppressed_below_minimum_cohort(db, client):
+    user, _token = _new_user(db, "phase9_small_path_cohort_user")
+    admin, admin_token = _new_user(db, "phase9_small_path_cohort_admin")
+    _grant_role(db, admin["id"], "superadmin")
+
+    for index in range(4):
+        cohort_user, _ = (
+            (user, None) if index == 0
+            else _new_user(db, f"phase9_small_path_cohort_{index}")
+        )
+        db.execute(
+            """INSERT INTO analytics_consents
+               (user_id,essential,product_analytics,consent_version)
+               VALUES (%s,TRUE,TRUE,'v1')""",
+            (cohort_user["id"],),
+        )
+        _insert_page_view_sequence(
+            db, cohort_user["id"], uuid4(), ["/", "/market", "/", "/market"]
+        )
+
+    response = client.get(
+        "/analytics/admin/paths?days=30&max_steps=2",
+        headers=_auth(admin_token),
+    )
+    assert response.status_code == 200
+    assert response.json()["suppressed"] is True
+    assert response.json()["paths"] == []
