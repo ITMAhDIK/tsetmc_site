@@ -13,8 +13,8 @@ The authenticated administrative API is mounted under `/admin/console` and share
 - Each service function independently enforces the required permission; API route checks are not the only boundary.
 - The overview and referral administration are superadmin-only. Existing role permissions continue to govern each module.
 - Superadmin cannot be assigned or modified through the console; bootstrap and superadmin changes stay out of band.
-- Self-suspension is rejected. Suspending a user revokes all their active sessions. Deleted/pending accounts cannot be reactivated through the console, and no status transition can modify a superadmin account.
-- Wallet adjustments use strict signed 64-bit integer Toman amounts and append-only ledger entries with a reason and idempotency key. Reusing a key with any different adjustment data (including reason) is rejected; debits cannot exceed the selected bucket balance.
+- Self-suspension is rejected. Suspending a user revokes all their active sessions.
+- Wallet adjustments use integer Toman and append-only ledger entries with a reason and idempotency key. Debits cannot exceed the selected bucket balance.
 - Payment reconciliation resolution is audited. The console does not simulate payment-provider verification or initiate bank transfers.
 - Sensitive hashes and session tokens are never returned by user-detail queries.
 
@@ -30,6 +30,6 @@ The authenticated administrative API is mounted under `/admin/console` and share
 - `GET /admin/console/support`, `GET /admin/console/audit`
 
 ## Validation and remaining work
-PostgreSQL integration tests cover role separation, user suspension/session revocation, sensitive-field exclusion, role-provisioning restrictions, immutable deleted/pending/superadmin status handling, cross-domain views, reconciliation, strict wallet amount typing/range, idempotency payload conflicts and sign constraints.
+PostgreSQL integration tests cover role separation, user suspension/session revocation, sensitive-field exclusion, role-provisioning restrictions, cross-domain views, reconciliation and wallet adjustment idempotency/sign constraints.
 
 The browser console is served from the authenticated SaaS API at `GET /admin/console/ui` (same origin only). Cookie-authenticated mutations require a matching Origin; configure `SAAS_PUBLIC_ORIGIN` behind a reverse proxy. The UI uses same-origin API calls and never receives the HttpOnly session token. No live payment, bank transfer, payout or production deployment is performed by this phase.
