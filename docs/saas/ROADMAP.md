@@ -70,7 +70,7 @@ data DB or service changes.
 ## Phase 9 — Production readiness (engineering foundation implemented; release gates open)
 Phase 9A–D on feat/tloomberg-saas-production-readiness-phase9 now includes:
 - Threat model, trust boundaries, explicit release gates and NOT READY status.
-- Dependency vulnerability audit (pip-audit), high-severity/high-confidence Bandit, Dependabot weekly checks for Python, GitHub Actions and Docker images, and pinned Actions commit SHAs. Latest confirmed combined-branch run: Python suite 187 passed in 9.54s; dependency audit, security analysis, and PostgreSQL backup/restore drill passed.
+- Dependency vulnerability audit (pip-audit), high-severity/high-confidence Bandit, Dependabot weekly checks for Python, GitHub Actions and Docker images, and pinned Actions commit SHAs. Latest confirmed combined-branch run: Python suite 187 passed in 9.28s; dependency audit, security analysis, and PostgreSQL backup/restore drill passed.
 - Production startup configuration checks, explicit host/CORS allow-lists, cookie CSRF origin checks, security headers, readiness endpoint, structured redacted request logs and bounded PostgreSQL connection pool.
 - Argon2id dummy verification for unknown user logins, serialized concurrent OTP rate limits, exact payment-event and admin-wallet idempotency, append-only wallet/reconciliation/admin audit tables.
 - Checksummed migration runner with advisory locking, per-migration transactions, drift detection, exact DB identity check, explicit rejection of unknown/non-empty schema without migration ledger, and bounded grants to a pre-created runtime role.
