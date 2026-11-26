@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 SESSION_COOKIE = "rn_session"
 REFERRAL_REWARD_TOMAN = 100_000
 PASSWORD_ITERATIONS = 600_000
+MAX_ANALYTICS_PATH_EVENTS = 100_000
 
 PLANS = (
     ("pro_30", "اشتراک حرفه‌ای یک‌ماهه", 30, 690_000),
@@ -1702,9 +1703,9 @@ class AccountService:
             if target_user_id is not None:
                 sql += " AND e.user_id=?"
                 params.append(int(target_user_id))
-            sql += " ORDER BY e.user_id,e.session_hash,e.id LIMIT 100001"
-            rows = con.execute(sql, params).fetchall()
-            if len(rows) > 100_000:
+            sql += " ORDER BY e.user_id,e.session_hash,e.id LIMIT ?"
+            rows = con.execute(sql, (*params, MAX_ANALYTICS_PATH_EVENTS + 1)).fetchall()
+            if len(rows) > MAX_ANALYTICS_PATH_EVENTS:
                 raise AccountError(
                     413,
                     "تعداد بازدیدهای این بازه برای تحلیل مسیر زیاد است؛ بازه زمانی کوتاه‌تری انتخاب کنید.",
