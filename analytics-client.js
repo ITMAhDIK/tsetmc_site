@@ -85,12 +85,9 @@
   }
 
   function flushActiveTime() {
-    if (!state.activeSince || !isActive()) {
-      state.activeSince = isActive() ? Date.now() : null;
-      return;
-    }
+    if (!state.activeSince) return;
     const duration = Math.max(0, Math.min(180000, Date.now() - state.activeSince));
-    state.activeSince = Date.now();
+    state.activeSince = isActive() ? Date.now() : null;
     if (duration >= 1000) {
       enqueue("active_time", { active_duration_ms: duration });
     }
