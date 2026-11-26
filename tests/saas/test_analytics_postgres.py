@@ -267,7 +267,7 @@ def test_analytics_date_window_boundaries_and_event_time_limits(migrated_analyti
             record_events(conn,user_id=user,events=[event(occurred_at=datetime.now(timezone.utc)+timedelta(minutes=6))])
         with pytest.raises(ValueError,match="viewport dimensions"):
             record_events(conn,user_id=user,events=[event(viewport_width=True)])
-        with pytest.raises(ValueError,match="active_duration_ms"):
+        with pytest.raises(ValueError,match="active duration"):
             record_events(conn,user_id=user,events=[event("active_time",active_duration_ms=300001)])
         assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)).fetchone()["n"]==0
 
