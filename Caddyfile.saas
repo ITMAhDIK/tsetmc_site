@@ -15,5 +15,11 @@
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
     }
 
-    reverse_proxy saas-api:8000
+    # The static site is hosted separately (e.g. GitHub Pages). Only the
+    # versioned API prefix is proxied; Caddy strips /api/v1 before FastAPI.
+    handle_path /api/v1/* {
+        reverse_proxy saas-api:8000
+    }
+
+    respond "Tloomberg SaaS API gateway" 404
 }
