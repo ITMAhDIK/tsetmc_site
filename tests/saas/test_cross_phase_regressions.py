@@ -146,7 +146,7 @@ def test_linked_phone_cannot_be_claimed_by_a_second_password_account(migrated_cr
                 r=second.post("/auth/register",json={"username":f"claim_{uuid4().hex[:8]}","password":"a-long-secure-test-password"})
                 assert r.status_code==200
                 assert second.post("/auth/phone/link/request",json={"phone":phone}).status_code==200
-                second_otp=_latest_otp(conn,cipher,phone)
+                second_otp=_latest_otp(conn,cipher,phone,"link_identity")
                 rejected=second.post("/auth/phone/link/verify",json={"phone":phone,"otp":second_otp})
                 assert rejected.status_code==401
                 assert conn.execute("SELECT count(*) AS n FROM users WHERE phone_e164=%s",(phone,)).fetchone()["n"]==1
