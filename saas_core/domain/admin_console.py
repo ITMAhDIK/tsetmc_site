@@ -339,8 +339,6 @@ class AdminConsoleService:
                     raise AdminPermissionDenied("superadmin role assignment")
             if role_code == "superadmin":
                 self._lock_superadmin_role(cursor)
-            if role_code == "superadmin":
-                self._lock_superadmin_role(cursor)
             cursor.execute("SELECT id FROM roles WHERE code=%s", (role_code,))
             role = cursor.fetchone()
             if role is None:
@@ -397,6 +395,8 @@ class AdminConsoleService:
             cursor.execute("SELECT 1 FROM user_roles WHERE user_id=%s AND role_id=%s", (target, role_id))
             exists = cursor.fetchone() is not None
             if exists and role_code == "superadmin" and user_status == "active":
+                # Serialize role removals against all other superadmin changes.
+                self._lock_superadmin_role(cursor)
                 self._last_superadmin_guard(cursor, target)
             cursor.execute("DELETE FROM user_roles WHERE user_id=%s AND role_id=%s", (target, role_id))
             removed = cursor.rowcount > 0
