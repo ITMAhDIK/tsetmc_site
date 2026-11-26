@@ -2568,6 +2568,7 @@
       const [analyticsPaths, setAnalyticsPaths] = useState(null);
       const [analyticsUserId, setAnalyticsUserId] = useState('');
       const [analyticsUsers, setAnalyticsUsers] = useState([]);
+      const [analyticsUserQuery, setAnalyticsUserQuery] = useState('');
       const [analyticsUserEvents, setAnalyticsUserEvents] = useState([]);
       const [analyticsUserPaths, setAnalyticsUserPaths] = useState(null);
       const [analyticsBusy, setAnalyticsBusy] = useState(false);
@@ -3129,6 +3130,16 @@
         refresh().catch(e => setError(e.message));
       }, []);
 
+      const searchAnalyticsUsers = async () => {
+        try {
+          const query = String(analyticsUserQuery || '').trim();
+          const result = await apiFetch('/api/v1/site-admin/users?q=' + encodeURIComponent(query));
+          setAnalyticsUsers(result.users || []);
+        } catch (e) {
+          setError(e.message);
+        }
+      };
+
       const loadUserAnalytics = async () => {
         const target = String(analyticsUserId || '').trim();
         if (!/^\d+$/.test(target)) {
@@ -3287,6 +3298,13 @@
               <p className="text-[10px] text-[var(--text-secondary)] mt-1">این بخش فقط برای سوپرادمین فعال است؛ هر بار مشاهده در audit ثبت می‌شود.</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <input type="search" value={analyticsUserQuery}
+                onChange={e=>setAnalyticsUserQuery(e.target.value)}
+                placeholder="جستجو با شناسه، نام کاربری یا کد عمومی"
+                data-analytics-exclude
+                className="min-w-[200px] flex-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2 text-xs" />
+              <button type="button" onClick={searchAnalyticsUsers}
+                className="rounded border border-[var(--border-subtle)] px-3 py-2 text-xs">جستجو</button>
               <select value={analyticsUserId}
                 onChange={e=>setAnalyticsUserId(e.target.value)}
                 className="min-w-[220px] flex-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2 text-xs">
