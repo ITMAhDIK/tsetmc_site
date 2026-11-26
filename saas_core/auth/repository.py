@@ -61,7 +61,7 @@ def authenticate_session(conn, token: str):
         return None
     with conn.cursor() as cur:
         cur.execute("""SELECT u.id,u.public_id,u.username,u.display_name,u.account_type,u.status,
-                   s.id AS session_id,s.mfa_verified_at
+                   s.id AS session_id,CASE WHEN s.mfa_verified_at>now()-interval '12 hours' AND s.mfa_verified_at<=now()+interval '1 minute' THEN s.mfa_verified_at ELSE NULL END AS mfa_verified_at
             FROM sessions s JOIN users u ON u.id=s.user_id
             WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND u.status='active'""",
             (hash_session_token(token),))
