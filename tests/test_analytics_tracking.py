@@ -277,6 +277,12 @@ def test_admin_analytics_overview_and_top_pages_require_minimum_cohort(service):
                 "page_path": "/market",
                 "active_duration_ms": 5000,
             },
+            {
+                "client_event_id": str(uuid4()),
+                "event_name": "feature_view",
+                "page_path": "/market",
+                "component_id": "market-dashboard",
+            },
         ])
         users.append(user)
 
@@ -290,6 +296,7 @@ def test_admin_analytics_overview_and_top_pages_require_minimum_cohort(service):
     assert response["overview"]["sessions"] == 5
     assert response["overview"]["page_views"] == 15
     assert response["overview"]["clicks"] == 5
+    assert response["overview"]["feature_views"] == 5
     assert response["overview"]["active_duration_ms"] == 25_000
     market = next(item for item in response["top_pages"] if item["page_path"] == "/market")
     assert market["views"] == 10
