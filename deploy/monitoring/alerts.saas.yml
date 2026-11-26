@@ -1,0 +1,43 @@
+groups:
+  - name: tloomberg-saas-api
+    rules:
+      - alert: SaasApiTargetDown
+        expr: up{job="tloomberg-saas-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: tloomberg-saas
+        annotations:
+          summary: "Tloomberg SaaS API metrics target is unavailable"
+          description: "Prometheus has not scraped the private SaaS API metrics endpoint for two minutes."
+
+      - alert: SaasApiHigh5xxRate
+        expr: |
+          (
+            sum(rate(saas_http_requests_total{job="tloomberg-saas-api",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(saas_http_requests_total{job="tloomberg-saas-api"}[5m])), 0.001)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: tloomberg-saas
+        annotations:
+          summary: "Tloomberg SaaS API has an elevated 5xx rate"
+          description: "More than five percent of requests have returned 5xx responses over the last five minutes."
+
+      - alert: SaasApiHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(saas_http_request_duration_seconds_bucket{job="tloomberg-saas-api"}[5m])
+            )
+          ) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+          service: tloomberg-saas
+        annotations:
+          summary: "Tloomberg SaaS API p95 latency is elevated"
+          description: "Route-level p95 latency has exceeded 1.5 seconds for ten minutes."
