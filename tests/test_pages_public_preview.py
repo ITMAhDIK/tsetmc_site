@@ -53,3 +53,27 @@ def test_over_one_hundred_percent_history_is_flagged_not_rewritten():
     flagged = [row[1] for row in kariz["series"] if row[3] == "X"]
     assert flagged == [107.97, 107.964]
     assert kariz["quality"][3] == 2
+
+
+def test_pages_preview_includes_the_privacy_consent_analytics_bundle():
+    html = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+    client_path = ROOT / "docs" / "analytics-client.js"
+    assert client_path.is_file()
+    assert '<script defer src="./analytics-client.js"></script>' in html
+    assert 'privacy-analytics-panel' in html
+    assert '/api/v1/analytics/consent' in html
+
+    client = client_path.read_text(encoding="utf-8")
+    assert "TloombergAnalytics" in client
+    assert "/api/v1/analytics/events" in client
+    assert "page_view" in client
+    assert "active_time" in client
+    assert "scroll" in client
+    assert "data-analytics-exclude" in client
+    # The client must not persist event queues or inspect user-entered/rendered text.
+    assert "localStorage" not in client
+    assert "sessionStorage" not in client
+    assert "document.cookie" not in client
+    assert "innerText" not in client
+    assert "textContent" not in client
+    assert "outerHTML" not in client
