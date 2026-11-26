@@ -371,3 +371,19 @@ def test_retention_endpoint_deletes_only_events_older_than_configured_days(servi
             {"days": ["731"]}, {"_csrf": superadmin["csrf_token"]},
             superadmin, "http://localhost:8000",
         )
+
+
+def test_admin_user_directory_exposes_internal_id_only_to_staff(service):
+    target = signed_in(service, "analytics_directory_target")
+    admin = signed_in(service, "analytics_directory_admin", role="admin")
+    result = service.dispatch(
+        "GET", "/api/v1/site-admin/users", {}, {}, admin, "http://localhost:8000"
+    )["payload"]
+    target_row = next(item for item in result["users"] if item["username"] == "analytics_directory_target")
+    assert target_row["id"] == target["id"]
+
+    with pytest.raises(AccountError) as denied:
+        service.dispatch(
+            "GET", "/api/v1/site-admin/users", {}, {}, target, "http://localhost:8000"
+        )
+    assert denied.value.status == 403
