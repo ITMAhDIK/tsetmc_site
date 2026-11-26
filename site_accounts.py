@@ -61,6 +61,41 @@ CREATE TABLE IF NOT EXISTS site_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_site_sessions_user ON site_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_site_sessions_expiry ON site_sessions(expires_at);
+CREATE TABLE IF NOT EXISTS site_analytics_consents (
+    user_id INTEGER PRIMARY KEY REFERENCES site_users(id) ON DELETE CASCADE,
+    product_analytics INTEGER NOT NULL DEFAULT 0 CHECK(product_analytics IN (0,1)),
+    consent_version TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS site_analytics_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
+    session_hash TEXT NOT NULL,
+    client_event_id TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    event_name TEXT NOT NULL CHECK(event_name IN
+        ('page_view','click','navigation','scroll','active_time','feature_view')),
+    page_path TEXT NOT NULL,
+    component_id TEXT,
+    element_role TEXT,
+    scroll_depth_pct REAL,
+    active_duration_ms INTEGER,
+    occurred_at TEXT NOT NULL,
+    UNIQUE(user_id,client_event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_site_analytics_session_order
+    ON site_analytics_events(user_id,session_hash,id);
+CREATE INDEX IF NOT EXISTS idx_site_analytics_event_time
+    ON site_analytics_events(event_name,occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_analytics_page_time
+    ON site_analytics_events(page_path,event_name,occurred_at DESC);
+CREATE TABLE IF NOT EXISTS site_analytics_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_user_id INTEGER NOT NULL REFERENCES site_users(id),
+    target_user_id INTEGER NOT NULL REFERENCES site_users(id),
+    action TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS site_otp_challenges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     phone TEXT NOT NULL,
@@ -1420,6 +1455,335 @@ class AccountService:
         finally:
             con.close()
 
+
+    # -- Consent-aware product analytics ----------------------------------
+    @staticmethod
+    def _analytics_page_path(value):
+        """Accept only a clean app route; never retain query strings or fragments."""
+        if not isinstance(value, str):
+            raise AccountError(400, "مسیر صفحه معتبر نیست.")
+        raw = value.strip()
+        parsed = urllib.parse.urlsplit(raw)
+        if (
+            not raw.startswith("/")
+            or parsed.scheme
+            or parsed.netloc
+            or parsed.query
+            or parsed.fragment
+            or "%" in parsed.path
+            or not re.fullmatch(r"/[A-Za-z0-9_./:-]{1,300}", parsed.path)
+        ):
+            raise AccountError(400, "مسیر صفحه باید نسبی و بدون query یا fragment باشد.")
+        segments = []
+        for segment in parsed.path.split("/"):
+            if segment in (".", ".."):
+                raise AccountError(400, "مسیر صفحه معتبر نیست.")
+            if (segment.isdigit() and len(segment) >= 4) or re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}", segment
+            ):
+                segments.append(":id")
+            else:
+                segments.append(segment)
+        return "/".join(segments)[:300]
+
+    @classmethod
+    def _clean_analytics_event(cls, event):
+        if not isinstance(event, dict):
+            raise AccountError(400, "رویداد تحلیلی معتبر نیست.")
+        event_id = str(event.get("client_event_id") or "").lower()
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            event_id,
+        ):
+            raise AccountError(400, "شناسه رویداد معتبر نیست.")
+        event_name = event.get("event_name")
+        allowed = {"page_view", "click", "navigation", "scroll", "active_time", "feature_view"}
+        if event_name not in allowed:
+            raise AccountError(400, "نوع رویداد پشتیبانی نمی‌شود.")
+        page_path = cls._analytics_page_path(event.get("page_path"))
+        component_id = event.get("component_id")
+        if component_id is not None and (
+            not isinstance(component_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", component_id)
+        ):
+            raise AccountError(400, "شناسه جزء صفحه معتبر نیست.")
+        element_role = event.get("element_role")
+        if element_role is not None and element_role not in {
+            "button", "link", "tab", "navigation", "menuitem", "other"
+        }:
+            raise AccountError(400, "نوع جزء صفحه معتبر نیست.")
+
+        scroll = event.get("scroll_depth_pct")
+        if scroll is not None:
+            if (
+                isinstance(scroll, bool)
+                or not isinstance(scroll, (int, float))
+                or not 0 <= scroll <= 100
+                or event_name != "scroll"
+            ):
+                raise AccountError(400, "درصد اسکرول معتبر نیست.")
+            scroll = float(scroll)
+
+        active = event.get("active_duration_ms")
+        if active is not None:
+            if (
+                isinstance(active, bool)
+                or not isinstance(active, int)
+                or not 0 <= active <= 180_000
+                or event_name != "active_time"
+            ):
+                raise AccountError(400, "مدت فعالیت معتبر نیست.")
+
+        # Extra browser fields are deliberately discarded. No text, input values,
+        # raw URLs, query strings, IP addresses or user-agent strings are retained.
+        return {
+            "client_event_id": event_id,
+            "event_name": event_name,
+            "page_path": page_path,
+            "component_id": component_id,
+            "element_role": element_role,
+            "scroll_depth_pct": scroll,
+            "active_duration_ms": active,
+        }
+
+    def analytics_consent(self, user):
+        self.require_user(user)
+        con = self._connect()
+        try:
+            row = con.execute(
+                """SELECT product_analytics,consent_version,updated_at
+                   FROM site_analytics_consents WHERE user_id=?""",
+                (user["id"],),
+            ).fetchone()
+            if not row:
+                return {
+                    "product_analytics": False,
+                    "has_choice": False,
+                    "consent_version": None,
+                    "updated_at": None,
+                }
+            return {
+                "product_analytics": bool(row["product_analytics"]),
+                "has_choice": True,
+                "consent_version": row["consent_version"],
+                "updated_at": row["updated_at"],
+            }
+        finally:
+            con.close()
+
+    def set_analytics_consent(self, user, product_analytics):
+        self.require_user(user)
+        if not isinstance(product_analytics, bool):
+            raise AccountError(400, "وضعیت رضایت باید درست یا نادرست باشد.")
+        con = self._connect()
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            con.execute(
+                """INSERT INTO site_analytics_consents
+                   (user_id,product_analytics,consent_version,updated_at)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                     product_analytics=excluded.product_analytics,
+                     consent_version=excluded.consent_version,
+                     updated_at=excluded.updated_at""",
+                (user["id"], int(product_analytics), "v1", iso_now()),
+            )
+            deleted = 0
+            if not product_analytics:
+                cur = con.execute(
+                    "DELETE FROM site_analytics_events WHERE user_id=?",
+                    (user["id"],),
+                )
+                deleted = cur.rowcount
+            con.commit()
+            result = self.analytics_consent(user)
+            result["deleted_events"] = deleted
+            return result
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
+
+    def record_analytics_events(self, user, events):
+        self.require_user(user)
+        session_hash = str(user.get("session_hash") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", session_hash):
+            raise AccountError(401, "نشست معتبر برای ثبت رویداد پیدا نشد.")
+        if not isinstance(events, list) or not 1 <= len(events) <= 50:
+            raise AccountError(400, "هر بسته باید بین ۱ تا ۵۰ رویداد داشته باشد.")
+        clean = [self._clean_analytics_event(event) for event in events]
+        con = self._connect()
+        inserted = 0
+        duplicates = 0
+        try:
+            # Serialize ingestion against consent revocation. If revocation wins,
+            # this batch observes disabled consent; if ingestion wins, revocation
+            # deletes the newly inserted rows immediately afterwards.
+            con.execute("BEGIN IMMEDIATE")
+            consent = con.execute(
+                "SELECT product_analytics FROM site_analytics_consents WHERE user_id=?",
+                (user["id"],),
+            ).fetchone()
+            if not consent or not consent["product_analytics"]:
+                raise AccountError(403, "برای ثبت تحلیل رفتار باید رضایت فعال داشته باشید.")
+            for event in clean:
+                fingerprint = hashlib.sha256(
+                    json.dumps(event, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+                existing = con.execute(
+                    """SELECT payload_sha256 FROM site_analytics_events
+                       WHERE user_id=? AND client_event_id=?""",
+                    (user["id"], event["client_event_id"]),
+                ).fetchone()
+                if existing:
+                    if not hmac.compare_digest(existing["payload_sha256"], fingerprint):
+                        raise AccountError(409, "شناسه رویداد قبلاً با محتوای دیگری استفاده شده است.")
+                    duplicates += 1
+                    continue
+                con.execute(
+                    """INSERT INTO site_analytics_events
+                       (user_id,session_hash,client_event_id,payload_sha256,event_name,
+                        page_path,component_id,element_role,scroll_depth_pct,
+                        active_duration_ms,occurred_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        user["id"], session_hash, event["client_event_id"], fingerprint,
+                        event["event_name"], event["page_path"], event["component_id"],
+                        event["element_role"], event["scroll_depth_pct"],
+                        event["active_duration_ms"], iso_now(),
+                    ),
+                )
+                inserted += 1
+            con.commit()
+            return {"received": len(clean), "inserted": inserted, "duplicates": duplicates}
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
+
+    def _analytics_path_report(
+        self, *, days=30, max_steps=5, min_repetitions=2, limit=50,
+        target_user_id=None,
+    ):
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 730:
+            raise AccountError(400, "بازه گزارش باید بین ۱ تا ۷۳۰ روز باشد.")
+        if isinstance(max_steps, bool) or not isinstance(max_steps, int) or not 2 <= max_steps <= 5:
+            raise AccountError(400, "طول مسیر باید بین ۲ تا ۵ صفحه باشد.")
+        if isinstance(min_repetitions, bool) or not isinstance(min_repetitions, int) or not 2 <= min_repetitions <= 10_000:
+            raise AccountError(400, "حداقل تکرار مسیر معتبر نیست.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise AccountError(400, "تعداد نتایج باید بین ۱ تا ۱۰۰ باشد.")
+
+        cutoff = (utc_now() - timedelta(days=days)).isoformat(timespec="seconds")
+        con = self._connect()
+        try:
+            users = con.execute(
+                """SELECT COUNT(DISTINCT e.user_id)
+                   FROM site_analytics_events e
+                   JOIN site_analytics_consents c ON c.user_id=e.user_id
+                   WHERE c.product_analytics=1 AND e.event_name='page_view'
+                     AND e.occurred_at>=?""",
+                (cutoff,),
+            ).fetchone()[0]
+            if target_user_id is None and users < 5:
+                return {"suppressed": True, "minimum_cohort": 5, "paths": []}
+
+            sql = (
+                """SELECT e.id,e.user_id,e.session_hash,e.page_path,e.occurred_at
+                   FROM site_analytics_events e
+                   JOIN site_analytics_consents c ON c.user_id=e.user_id
+                   WHERE c.product_analytics=1 AND e.event_name='page_view'
+                     AND e.occurred_at>=?"""
+            )
+            params = [cutoff]
+            if target_user_id is not None:
+                sql += " AND e.user_id=?"
+                params.append(int(target_user_id))
+            sql += " ORDER BY e.user_id,e.session_hash,e.id"
+            rows = con.execute(sql, params).fetchall()
+
+            sessions = {}
+            for row in rows:
+                key = (row["user_id"], row["session_hash"])
+                sessions.setdefault(key, []).append(row)
+
+            grouped = {}
+            for (owner_id, session_hash), items in sessions.items():
+                for start in range(len(items)):
+                    for length in range(2, min(max_steps, len(items) - start) + 1):
+                        path = tuple(item["page_path"] for item in items[start:start + length])
+                        entry = grouped.setdefault(path, {
+                            "repetitions": 0, "sessions": set(), "users": set(),
+                            "last_occurrence_at": None,
+                        })
+                        entry["repetitions"] += 1
+                        entry["sessions"].add(session_hash)
+                        entry["users"].add(owner_id)
+                        at = items[start]["occurred_at"]
+                        if entry["last_occurrence_at"] is None or at > entry["last_occurrence_at"]:
+                            entry["last_occurrence_at"] = at
+
+            result = []
+            for path, entry in grouped.items():
+                user_count = len(entry["users"])
+                if entry["repetitions"] < min_repetitions:
+                    continue
+                if target_user_id is None and user_count < 5:
+                    continue
+                result.append({
+                    "path": list(path),
+                    "path_length": len(path),
+                    "repetitions": entry["repetitions"],
+                    "sessions": len(entry["sessions"]),
+                    "users": user_count,
+                    "last_occurrence_at": entry["last_occurrence_at"],
+                })
+            result.sort(
+                key=lambda item: (
+                    -item["repetitions"], -item["users"], -item["sessions"],
+                    -item["path_length"], item["path"],
+                )
+            )
+            return {
+                "suppressed": False,
+                "minimum_cohort": 5 if target_user_id is None else None,
+                "paths": result[:limit],
+            }
+        finally:
+            con.close()
+
+    def analytics_user_events(self, *, target_user_id, limit=100):
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise AccountError(400, "تعداد رویدادها باید بین ۱ تا ۲۰۰ باشد.")
+        con = self._connect()
+        try:
+            rows = con.execute(
+                """SELECT event_name,page_path,component_id,element_role,
+                          scroll_depth_pct,active_duration_ms,occurred_at
+                   FROM site_analytics_events
+                   WHERE user_id=? ORDER BY id DESC LIMIT ?""",
+                (int(target_user_id), limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            con.close()
+
+    def audit_analytics_user_read(self, *, actor_user_id, target_user_id, action):
+        con = self._connect()
+        try:
+            with con:
+                con.execute(
+                    """INSERT INTO site_analytics_audit
+                       (actor_user_id,target_user_id,action,created_at)
+                       VALUES (?,?,?,?)""",
+                    (int(actor_user_id), int(target_user_id), action, iso_now()),
+                )
+        finally:
+            con.close()
+
     @staticmethod
     def handles(path: str) -> bool:
         """Return whether a path belongs to this service (including callbacks)."""
@@ -1432,6 +1796,9 @@ class AccountService:
             or path == "/api/v1/tickets"
             or path.startswith("/api/v1/tickets/")
             or path.startswith("/api/v1/site-admin/")
+            or path in ("/api/v1/analytics/consent", "/api/v1/analytics/events",
+                        "/api/v1/analytics/admin/paths")
+            or re.fullmatch(r"/api/v1/analytics/admin/users/[0-9]+/(?:events|paths)", path)
             or path == "/api/v1/market/sector-config"
         )
 
@@ -1482,6 +1849,61 @@ class AccountService:
             return {"payload": {"logged_out": True},
                     "headers": {"Set-Cookie": self.clear_session_cookie(secure)}}
         self.require_user(user)
+        if path == "/api/v1/analytics/consent" and method == "GET":
+            return {"payload": {"consent": self.analytics_consent(user)}}
+        if path == "/api/v1/analytics/consent" and method == "PUT":
+            consent = self.set_analytics_consent(user, body.get("product_analytics"))
+            return {"payload": {"consent": consent}}
+        if path == "/api/v1/analytics/events" and method == "POST":
+            return {"payload": self.record_analytics_events(user, body.get("events"))}
+        if path == "/api/v1/analytics/admin/paths" and method == "GET":
+            self.require_role(user, ("admin", "super_admin"))
+            def query_int(name, default):
+                raw = (params.get(name) or [str(default)])[0]
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    raise AccountError(400, "پارامتر گزارش معتبر نیست.")
+            report = self._analytics_path_report(
+                days=query_int("days", 30),
+                max_steps=query_int("max_steps", 5),
+                min_repetitions=query_int("min_repetitions", 2),
+                limit=query_int("limit", 50),
+            )
+            return {"payload": report}
+        analytics_user_match = re.fullmatch(
+            r"/api/v1/analytics/admin/users/([0-9]+)/(events|paths)", path
+        )
+        if analytics_user_match and method == "GET":
+            self.require_role(user, ("super_admin",))
+            target_user_id = int(analytics_user_match.group(1))
+            kind = analytics_user_match.group(2)
+            def query_int(name, default):
+                raw = (params.get(name) or [str(default)])[0]
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    raise AccountError(400, "پارامتر گزارش معتبر نیست.")
+            self.audit_analytics_user_read(
+                actor_user_id=user["id"], target_user_id=target_user_id,
+                action="user_paths.read" if kind == "paths" else "user_events.read",
+            )
+            if kind == "paths":
+                report = self._analytics_path_report(
+                    days=query_int("days", 30),
+                    max_steps=query_int("max_steps", 5),
+                    min_repetitions=query_int("min_repetitions", 2),
+                    limit=query_int("limit", 50),
+                    target_user_id=target_user_id,
+                )
+                report["user_id"] = target_user_id
+                return {"payload": report}
+            return {"payload": {
+                "user_id": target_user_id,
+                "events": self.analytics_user_events(
+                    target_user_id=target_user_id, limit=query_int("limit", 100)
+                ),
+            }}
         if user.get("must_change_password") and path not in (
                 "/api/v1/auth/change-password", "/api/v1/auth/logout",
                 "/api/v1/auth/me"):
