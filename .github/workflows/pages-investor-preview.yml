@@ -68,12 +68,11 @@ jobs:
           const fs = require("fs");
           const parser = require("@babel/parser");
           const html = fs.readFileSync("docs/index.html", "utf8");
-          const marker = '<script type="text/babel">';
-          const start = html.indexOf(marker);
+          const start = html.indexOf('<script type="text/babel"');
           if (start < 0) throw new Error("Dashboard Babel script was not found");
-          const bodyStart = start + marker.length;
+          const bodyStart = html.indexOf(">", start) + 1;
           const end = html.indexOf("</script>", bodyStart);
-          if (end < 0) throw new Error("Dashboard Babel script was not closed");
+          if (bodyStart <= start || end < 0) throw new Error("Dashboard Babel script was not closed");
           parser.parse(html.slice(bodyStart, end), { sourceType: "script", plugins: ["jsx"] });
           console.log("Dashboard JSX syntax OK");
           NODE
