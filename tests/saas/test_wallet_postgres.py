@@ -8,7 +8,7 @@ import pytest
 from psycopg.rows import dict_row
 
 from saas_core.wallet.wallet_repository import (
-    get_wallet_balances, post_ledger_entry, request_withdrawal,
+    get_wallet_balances, post_ledger_entry, request_withdrawal, cancel_withdrawal,
     review_withdrawal, settle_withdrawal, spend_wallet,
 )
 from saas_core.wallet.referrals import (
