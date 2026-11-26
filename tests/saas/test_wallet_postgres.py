@@ -11,7 +11,7 @@ from saas_core.wallet.wallet_repository import (
     get_wallet_balances, post_ledger_entry, request_withdrawal,
     review_withdrawal, settle_withdrawal, spend_wallet,
 )
-from saas_core.wallet.referrals import ensure_referral_code, attach_referral
+from saas_core.wallet.referrals import (ensure_referral_code, attach_referral,\n    qualify_and_reward_referral)
 from saas_core.payments.repository import create_subscription_order, create_payment_attempt, attach_provider_checkout
 from saas_core.payments.domain import VerifiedPayment
 from saas_core.payments.settlement import settle_provider_callback
@@ -208,3 +208,200 @@ def test_referral_reward_policy_is_versioned_in_database(migrated_wallet_databas
             "SELECT amount_toman FROM referral_reward_policies WHERE active=TRUE"
         ).fetchone()
         assert row["amount_toman"]==100_000
+
+
+
+def make_pending_bank(conn,user_id):
+    bank_id=uuid4()
+    conn.execute(
+        """INSERT INTO wallet_bank_accounts
+           (id,user_id,bank_name,account_fingerprint,encrypted_account_token,
+            verification_status)
+           VALUES (%s,%s,'Pending Bank',%s,'encrypted-pending-token','pending')""",
+        (bank_id,user_id,uuid4().hex*2),
+    )
+    return bank_id
+
+
+def test_withdrawal_idempotency_returns_same_request_and_rejects_key_reuse(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        bank=make_verified_bank(conn,user)
+        credit(conn,user,"cash",300_000,f"cash-{uuid4()}")
+        key=f"withdraw-idem-{uuid4()}"
+        first=request_withdrawal(conn,user_id=user,amount_toman=100_000,
+                                 bank_account_id=bank,idempotency_key=key)
+        retry=request_withdrawal(conn,user_id=user,amount_toman=100_000,
+                                 bank_account_id=bank,idempotency_key=key)
+        assert retry["id"]==first["id"]
+        assert get_wallet_balances(conn,user).reserved_cash_toman==100_000
+        with pytest.raises(ValueError,match="different withdrawal data"):
+            request_withdrawal(conn,user_id=user,amount_toman=120_000,
+                               bank_account_id=bank,idempotency_key=key)
+
+
+def test_withdrawal_requires_verified_bank_account_owned_by_user(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        bank=make_pending_bank(conn,user)
+        credit(conn,user,"cash",300_000,f"cash-{uuid4()}")
+        with pytest.raises(PermissionError,match="verified bank account"):
+            request_withdrawal(conn,user_id=user,amount_toman=100_000,
+                               bank_account_id=bank,idempotency_key=f"pending-bank-{uuid4()}")
+        other=make_user(conn)
+        other_bank=make_verified_bank(conn,other)
+        with pytest.raises(PermissionError,match="verified bank account"):
+            request_withdrawal(conn,user_id=user,amount_toman=100_000,
+                               bank_account_id=other_bank,idempotency_key=f"foreign-bank-{uuid4()}")
+        assert get_wallet_balances(conn,user).reserved_cash_toman==0
+
+
+def test_cancelled_withdrawal_releases_reservation_exactly_once(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        bank=make_verified_bank(conn,user)
+        credit(conn,user,"cash",300_000,f"cash-{uuid4()}")
+        request=request_withdrawal(
+            conn,user_id=user,amount_toman=100_000,bank_account_id=bank,
+            idempotency_key=f"cancel-{uuid4()}",
+        )
+        assert get_wallet_balances(conn,user).withdrawable_toman==200_000
+        cancelled=cancel_withdrawal(conn,user_id=user,withdrawal_id=request["id"])
+        assert cancelled["status"]=="cancelled"
+        assert get_wallet_balances(conn,user).reserved_cash_toman==0
+        assert get_wallet_balances(conn,user).withdrawable_toman==300_000
+        assert cancel_withdrawal(conn,user_id=user,withdrawal_id=request["id"]) is None
+
+
+def test_rejected_withdrawal_releases_reservation_and_writes_audit(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        reviewer=make_user(conn)
+        bank=make_verified_bank(conn,user)
+        credit(conn,user,"cash",300_000,f"cash-{uuid4()}")
+        request=request_withdrawal(
+            conn,user_id=user,amount_toman=100_000,bank_account_id=bank,
+            idempotency_key=f"reject-{uuid4()}",
+        )
+        rejected=review_withdrawal(
+            conn,withdrawal_id=request["id"],reviewer_id=reviewer,
+            decision="rejected",review_note="Bank ownership could not be confirmed",
+        )
+        assert rejected["status"]=="rejected"
+        balances=get_wallet_balances(conn,user)
+        assert balances.reserved_cash_toman==0
+        assert balances.withdrawable_toman==300_000
+        assert conn.execute(
+            "SELECT count(*) AS n FROM admin_audit_logs WHERE action='wallet.withdrawal.rejected' AND target_id=%s",
+            (str(request["id"]),),
+        ).fetchone()["n"]==1
+
+
+def test_approved_withdrawal_cannot_be_cancelled_by_owner(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        reviewer=make_user(conn)
+        bank=make_verified_bank(conn,user)
+        credit(conn,user,"cash",300_000,f"cash-{uuid4()}")
+        request=request_withdrawal(
+            conn,user_id=user,amount_toman=100_000,bank_account_id=bank,
+            idempotency_key=f"approved-cancel-{uuid4()}",
+        )
+        review_withdrawal(
+            conn,withdrawal_id=request["id"],reviewer_id=reviewer,
+            decision="approved",review_note="Reviewed",
+        )
+        assert cancel_withdrawal(conn,user_id=user,withdrawal_id=request["id"]) is None
+        assert get_wallet_balances(conn,user).reserved_cash_toman==100_000
+
+
+def test_ledger_rejects_negative_balance_and_binds_idempotency_payload(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        key=f"ledger-key-{uuid4()}"
+        credit(conn,user,"cash",50_000,key)
+        with pytest.raises(ValueError,match="exceeds available bucket balance"):
+            post_ledger_entry(
+                conn,user_id=user,bucket="cash",entry_type="purchase_debit",
+                amount_toman=-50_001,idempotency_key=f"debit-{uuid4()}",
+            )
+        with pytest.raises(ValueError,match="different ledger data"):
+            post_ledger_entry(
+                conn,user_id=user,bucket="cash",entry_type="topup",
+                amount_toman=60_000,idempotency_key=key,
+            )
+        assert get_wallet_balances(conn,user).cash_toman==50_000
+
+
+def test_referral_requires_verified_phone_and_active_inviter(migrated_wallet_database):
+    with connect() as conn:
+        inviter=make_user(conn)
+        unverified=make_user(conn)
+        code=ensure_referral_code(conn,inviter)
+        conn.execute("UPDATE users SET phone_verified_at=NULL WHERE id=%s",(unverified,))
+        with pytest.raises(PermissionError,match="verified phone"):
+            attach_referral(conn,referred_user_id=unverified,code=code)
+        suspended_inviter=make_user(conn)
+        suspended_code=ensure_referral_code(conn,suspended_inviter)
+        conn.execute("UPDATE users SET status='suspended' WHERE id=%s",(suspended_inviter,))
+        referred=make_user(conn)
+        with pytest.raises(LookupError,match="referral code not found"):
+            attach_referral(conn,referred_user_id=referred,code=suspended_code)
+
+
+def test_referral_reward_uses_active_policy_and_replay_does_not_duplicate(migrated_wallet_database):
+    with connect() as conn:
+        inviter=make_user(conn)
+        referred=make_user(conn)
+        code=ensure_referral_code(conn,inviter)
+        attach_referral(conn,referred_user_id=referred,code=code)
+        conn.execute("UPDATE referral_reward_policies SET active=FALSE WHERE active=TRUE")
+        conn.execute(
+            "INSERT INTO referral_reward_policies(amount_toman,active) VALUES (75000,TRUE)"
+        )
+        order,result=make_paid_subscription(conn,referred)
+        assert result["already_processed"] is False
+        retry=qualify_and_reward_referral(
+            conn,referred_user_id=referred,payment_order_id=order["id"]
+        )
+        assert retry["already_processed"] is True
+        assert get_wallet_balances(conn,inviter).gift_toman==75_000
+        assert conn.execute(
+            "SELECT count(*) AS n FROM referral_rewards WHERE user_id=%s",(inviter,)
+        ).fetchone()["n"]==1
+        assert conn.execute(
+            "SELECT count(*) AS n FROM wallet_ledger_entries WHERE user_id=%s AND entry_type='referral_reward'",
+            (inviter,),
+        ).fetchone()["n"]==1
+
+
+def test_wallet_spend_concurrency_cannot_double_spend_cash(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        credit(conn,user,"cash",100_000,f"cash-{uuid4()}")
+
+    def spend_one(_):
+        try:
+            with connect() as local:
+                spend_wallet(
+                    local,user_id=user,amount_toman=70_000,idempotency_key=f"parallel-spend-{uuid4()}",
+                    reference_type="test",reference_id=uuid4(),
+                )
+                return "spent"
+        except ValueError:
+            return "insufficient"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes=list(pool.map(spend_one,range(2)))
+    assert sorted(outcomes)==["insufficient","spent"]
+    with connect() as conn:
+        assert get_wallet_balances(conn,user).cash_toman==30_000
+
+
+def test_referral_code_generation_is_stable_for_existing_user(migrated_wallet_database):
+    with connect() as conn:
+        user=make_user(conn)
+        first=ensure_referral_code(conn,user)
+        second=ensure_referral_code(conn,user)
+        assert first==second
+        assert 16 <= len(first) <= 24
