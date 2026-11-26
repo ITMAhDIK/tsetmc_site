@@ -88,6 +88,7 @@ def test_admin_ui_exposes_aggregate_and_superadmin_user_behavior_reports():
     assert "/api/v1/analytics/admin/paths" in html
     assert "/api/v1/analytics/admin/users/" in html
     assert "analyticsUserEvents" in html
+    assert "analyticsUsers.map" in html
     assert "تحلیل رفتار کاربران" in html
     assert "تاریخچهٔ رفتار یک کاربر" in html
 
