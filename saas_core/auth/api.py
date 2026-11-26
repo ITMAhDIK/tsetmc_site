@@ -21,6 +21,8 @@ from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
 from psycopg.conninfo import conninfo_to_dict
 
+from .mfa import matching_counter, new_totp_secret, provisioning_uri
+
 from .repository import (
     authenticate_session, consume_phone_otp, login_password,
     register_password_user, request_phone_otp, revoke_session, create_session,
@@ -88,6 +90,13 @@ def validate_production_configuration() -> None:
         raise ConfigurationError("SAAS_SUPERADMIN_PHONE_E164 must be a valid E.164 number") from exc
     if not fernet_key:
         raise ConfigurationError("SAAS_OUTBOX_FERNET_KEY is required in production")
+    admin_mfa_key = os.getenv("SAAS_ADMIN_MFA_FERNET_KEY", "")
+    if not admin_mfa_key or admin_mfa_key in {fernet_key, otp_secret}:
+        raise ConfigurationError("SAAS_ADMIN_MFA_FERNET_KEY must be a separate Fernet key")
+    try:
+        Fernet(admin_mfa_key.encode("ascii"))
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise ConfigurationError("SAAS_ADMIN_MFA_FERNET_KEY must be a valid Fernet key") from exc
     if otp_secret == fernet_key:
         raise ConfigurationError("OTP and outbox encryption secrets must be different")
     if not COOKIE_SECURE:
@@ -483,6 +492,152 @@ def me(user=Depends(current_user), conn=Depends(get_conn)):
         "mfa_enabled": user.get("mfa_enabled", False),
         "mfa_verified": user.get("mfa_verified_at") is not None,
     }}
+
+
+def _admin_mfa_cipher() -> Fernet:
+    key = os.getenv("SAAS_ADMIN_MFA_FERNET_KEY", "").strip()
+    if not key:
+        raise HTTPException(status_code=503, detail="privileged MFA encryption is not configured")
+    try:
+        return Fernet(key.encode("ascii"))
+    except (ValueError, UnicodeEncodeError):
+        raise HTTPException(status_code=503, detail="privileged MFA encryption is not configured") from None
+
+
+def _require_privileged_account(conn, user_id):
+    from .authorization import AuthorizationDenied, require_permission
+    try:
+        require_permission(conn, user_id, "superadmin.console.access")
+    except AuthorizationDenied:
+        raise HTTPException(status_code=403, detail="privileged account required") from None
+
+
+def require_admin_mfa(user=Depends(current_user), conn=Depends(get_conn)):
+    """Dependency applied to every privileged admin route."""
+    if user.get("mfa_verified_at") is None:
+        raise HTTPException(status_code=403, detail="recent MFA verification is required")
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT enabled_at FROM user_admin_mfa WHERE user_id=%s",
+            (user["id"],),
+        )
+        record = cur.fetchone()
+    if not record or record["enabled_at"] is None:
+        raise HTTPException(status_code=403, detail="privileged MFA enrollment is required")
+    return user
+
+
+@app.get("/auth/mfa/status")
+def mfa_status(user=Depends(current_user), conn=Depends(get_conn)):
+    _require_privileged_account(conn, user["id"])
+    with conn.cursor() as cur:
+        cur.execute("SELECT enabled_at FROM user_admin_mfa WHERE user_id=%s", (user["id"],))
+        row = cur.fetchone()
+    return {
+        "enabled": bool(row and row["enabled_at"] is not None),
+        "verified_for_session": user.get("mfa_verified_at") is not None,
+    }
+
+
+@app.post("/auth/mfa/setup")
+def mfa_setup(user=Depends(current_user), conn=Depends(get_conn)):
+    """Create a one-time enrollment secret; never returns an existing enabled secret."""
+    _require_privileged_account(conn, user["id"])
+    secret = new_totp_secret()
+    cipher = _admin_mfa_cipher()
+    encrypted = cipher.encrypt(secret.encode("ascii")).decode("ascii")
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("SELECT enabled_at FROM user_admin_mfa WHERE user_id=%s FOR UPDATE", (user["id"],))
+            existing = cur.fetchone()
+            if existing and existing["enabled_at"] is not None:
+                raise HTTPException(status_code=409, detail="MFA is already enabled; use the verified recovery process to reset it")
+            cur.execute(
+                """INSERT INTO user_admin_mfa(user_id,encrypted_secret,enabled_at,last_verified_counter,updated_at)
+                   VALUES (%s,%s,NULL,NULL,now())
+                   ON CONFLICT(user_id) DO UPDATE
+                     SET encrypted_secret=EXCLUDED.encrypted_secret,enabled_at=NULL,
+                         last_verified_counter=NULL,updated_at=now()""",
+                (user["id"], encrypted),
+            )
+    account = user.get("phone_e164") or user.get("username") or str(user["id"])
+    return {
+        "secret": secret,
+        "otpauth_uri": provisioning_uri(secret, account=account),
+        "issuer": "Tloomberg",
+        "period_seconds": 30,
+        "digits": 6,
+    }
+
+
+class MfaCodeBody(BaseModel):
+    code: str = Field(pattern="^[0-9]{6}$")
+
+
+def _load_pending_mfa_secret(conn, user_id, *, require_enabled: bool):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT encrypted_secret,enabled_at,last_verified_counter FROM user_admin_mfa WHERE user_id=%s FOR UPDATE",
+            (user_id,),
+        )
+        row = cur.fetchone()
+    if not row or (require_enabled and row["enabled_at"] is None) or (not require_enabled and row["enabled_at"] is not None):
+        raise HTTPException(status_code=409, detail="MFA setup state is invalid")
+    try:
+        secret = _admin_mfa_cipher().decrypt(row["encrypted_secret"].encode("ascii")).decode("ascii")
+    except Exception:
+        raise HTTPException(status_code=503, detail="privileged MFA secret cannot be decrypted") from None
+    return secret, row
+
+
+def _consume_mfa_counter(conn, user, code: str, secret: str, previous_counter):
+    import time as _time
+    counter = matching_counter(secret, code, at_time=_time.time(), window=1)
+    if counter is None:
+        raise HTTPException(status_code=401, detail="invalid or expired MFA code")
+    if previous_counter is not None and counter <= int(previous_counter):
+        raise HTTPException(status_code=409, detail="MFA code has already been used")
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE user_admin_mfa
+               SET last_verified_counter=%s,updated_at=now()
+               WHERE user_id=%s AND (last_verified_counter IS NULL OR last_verified_counter < %s)
+               RETURNING user_id""",
+            (counter, user["id"], counter),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=409, detail="MFA code has already been used")
+        cur.execute(
+            """UPDATE sessions SET mfa_verified_at=now()
+               WHERE id=%s AND user_id=%s AND revoked_at IS NULL AND expires_at>now()
+               RETURNING id""",
+            (user["session_id"], user["id"]),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=401, detail="session is no longer active")
+
+
+@app.post("/auth/mfa/confirm")
+def mfa_confirm(body: MfaCodeBody, user=Depends(current_user), conn=Depends(get_conn)):
+    _require_privileged_account(conn, user["id"])
+    with conn.transaction():
+        secret, row = _load_pending_mfa_secret(conn, user["id"], require_enabled=False)
+        _consume_mfa_counter(conn, user, body.code, secret, row["last_verified_counter"])
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE user_admin_mfa SET enabled_at=now(),updated_at=now() WHERE user_id=%s",
+                (user["id"],),
+            )
+    return {"enabled": True, "verified_for_session": True}
+
+
+@app.post("/auth/mfa/verify")
+def mfa_verify(body: MfaCodeBody, user=Depends(current_user), conn=Depends(get_conn)):
+    _require_privileged_account(conn, user["id"])
+    with conn.transaction():
+        secret, row = _load_pending_mfa_secret(conn, user["id"], require_enabled=True)
+        _consume_mfa_counter(conn, user, body.code, secret, row["last_verified_counter"])
+    return {"verified": True, "verified_at": "session-bound"}
 
 
 @app.post("/auth/logout")
