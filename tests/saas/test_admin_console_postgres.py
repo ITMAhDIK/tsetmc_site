@@ -177,3 +177,66 @@ def test_admin_console_services_enforce_permissions_without_api(migrated_admin_d
         with pytest.raises(AuthorizationDenied):
             adjust_wallet(conn,actor_id=ordinary,user_id=ordinary,bucket="cash",
                           amount_toman=1000,reason="no",idempotency_key="direct-call-denied")
+
+
+
+def test_console_cannot_reactivate_deleted_or_pending_accounts(migrated_admin_database):
+    from saas_core.auth.api import app,get_conn
+    with connect() as conn:
+        root=make_user(conn,"rootstate")
+        deleted=make_user(conn,"deleted")
+        pending=make_user(conn,"pending")
+        grant(conn,root,"superadmin")
+        conn.execute("UPDATE users SET status='deleted' WHERE id=%s",(deleted,))
+        conn.execute("UPDATE users SET status='pending' WHERE id=%s",(pending,))
+        headers=session(conn,root)
+        conn.commit()
+        def database_connection():
+            yield conn
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                for target in (deleted,pending):
+                    response=client.patch(f"/admin/console/users/{target}/status",headers=headers,
+                        json={"status":"active","reason":"attempted console reactivation"})
+                    assert response.status_code==422
+                assert conn.execute("SELECT status FROM users WHERE id=%s",(deleted,)).fetchone()["status"]=="deleted"
+                assert conn.execute("SELECT status FROM users WHERE id=%s",(pending,)).fetchone()["status"]=="pending"
+        finally:
+            app.dependency_overrides.pop(get_conn,None)
+
+
+def test_wallet_adjustment_requires_strict_integer_and_exact_idempotent_payload(migrated_admin_database):
+    from saas_core.auth.api import app,get_conn
+    with connect() as conn:
+        root=make_user(conn,"rootmoney"); customer=make_user(conn,"moneycustomer")
+        grant(conn,root,"superadmin")
+        conn.execute("INSERT INTO wallet_accounts(user_id) VALUES (%s)",(customer,))
+        headers=session(conn,root)
+        conn.commit()
+        def database_connection():
+            yield conn
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                base=f"/admin/console/wallets/{customer}/adjust"
+                for value in (True,1.5,"1000"):
+                    response=client.post(base,headers=headers,json={
+                        "bucket":"cash","amount_toman":value,"reason":"strict amount",
+                        "idempotency_key":f"strict-{uuid4()}"})
+                    assert response.status_code==422
+                key=f"wallet-payload-{uuid4()}"
+                payload={"bucket":"gift","amount_toman":1000,"reason":"initial approved reason","idempotency_key":key}
+                first=client.post(base,headers=headers,json=payload)
+                assert first.status_code==200
+                changed_reason={**payload,"reason":"different reason"}
+                conflict=client.post(base,headers=headers,json=changed_reason)
+                assert conflict.status_code==422
+                assert conn.execute("SELECT count(*) AS n FROM wallet_ledger_entries WHERE idempotency_key=%s",
+                    (key,)).fetchone()["n"]==1
+                assert conn.execute("SELECT description FROM wallet_ledger_entries WHERE idempotency_key=%s",
+                    (key,)).fetchone()["description"]=="initial approved reason"
+                blank_key={**payload,"idempotency_key":"        "}
+                assert client.post(base,headers=headers,json=blank_key).status_code==422
+        finally:
+            app.dependency_overrides.pop(get_conn,None)
