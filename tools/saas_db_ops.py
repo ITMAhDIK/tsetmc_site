@@ -80,7 +80,17 @@ def _run(command, *, env=None, runner=None):
         command, env=env, check=False, capture_output=True, text=True
     )
     if result.returncode != 0:
-        raise SaasDbOpsError("%s failed with exit code %s." % (Path(command[0]).name, result.returncode))
+        detail = (result.stderr or result.stdout or "").strip()
+        for key in ("PGPASSWORD", "PGUSER", "PGHOST"):
+            secret = str((env or {}).get(key, ""))
+            if secret:
+                detail = detail.replace(secret, "[redacted]")
+        detail = " ".join(detail.splitlines()[-4:])[:800]
+        suffix = (": " + detail) if detail else ""
+        raise SaasDbOpsError(
+            "%s failed with exit code %s%s"
+            % (Path(command[0]).name, result.returncode, suffix)
+        )
     return result
 
 
