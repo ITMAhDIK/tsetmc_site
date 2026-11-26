@@ -116,7 +116,7 @@ jobs:
               raise SystemExit("The owner phone must not appear in public source")
           page_source = Path("docs/index.html").read_text(encoding="utf-8")
           auth_source = auth
-          expected_logo = 'https://raw.githubusercontent.com/ITMAhDIK/tsetmc_site/main/width_447.webp'
+          expected_logo = 'https://raw.githubusercontent.com/ITMAhDIK/tsetmc_site/main/LegoV3.png'
           if f'src="{expected_logo}"' not in page_source:
               raise SystemExit("Main dashboard is not using the site_main_lego_2 image")
           if f'src="{expected_logo}"' not in auth_source:
