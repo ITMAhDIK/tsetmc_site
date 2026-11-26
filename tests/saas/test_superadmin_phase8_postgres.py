@@ -1,5 +1,6 @@
 """PostgreSQL/API integration coverage for the Phase 8 superadmin console."""
 import os
+import time
 from uuid import uuid4
 
 import psycopg
@@ -22,7 +23,10 @@ def phase8_schema():
         with psycopg.connect(DSN,options=f"-c search_path={schema},public",row_factory=dict_row) as conn:
             for name in ("001_initial.sql","002_payment_lifecycle.sql",
                          "003_wallet_referrals.sql","004_support_indexes.sql",
-                         "005_product_analytics.sql","006_superadmin_console.sql"):
+                         "005_product_analytics.sql","006_superadmin_console.sql",
+                         "007_immutable_admin_audit.sql","008_analytics_path_sequences.sql",
+                         "009_analytics_event_order.sql","010_sms_outbox_worker.sql",
+                         "011_privileged_mfa_and_legal_acceptance.sql"):
                 with open(os.path.join(root,"saas_core","schema",name),encoding="utf-8") as stream:
                     conn.execute(stream.read())
         yield schema
@@ -57,8 +61,10 @@ def auth_headers(conn,user_id):
 
 
 @pytest.fixture
-def admin_context(phase8_schema):
+def admin_context(phase8_schema, monkeypatch):
     from saas_core.auth.api import app,get_conn
+    from saas_core.auth.mfa import totp_code
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     conn=connect(phase8_schema)
     root=make_user(conn,"root")
     admin=make_user(conn,"admin")
@@ -76,6 +82,11 @@ def admin_context(phase8_schema):
     app.dependency_overrides[get_conn]=database_connection
     try:
         with TestClient(app) as client:
+            setup=client.post("/auth/mfa/setup",headers=root_headers)
+            assert setup.status_code==200,setup.text
+            confirmed=client.post("/auth/mfa/confirm",headers=root_headers,
+                json={"code":totp_code(setup.json()["secret"])})
+            assert confirmed.status_code==200,confirmed.text
             yield {"conn":conn,"client":client,"root":root,"admin":admin,"customer":customer,
                    "root_headers":root_headers,"admin_headers":admin_headers,
                    "customer_headers":customer_headers}
