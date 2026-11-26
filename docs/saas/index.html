@@ -193,6 +193,14 @@
       function requireApi() {
         if (!API_BASE) throw new Error('API احراز هویت متصل نیست.');
       }
+      function setDemoMenuCookie(role) {
+        if (!DEMO_OTP_MODE) return;
+        const safeRole = role === 'superadmin' ? 'superadmin' : 'user';
+        document.cookie = 'tloomberg_demo_menu=' + safeRole + '; Path=/; Max-Age=43200; SameSite=Lax; Secure';
+      }
+      function clearDemoMenuCookie() {
+        document.cookie = 'tloomberg_demo_menu=; Path=/; Max-Age=0; SameSite=Lax; Secure';
+      }
       async function isDemoSuperadmin(phone) {
         if (!window.crypto?.subtle || !window.TextEncoder) return false;
         const bytes = new TextEncoder().encode(normalizePhone(phone));
@@ -216,6 +224,7 @@
       }
       function renderAccount(data) {
         const role = String(data.role || data.user?.role || 'user').toLowerCase();
+        if (data.demo) setDemoMenuCookie(role);
         const allowedRoles = ['superadmin','admin','support','user'];
         if (!allowedRoles.includes(role)) throw new Error('نقش دریافتی از سرور معتبر نیست.');
         $('loginView').style.display = 'none';
@@ -299,6 +308,7 @@
           try { await request('/api/v1/auth/logout', {}); }
           catch (error) { setStatus(error.message, 'error', $('accountStatus')); return; }
         }
+        clearDemoMenuCookie();
         $('accountView').classList.remove('show');
         $('loginView').style.display = '';
         $('phone').value = '';
