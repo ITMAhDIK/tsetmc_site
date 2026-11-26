@@ -92,7 +92,7 @@ Events can be associated with a user UUID after sign-in or pseudonymous anonymou
 
 Recommended starting retention for raw event-level data is 12 months, followed by deletion or irreversible aggregation. The final privacy notice must state the actual retention period. Restrict event-level access to authorized analytics administrators and record administrative access in audit logs.
 
-The initial schema already has analytics_events with user/anonymous/session identifiers, page, component, event name, scroll depth and active duration. analytics_consents stores the current choice. Migration 002 adds consent history and event indexes. A production event collector and ingestion endpoint are still required; no site-wide analytics events are collected by the current static Pages build.
+The initial schema has analytics_events and authenticated analytics_consents. Migration 002 adds consent history and event indexes; migration 003 adds current anonymous consent and event-ID idempotency. The implemented \`saas_core.domain.product_analytics.ProductAnalyticsService\` provides consent-gated ingestion, event validation, component-level engagement aggregation, ordered funnels, weekly cohort retention, audited user-level access and configurable event retention. A production HTTP adapter, browser collector and consent UI are still required; no site-wide analytics events are collected by the current static Pages build.
 
 ## 10. Right-side account menu
 

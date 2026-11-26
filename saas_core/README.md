@@ -42,3 +42,5 @@ sandbox verification and dedicated service implementations.
 - The free plan currently includes only the basic market overview and basic stock page; charts and advanced analysis belong to the two paid plans.
 - Market-data administration is a staff permission, not a subscription feature.
 - The menu and checkout are frontend previews. SMS, Google sign-in, live payments, tickets and analytics collection need a deployed API.
+
+\n## Product analytics\n\nApply migration 003 after migrations 001 and 002 to the dedicated SaaS PostgreSQL database. The product analytics service requires explicit opt-in, a trusted server-side identity boundary and the \`analytics.read\` permission for reporting. It supports aggregated component engagement, ordered funnels, weekly cohort retention, audited user-level access and configurable event retention. See \`docs/saas/PRODUCT-ANALYTICS.md\`.\n\nThe service layer is implemented, but the public HTTP adapter, browser collector, consent UI and production deployment are not. Keep collection disabled until those pieces and the published privacy notice are ready.\n

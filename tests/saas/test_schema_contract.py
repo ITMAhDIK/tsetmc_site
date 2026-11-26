@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INITIAL = (ROOT / "saas_core" / "schema" / "001_initial.sql").read_text(encoding="utf-8")
-MIGRATION = (ROOT / "saas_core" / "schema" / "002_product_features_referrals_analytics.sql").read_text(encoding="utf-8")
+MIGRATION = (ROOT / "saas_core" / "schema" / "002_product_features_referrals_analytics.sql").read_text(encoding="utf-8")\nMIGRATION_003 = (ROOT / "saas_core" / "schema" / "003_product_analytics_ingestion.sql").read_text(encoding="utf-8")
 README = (ROOT / "saas_core" / "README.md").read_text(encoding="utf-8")
 
 
@@ -50,3 +50,10 @@ def test_free_plan_cannot_access_graphs_and_paid_plans_receive_customer_features
     assert "'shareholders.graphs'" in MIGRATION
     assert "Market Data Manager" in MIGRATION
     assert "market.admin" in MIGRATION
+
+
+def test_analytics_ingestion_schema_supports_anonymous_consent_and_idempotency():
+    assert "CREATE TABLE IF NOT EXISTS analytics_anonymous_consents" in MIGRATION_003
+    assert "ADD COLUMN IF NOT EXISTS event_id UUID" in MIGRATION_003
+    assert "idx_analytics_events_event_id_unique" in MIGRATION_003
+    assert "WHERE event_id IS NOT NULL" in MIGRATION_003
