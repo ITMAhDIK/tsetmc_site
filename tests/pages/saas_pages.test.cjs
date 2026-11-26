@@ -23,7 +23,7 @@ test('login and admin pages contain valid inline JavaScript', () => {
 test('browser auth uses same-origin API and never falls back to demo authentication', () => {
   const html = read('docs/saas/index.html');
   assert.match(html, /name="tloomberg-auth-api" content="same-origin"/);
-  assert.match(html, /API_BASE_SETTING === 'same-origin' \? window\.location\.origin/);
+  assert.match(html, /window\.location\.hostname\.endsWith\('\.github\.io'\) \? '' : window\.location\.origin/);
   assert.match(html, /const DEMO_OTP_MODE = false/);
   assert.doesNotMatch(html, /const DEMO_OTP_MODE = true/);
   assert.match(html, /maxlength="6"/);
@@ -36,7 +36,7 @@ test('browser auth uses same-origin API and never falls back to demo authenticat
 test('admin console is same-origin, MFA-first and points to real API route families', () => {
   const html = read('docs/saas/admin.html');
   assert.match(html, /name="tloomberg-admin-api" content="same-origin"/);
-  assert.match(html, /API_BASE_SETTING === 'same-origin' \? window\.location\.origin/);
+  assert.match(html, /window\.location\.hostname\.endsWith\('\.github\.io'\) \? '' : window\.location\.origin/);
   assert.match(html, /\/auth\/mfa\/setup/);
   assert.match(html, /\/auth\/mfa\/confirm/);
   assert.match(html, /\/auth\/mfa\/verify/);
