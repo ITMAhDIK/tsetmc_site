@@ -1,6 +1,7 @@
 """FastAPI authentication API; deploy separately from GitHub Pages."""
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
 from psycopg.conninfo import conninfo_to_dict
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Histogram, REGISTRY, generate_latest, multiprocess
 
 from .mfa import matching_counter, new_totp_secret, provisioning_uri
 
@@ -44,6 +46,17 @@ _SAFE_REQUEST_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 _DB_POOL: ConnectionPool | None = None
 _ACCESS_LOG = logging.getLogger("tloomberg.saas.access")
 _ACCESS_LOG.setLevel(logging.INFO)
+_HTTP_REQUESTS = Counter(
+    "saas_http_requests_total",
+    "HTTP requests grouped by method, route template and status code.",
+    ("method", "route", "status"),
+)
+_HTTP_REQUEST_DURATION = Histogram(
+    "saas_http_request_duration_seconds",
+    "HTTP request duration grouped by method and route template.",
+    ("method", "route"),
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
+)
 _REQUIRED_SCHEMA_TABLES = (
     "users", "sessions", "roles", "permissions", "role_permissions",
     "plans", "subscriptions", "payment_orders", "payment_attempts",
@@ -91,6 +104,13 @@ def validate_production_configuration() -> None:
         raise ConfigurationError("SAAS_SUPERADMIN_PHONE_E164 must be a valid E.164 number") from exc
     if not fernet_key:
         raise ConfigurationError("SAAS_OUTBOX_FERNET_KEY is required in production")
+    metrics_token = os.getenv("SAAS_METRICS_TOKEN", "").strip()
+    if len(metrics_token) < 32:
+        raise ConfigurationError("SAAS_METRICS_TOKEN must contain at least 32 characters")
+    metrics_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR", "").strip()
+    if not metrics_dir:
+        raise ConfigurationError("PROMETHEUS_MULTIPROC_DIR must be configured for multi-worker metrics")
+
     admin_mfa_key = os.getenv("SAAS_ADMIN_MFA_FERNET_KEY", "")
     if not admin_mfa_key or admin_mfa_key in {fernet_key, otp_secret}:
         raise ConfigurationError("SAAS_ADMIN_MFA_FERNET_KEY must be a separate Fernet key")
@@ -222,6 +242,17 @@ async def add_security_headers(request: Request, call_next):
             "status_code": response.status_code if response is not None else 500,
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
         }
+        duration_seconds = max(0.0, time.perf_counter() - started)
+        try:
+            _HTTP_REQUESTS.labels(
+                request.method, route_template, str(record["status_code"])
+            ).inc()
+            _HTTP_REQUEST_DURATION.labels(
+                request.method, route_template
+            ).observe(duration_seconds)
+        except Exception:
+            # Metrics must never turn a completed business response into a 500.
+            pass
         log_line = json.dumps(record, separators=(",", ":"), ensure_ascii=True)
         if response is not None and response.status_code < 500:
             _ACCESS_LOG.info(log_line)
@@ -348,6 +379,29 @@ def current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required")
     return user
+
+
+@app.get("/internal/metrics")
+def internal_metrics(request: Request):
+    """Private Prometheus scrape endpoint; Caddy intentionally does not proxy it."""
+    expected = os.getenv("SAAS_METRICS_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(status_code=404, detail="not found")
+    supplied_header = request.headers.get("Authorization", "")
+    supplied = supplied_header[7:].strip() if supplied_header.startswith("Bearer ") else ""
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="metrics authorization required")
+    multiprocess_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR", "").strip()
+    if multiprocess_dir:
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+    else:
+        registry = REGISTRY
+    return Response(
+        content=generate_latest(registry),
+        media_type=CONTENT_TYPE_LATEST,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/health")
