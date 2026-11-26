@@ -193,6 +193,10 @@ def test_analytics_api_uses_phase_two_sessions_for_consent_reports_and_self_dele
                     "event_name":"page_view","page_path":"/pricing",
                     "occurred_at":datetime.now(timezone.utc).isoformat(),"metadata":{},
                 }
+                ordinary_payload={**event_payload,"event_id":str(uuid4()),"page_path":"/other-account"}
+                assert client.delete("/analytics/data",headers={}).status_code==401
+                assert client.put("/analytics/consent",headers=ordinary_headers,json={"product_analytics":True}).status_code==200
+                assert client.post("/analytics/events",headers=ordinary_headers,json={"events":[ordinary_payload]}).status_code==202
                 assert client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload]}).status_code==403
                 consent=client.put("/analytics/consent",headers=owner_headers,json={"product_analytics":True})
                 assert consent.status_code==200
@@ -223,6 +227,7 @@ def test_analytics_api_uses_phase_two_sessions_for_consent_reports_and_self_dele
                 assert deleted.json()=={"deleted_events":1,"product_analytics":False}
                 assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(owner,)).fetchone()["n"]==0
                 assert conn.execute("SELECT product_analytics FROM analytics_consents WHERE user_id=%s",(owner,)).fetchone()["product_analytics"] is False
+                assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(ordinary,)).fetchone()["n"]==1
                 assert conn.execute("SELECT count(*) AS n FROM analytics_consent_history WHERE user_id=%s",(owner,)).fetchone()["n"]==2
                 assert client.post("/analytics/events",headers=owner_headers,json={"events":[event_payload]}).status_code==403
         finally:

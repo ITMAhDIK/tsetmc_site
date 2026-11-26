@@ -4,7 +4,7 @@
 - Product analytics is opt-in per authenticated account; essential account operation is not disabled by refusal.
 - Consent state changes are recorded in an append-only history with the accepted policy version; repeating the same choice does not create a duplicate history record.
 - Revoking consent blocks subsequent ingestion. Consent changes and ingestion serialize on the account row, and each event stores the consent version active at ingestion time.
-- Existing events are retained after revocation for now; deletion/retention policy requires a separate product/legal decision.
+- Revocation blocks future ingestion. The authenticated `DELETE /analytics/data` endpoint additionally revokes consent and deletes all product-event rows for the requesting account in one transaction. The append-only consent history remains as a minimal record of the user's choices.
 - Event ingestion accepts bounded batches, server-binds the user identity, and uses a client event UUID for retry idempotency.
 - Only allow-listed event names and metadata keys are accepted. Raw form values, passwords, OTPs, payment details, ticket content, query strings, fragments, email/phone values and arbitrary payloads are not accepted.
 - Events include page view, click, navigation, scroll depth, active duration and explicit funnel steps. Session IDs are client-generated correlation IDs, scoped to the authenticated user in storage.
@@ -17,6 +17,7 @@
 
 ## API
 - PUT /analytics/consent
+- DELETE /analytics/data (self-service event deletion and consent revocation)
 - POST /analytics/events
 - GET /analytics/admin/overview
 - GET /analytics/admin/funnels
@@ -26,4 +27,5 @@
 ## Boundaries and follow-up
 - Migration 005_analytics.sql is re-runnable and only alters the isolated SaaS database.
 - No market-data DB, collector, public market API or static GitHub Pages data is touched.
-- Frontend consent UI and instrumentation are not yet wired. Data export/deletion, event retention/partitioning, anonymized visitor analytics, and legal/privacy review remain before production use.
+- Self-service deletion is implemented and tested; it deletes only the authenticated account's events and leaves other accounts untouched. Consent history is retained.
+- Frontend consent UI and instrumentation are not yet wired. An automatic event-retention period/partitioning schedule is intentionally not guessed; it needs an explicit product-owner and privacy/legal decision. Data export and legal/privacy review remain before production use.

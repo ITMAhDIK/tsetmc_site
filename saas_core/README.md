@@ -54,5 +54,5 @@ sandbox verification and dedicated service implementations.
 - analytics/service.py implements opt-in consent, allow-listed event ingestion and aggregate reports.
 - analytics/api.py exposes authenticated ingestion and permission-gated aggregate/user-level analytics.
 - Migration schema/005_analytics.sql adds event idempotency and analytics permissions; it is re-runnable.
-- Product analytics is off until the account explicitly opts in; consent changes are kept in an append-only history and each event records the consent version. User-level analysis requires analytics.users.read and is audited.
+- Product analytics is off until the account explicitly opts in; consent changes are kept in an append-only history and each event records the consent version. User-level analysis requires analytics.users.read and is audited. Authenticated users can call DELETE /analytics/data to revoke consent and erase their own event rows atomically; the consent audit history remains.
 - Raw form values, secrets, payment data and support-ticket content are not accepted as event payloads.

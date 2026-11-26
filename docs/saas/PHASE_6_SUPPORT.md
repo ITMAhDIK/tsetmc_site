@@ -48,3 +48,9 @@
 - Assignment authorization is enforced both at the API boundary and inside the service; the actor and assignee must both have tickets.manage, and the assignee must be active.
 - Support references the shared SaaS user and permission model from Phases 1–2. It intentionally does not couple ticket operations to Phase 3 profile fields, Phase 4 payment settlement, or Phase 5 wallet/referral ledgers. Those domains remain separate; a ticket may discuss them but support never reads or mutates their records.
 - The API maps invalid internal-note text to a client validation response rather than leaking an unhandled server error.
+
+
+## Additional regression coverage
+- Staff queue and staff-detail reads enforce `tickets.manage` inside the service layer as well as at the API boundary.
+- An end-to-end API test now covers a real user creating and replying to a ticket, another account receiving 404, a support agent assigning/replying/adding a private note/closing, FAQ publication by an authorized admin, and rejection after the staff session is revoked.
+- Internal notes are asserted absent from the owner's serialized response; the same staff view can see them.
