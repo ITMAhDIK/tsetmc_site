@@ -8,6 +8,7 @@ on:
     paths:
       - "docs/**"
       - "server.py"
+      - "ai_studio_code.html"
       - "tests/test_screener_export_xlsx.py"
       - "saas_core/**"
       - "tests/saas/**"
@@ -113,6 +114,9 @@ jobs:
           script = scripts[0]
           if "+989306311461" in auth:
               raise SystemExit("The owner phone must not appear in public source")
+          for old_logo in ("width_447.webp", "tloomberg.webp"):
+              if old_logo in auth or old_logo in Path("docs/index.html").read_text(encoding="utf-8"):
+                  raise SystemExit(f"Old logo reference remains: {old_logo}")
           if "DEMO_OTP_MODE = !API_BASE" not in script or 'maxlength="4"' not in auth:
               raise SystemExit("Four-digit no-SMS demo mode is not configured")
           if "setDemoMenuCookie(role)" not in script or "tloomberg_demo_menu=" not in script:
