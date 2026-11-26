@@ -65,3 +65,5 @@ sandbox verification and dedicated service implementations.
 - Role assignment cannot grant or modify superadmin; that role is provisioned out of band. Suspending an account revokes its active sessions.
 - Wallet adjustments are integer Toman, append-only, idempotent and audited. They do not initiate external transfers.
 - The authenticated browser UI and production security gates are not yet enabled.
+
+- The same-origin browser console is available at `GET /admin/console/ui`; cookie-authenticated write actions require a matching Origin (set `SAAS_PUBLIC_ORIGIN` behind a reverse proxy).

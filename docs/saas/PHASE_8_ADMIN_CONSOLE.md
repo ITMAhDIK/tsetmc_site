@@ -32,4 +32,4 @@ The authenticated administrative API is mounted under `/admin/console` and share
 ## Validation and remaining work
 PostgreSQL integration tests cover role separation, user suspension/session revocation, sensitive-field exclusion, role-provisioning restrictions, cross-domain views, reconciliation and wallet adjustment idempotency/sign constraints.
 
-The browser UI is not yet enabled. Before enabling mutation controls in a browser, add CSRF/Origin protections and complete the Phase 9 security review. No live payment, bank transfer, payout or production deployment is performed by this phase.
+The browser console is served from the authenticated SaaS API at `GET /admin/console/ui` (same origin only). Cookie-authenticated mutations require a matching Origin; configure `SAAS_PUBLIC_ORIGIN` behind a reverse proxy. The UI uses same-origin API calls and never receives the HttpOnly session token. No live payment, bank transfer, payout or production deployment is performed by this phase.
