@@ -70,6 +70,7 @@ def db(verify_disposable_saas_database):
     # Truncate user-owned application data between tests. Reference tables
     # (roles, permissions and plans) and their seeded rows remain in place.
     conn.execute("TRUNCATE TABLE users CASCADE")
+    conn.execute("TRUNCATE TABLE phone_verifications")
     conn.commit()
     try:
         yield conn
@@ -483,11 +484,12 @@ def test_otp_request_ceiling_is_serialized_under_concurrent_requests(db, monkeyp
             (phone,),
         )
         assert cur.fetchone()["total"] == 3
+        phone_tag = hashlib.sha256(phone.encode("utf-8")).hexdigest()[:20]
         cur.execute(
             """SELECT COUNT(*) AS total FROM notification_outbox
                WHERE channel='sms' AND template_code='phone_otp'
                  AND idempotency_key LIKE %s""",
-            (f"otp:{phone}:login:%",),
+            (f"otp:{phone_tag}:login:%",),
         )
         assert cur.fetchone()["total"] == 3
 
@@ -840,3 +842,87 @@ def test_aggregate_repeated_paths_are_suppressed_below_minimum_cohort(db, client
     assert response.status_code == 200
     assert response.json()["suppressed"] is True
     assert response.json()["paths"] == []
+
+
+def test_phone_otp_delivery_creates_standard_account_and_bootstraps_only_configured_superadmin(
+    db, client, monkeypatch
+):
+    from cryptography.fernet import Fernet
+    from saas_core.auth import repository as auth_repository
+    from saas_core.notifications import dispatch_sms_batch
+
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase10-phone-otp-secret-" + "x" * 32)
+    encryption_key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", encryption_key)
+
+    superadmin_phone = "+989000000001"
+    standard_phone = "+989000000002"
+    monkeypatch.setenv("SAAS_SUPERADMIN_PHONE_E164", superadmin_phone)
+    monkeypatch.setattr(auth_repository, "new_otp", lambda: "135790")
+
+    auth_repository.request_phone_otp(db, superadmin_phone, "login")
+    auth_repository.request_phone_otp(db, standard_phone, "login")
+
+    class RecordingSmsSender:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, receptor, message):
+            self.sent.append((receptor, message))
+
+    sender = RecordingSmsSender()
+    result = dispatch_sms_batch(db, sender=sender, encryption_key=encryption_key, batch_size=10)
+    assert result == {"claimed": 2, "delivered": 2, "deferred": 0, "failed": 0}
+    assert {item[0] for item in sender.sent} == {superadmin_phone, standard_phone}
+    assert all("135790" in item[1] for item in sender.sent)
+
+    superadmin_token, _ = auth_repository.consume_phone_otp(
+        db, superadmin_phone, "135790", "login"
+    )
+    standard_token, _ = auth_repository.consume_phone_otp(
+        db, standard_phone, "135790", "login"
+    )
+
+    superadmin_me = client.get("/auth/me", headers=_auth(superadmin_token))
+    standard_me = client.get("/auth/me", headers=_auth(standard_token))
+    assert superadmin_me.status_code == 200
+    assert standard_me.status_code == 200
+    assert superadmin_me.json()["user"]["is_superadmin"] is True
+    assert "superadmin" in superadmin_me.json()["user"]["roles"]
+    assert standard_me.json()["user"]["is_superadmin"] is False
+    assert standard_me.json()["user"]["roles"] == ["user"]
+
+    assert client.get("/admin/dashboard", headers=_auth(superadmin_token)).status_code == 200
+    assert client.get("/admin/dashboard", headers=_auth(standard_token)).status_code == 403
+
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT COUNT(*) AS total FROM admin_audit_logs
+               WHERE action='auth.bootstrap_superadmin.granted'
+                 AND target_id=%s""",
+            (superadmin_me.json()["user"]["id"],),
+        )
+        assert cur.fetchone()["total"] == 1
+
+
+def test_unconfigured_superadmin_phone_never_grants_elevated_role(db, monkeypatch):
+    from cryptography.fernet import Fernet
+    from saas_core.auth import repository as auth_repository
+
+    monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase10-unconfigured-otp-secret-" + "x" * 32)
+    monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.delenv("SAAS_SUPERADMIN_PHONE_E164", raising=False)
+    monkeypatch.setattr(auth_repository, "new_otp", lambda: "246802")
+    phone = "+989000000003"
+
+    auth_repository.request_phone_otp(db, phone, "login")
+    token, _ = auth_repository.consume_phone_otp(db, phone, "246802", "login")
+    assert token
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT array_agg(r.code ORDER BY r.code) AS roles
+               FROM users u JOIN user_roles ur ON ur.user_id=u.id
+               JOIN roles r ON r.id=ur.role_id WHERE u.phone_e164=%s""",
+            (phone,),
+        )
+        assert cur.fetchone()["roles"] == ["user"]
