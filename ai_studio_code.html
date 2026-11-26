@@ -3718,17 +3718,19 @@
           </header>
           <main className="app-main flex-1">
             {authLoading&&<div className="px-4 py-2 text-center text-[10px] text-[var(--text-muted)]">در حال بررسی نشست کاربری...</div>}
-            {page==='market'&&<><MarketSectorGroupsPanel currency={currency} user={user}/>
-              <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode}/></>}
-            {page==='stock'&&<StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor}/>}
-            {page==='shareholders'&&<ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode}/>}
-            {page==='portfolio'&&<PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor}/>}
-            {page==='screener'&&<ScreenerPage onOpenStock={openStock}/>}
-            {page==='watchlist'&&<WatchlistPage onOpenStock={openStock} currency={currency}/>}
-            {page==='account'&&<AccountAndPlansPage user={user} setUser={setUser} onOpenAdmin={openAdmin}/>}
-            {page==='investor-affinity'&&user&&user.is_premium&&<InvestorAffinityPage theme={theme} currency={currency}/>}
-            {page==='site-admin'&&user&&['admin','super_admin'].includes(user.role)&&<SiteAdminDashboardPage user={user}/>}
-            {page==='admin'&&user&&user.role==='super_admin'&&<AdminDashboardPage/>}
+            {page==='market'&&<>
+              <div data-analytics-view="market-sector-groups"><MarketSectorGroupsPanel currency={currency} user={user}/></div>
+              <div data-analytics-view="market-dashboard"><MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode}/></div>
+            </>}
+            {page==='stock'&&<div data-analytics-view="stock-detail"><StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor}/></div>}
+            {page==='shareholders'&&<div data-analytics-view="shareholder-analysis"><ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode}/></div>}
+            {page==='portfolio'&&<div data-analytics-view="investor-portfolio"><PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor}/></div>}
+            {page==='screener'&&<div data-analytics-view="advanced-screener"><ScreenerPage onOpenStock={openStock}/></div>}
+            {page==='watchlist'&&<div data-analytics-view="watchlist"><WatchlistPage onOpenStock={openStock} currency={currency}/></div>}
+            {page==='account'&&<div data-analytics-view="account-plans"><AccountAndPlansPage user={user} setUser={setUser} onOpenAdmin={openAdmin}/></div>}
+            {page==='investor-affinity'&&user&&user.is_premium&&<div data-analytics-view="investor-affinity"><InvestorAffinityPage theme={theme} currency={currency}/></div>}
+            {page==='site-admin'&&user&&['admin','super_admin'].includes(user.role)&&<div data-analytics-view="site-admin-dashboard"><SiteAdminDashboardPage user={user}/></div>}
+            {page==='admin'&&user&&user.role==='super_admin'&&<div data-analytics-view="superadmin-dashboard"><AdminDashboardPage/></div>}
           </main>
         </div>
       );
