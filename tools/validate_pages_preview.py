@@ -48,7 +48,7 @@ def main() -> int:
     if not ANALYTICS_CLIENT.is_file():
         raise SystemExit("The first-party analytics client is missing from the Pages artifact.")
     if not re.search(
-        r'<script[^>]+src=["\\']\\./analytics-client\\.js["\\'][^>]*></script>',
+        r"""<script[^>]+src=["\']\\./analytics-client\\.js["\'][^>]*></script>""",
         html,
         flags=re.IGNORECASE,
     ):
@@ -64,9 +64,9 @@ def main() -> int:
     )
     if any(marker not in client for marker in required_client_markers):
         raise SystemExit("The analytics client is missing a required privacy-safe capture feature.")
-    if re.search(r"localStorage|sessionStorage|document\\.cookie", client):
+    if re.search(r"localStorage|sessionStorage|document\.cookie", client):
         raise SystemExit("Behavioral events must not be persisted in browser storage.")
-    if re.search(r"(?:innerText|textContent|outerHTML|value)\\b", client):
+    if re.search(r"(?:innerText|textContent|outerHTML|value)\b", client):
         raise SystemExit("The analytics client must never inspect user-entered or rendered text.")
     if "privacy-analytics-panel" not in html or "/api/v1/analytics/consent" not in html:
         raise SystemExit("The explicit analytics consent UI is missing.")
