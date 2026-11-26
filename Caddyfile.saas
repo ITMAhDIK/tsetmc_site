@@ -5,8 +5,6 @@
         max_size 1MB
     }
 
-    # /ready returns only a generic readiness state; it exposes no database
-    # name, schema details, secrets or customer data and is used by probes.
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
@@ -15,11 +13,19 @@
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
     }
 
-    # The static site is hosted separately (e.g. GitHub Pages). Only the
-    # versioned API prefix is proxied; Caddy strips /api/v1 before FastAPI.
+    # Serve the browser and the API from one HTTPS origin. This preserves
+    # first-party HttpOnly cookies and avoids dependence on third-party cookies.
+    root * /srv/saas
+
+    # The app uses /api/v1 in the browser; FastAPI owns the unprefixed routes.
     handle_path /api/v1/* {
         reverse_proxy saas-api:8000
     }
 
-    respond "Tloomberg SaaS API gateway" 404
+    # Never expose private metrics or FastAPI internals via the static site.
+    @private path /internal/* /openapi.json /docs /redoc
+    respond @private 404
+
+    try_files {path} {path}/ /index.html
+    file_server
 }
