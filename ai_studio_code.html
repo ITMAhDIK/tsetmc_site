@@ -88,9 +88,9 @@
     const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
     // --- 1. API Client ---
-    const API_BASE = window.location.protocol.startsWith('http') && window.location.port === '8000'
-      ? ''
-      : 'http://127.0.0.1:8000';
+    // Same-origin by default for both local Python hosting and HTTPS reverse-proxy deployment.
+    // Set SITE_API_BASE_URL only when an explicitly reviewed API origin is required.
+    const API_BASE = String(window.SITE_API_BASE_URL || '').replace(/\/$/, '');
 
     async function apiFetch(path, options = {}) {
       const { headers: requestHeaders = {}, ...requestOptions } = options;
