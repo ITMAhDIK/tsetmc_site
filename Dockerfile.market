@@ -1,0 +1,27 @@
+# Read-only Market API + rebuildable SQLite Sidecar. No SaaS secrets enter this image.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN groupadd --system --gid 10001 market \
+    && useradd --system --uid 10001 --gid market --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin market \
+    && mkdir -p /var/lib/tloomberg /app/output \
+    && chown -R 10001:10001 /var/lib/tloomberg /app/output
+
+COPY --chown=10001:10001 server.py sector_affinity.py /app/
+COPY --chown=10001:10001 site_api /app/site_api
+COPY --chown=10001:10001 docs /app/docs
+
+USER 10001:10001
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/readyz', timeout=4).read()"
+
+CMD ["python", "server.py", "--db", "/data/source/market.sqlite", "--port", "8000", "--host", "0.0.0.0", "--site-dir", "/app/docs", "--output-dir", "/app/output", "--sidecar", "/var/lib/tloomberg/site_data.sqlite", "--refresh-mode", "external", "--refresh-minutes", "10"]
