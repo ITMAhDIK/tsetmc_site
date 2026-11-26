@@ -244,7 +244,7 @@ def test_jalali_date_parser_rejects_out_of_range_values(value):
 
 
 def test_jalali_date_parser_accepts_a_leap_year_esfand_30():
-    assert server.jalali_to_gregorian_date("1400-12-30") == "2022-03-21"
+    assert server.jalali_to_gregorian_date("1399-12-30") == "2021-03-20"
 
 
 def test_ownership_series_preserves_same_date_percentages_and_event_valuation(
