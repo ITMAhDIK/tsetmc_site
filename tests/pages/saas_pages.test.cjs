@@ -67,7 +67,7 @@ test('Caddy serves static SaaS pages and proxies only the versioned API prefix',
   assert.match(caddy, /handle_path \/api\/v1\/\*/);
   assert.match(caddy, /reverse_proxy saas-api:8000/);
   assert.match(caddy, /@private path \/internal\/\*/);
-  assert.doesNotMatch(caddy, /reverse_proxy[^\\n]*internal\/metrics/);
+  assert.doesNotMatch(caddy, /internal\/metrics/);
 });
 
 test('edge image bundles login, admin and both legal pages', () => {
