@@ -1471,7 +1471,7 @@ class AccountService:
             or parsed.query
             or parsed.fragment
             or "%" in parsed.path
-            or not re.fullmatch(r"/[A-Za-z0-9_./:-]{1,300}", parsed.path)
+            or not re.fullmatch(r"/[\\w./:-]{1,300}", parsed.path, re.UNICODE)
         ):
             raise AccountError(400, "مسیر صفحه باید نسبی و بدون query یا fragment باشد.")
         segments = []
