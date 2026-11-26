@@ -2347,8 +2347,13 @@
         if (event) event.preventDefault();
         setError('');
         setMessage('');
-        if (!/^\\+[1-9][0-9]{7,14}$/.test(phone.trim())) {
-          setError('شماره را با کد کشور و در قالب بین‌المللی وارد کنید؛ مانند +989123456789.');
+        const enteredPhone = phone.trim();
+        const phoneDigits = enteredPhone.startsWith('+') ? enteredPhone.slice(1) : '';
+        const validPhone = phoneDigits.length >= 8 && phoneDigits.length <= 15 &&
+          phoneDigits[0] !== '0' &&
+          Array.from(phoneDigits).every(ch => ch >= '0' && ch <= '9');
+        if (!validPhone) {
+          setError('شماره را با کد کشور و ارقام لاتین وارد کنید؛ مانند +989123456789.');
           return;
         }
         setBusy(true);
@@ -2358,7 +2363,7 @@
             purpose: 'login',
           });
           setStep('otp');
-          setMessage('درخواست ارسال کد ثبت شد. کد فقط به شماره‌ای می‌رسد که به آن دسترسی دارید.');
+          setMessage('درخواست ارسال کد ثبت شد؛ در صورت فعال بودن سرویس پیامک سرور، کد به همین شماره ارسال می‌شود.');
         } catch (err) {
           setError(err.message || 'ارسال درخواست کد ناموفق بود.');
         } finally {
