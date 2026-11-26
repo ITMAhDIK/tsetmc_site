@@ -1,5 +1,6 @@
 -- Phase 7: consent-aware, first-party analytics. SaaS database only.
 ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS client_event_id UUID;
+ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS consent_version VARCHAR(24);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_analytics_user_client_event
  ON analytics_events(user_id,client_event_id) WHERE client_event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_analytics_page_time

@@ -2,7 +2,9 @@
 
 ## Consent and collection
 - Product analytics is opt-in per authenticated account; essential account operation is not disabled by refusal.
-- Revoking consent blocks all subsequent ingestion. Existing events are retained for now; deletion/retention policy requires a separate product/legal decision.
+- Consent state changes are recorded in an append-only history with the accepted policy version; repeating the same choice does not create a duplicate history record.
+- Revoking consent blocks subsequent ingestion. Consent changes and ingestion serialize on the account row, and each event stores the consent version active at ingestion time.
+- Existing events are retained after revocation for now; deletion/retention policy requires a separate product/legal decision.
 - Event ingestion accepts bounded batches, server-binds the user identity, and uses a client event UUID for retry idempotency.
 - Only allow-listed event names and metadata keys are accepted. Raw form values, passwords, OTPs, payment details, ticket content, query strings, fragments, email/phone values and arbitrary payloads are not accepted.
 - Events include page view, click, navigation, scroll depth, active duration and explicit funnel steps. Session IDs are client-generated correlation IDs, scoped to the authenticated user in storage.

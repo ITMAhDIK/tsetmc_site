@@ -22,6 +22,9 @@ def set_consent(conn, *, user_id: UUID, enabled: bool):
         raise ValueError("product_analytics consent must be boolean")
     with conn.transaction():
         with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE id=%s FOR UPDATE",(user_id,))
+            if not cur.fetchone():
+                raise LookupError("user not found")
             cur.execute("SELECT product_analytics,consent_version FROM analytics_consents WHERE user_id=%s FOR UPDATE",(user_id,))
             previous=cur.fetchone()
             cur.execute(
@@ -101,7 +104,10 @@ def record_events(conn, *, user_id: UUID, events: list[dict]):
     prepared = [(event, _validate_event(event)) for event in events]
     with conn.transaction():
         with conn.cursor() as cur:
-            cur.execute("SELECT product_analytics FROM analytics_consents WHERE user_id=%s", (user_id,))
+            cur.execute("SELECT id FROM users WHERE id=%s FOR SHARE",(user_id,))
+            if not cur.fetchone():
+                raise PermissionError("analytics account is unavailable")
+            cur.execute("SELECT product_analytics,consent_version FROM analytics_consents WHERE user_id=%s", (user_id,))
             consent = cur.fetchone()
             if not consent or not consent["product_analytics"]:
                 raise PermissionError("product analytics consent is required")
@@ -111,14 +117,14 @@ def record_events(conn, *, user_id: UUID, events: list[dict]):
                     """INSERT INTO analytics_events
                        (user_id,anonymous_id,session_id,client_event_id,event_name,page_path,
                         component_id,element_role,occurred_at,viewport_width,viewport_height,
-                        scroll_depth_pct,active_duration_ms,metadata)
-                       VALUES (%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                        scroll_depth_pct,active_duration_ms,consent_version,metadata)
+                       VALUES (%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                        ON CONFLICT (user_id,client_event_id) WHERE client_event_id IS NOT NULL
                        DO NOTHING RETURNING id""",
                     (user_id,event.get("session_id"),event["event_id"],event["event_name"],
                      event["page_path"],event.get("component_id"),event.get("element_role"),
                      event["occurred_at"],event.get("viewport_width"),event.get("viewport_height"),
-                     event.get("scroll_depth_pct"),event.get("active_duration_ms"),json.dumps(metadata)),
+                     event.get("scroll_depth_pct"),event.get("active_duration_ms"),consent["consent_version"],json.dumps(metadata)),
                 )
                 if cur.fetchone():
                     inserted += 1

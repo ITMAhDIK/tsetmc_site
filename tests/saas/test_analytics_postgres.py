@@ -56,6 +56,9 @@ def test_consent_is_opt_in_and_revocation_blocks_future_ingestion(migrated_analy
         revoked=set_consent(conn,user_id=user,enabled=False)
         assert revoked["product_analytics"] is False
         assert conn.execute("SELECT count(*) AS n FROM analytics_consent_history WHERE user_id=%s",(user,)).fetchone()["n"]==2
+        with pytest.raises(psycopg.errors.RaiseException):
+            with conn.transaction():
+                conn.execute("UPDATE analytics_consent_history SET product_analytics=TRUE WHERE user_id=%s",(user,))
         with pytest.raises(PermissionError):
             record_events(conn,user_id=user,events=[event()])
 
@@ -77,7 +80,8 @@ def test_batch_is_idempotent_and_user_identity_is_server_bound(migrated_analytic
         first=record_events(conn,user_id=user,events=[item,item])
         assert first=={"accepted":1,"duplicates":1}
         assert conn.execute("SELECT count(*) AS n FROM analytics_events WHERE user_id=%s",(user,)).fetchone()["n"]==1
-        assert conn.execute("SELECT user_id FROM analytics_events WHERE client_event_id=%s",(item["event_id"],)).fetchone()["user_id"]==user
+        stored=conn.execute("SELECT user_id,consent_version FROM analytics_events WHERE client_event_id=%s",(item["event_id"],)).fetchone()
+        assert stored["user_id"]==user and stored["consent_version"]=="product-analytics-v1"
 
 def test_overview_funnel_and_retention_reports_use_aggregates(migrated_analytics_database):
     with connect() as conn:
