@@ -153,7 +153,8 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
                 VALUES ('sms','phone_otp',%s,jsonb_build_object('encrypted_payload',%s::text),%s)""",
                 (encrypted_phone,encrypted_payload,f"otp:{phone_tag}:{purpose}:{digest[:16]}"))
 
-def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login", *,\n                      terms_version: str | None = None, privacy_version: str | None = None):
+def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login", *,
+                      terms_version: str | None = None, privacy_version: str | None = None):
     phone = normalize_phone(phone)
     if not otp.isdigit() or len(otp) != 6:
         raise AuthenticationError("invalid or expired verification code")
