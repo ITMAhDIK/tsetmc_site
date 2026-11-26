@@ -85,7 +85,6 @@
     const fetchImpl = opts.fetchImpl || (typeof win.fetch === "function" ? win.fetch.bind(win) : null);
     const origin = win.location && win.location.origin ? win.location.origin : "";
     const apiBase = resolveApiBase(config.apiBase, origin);
-    const consentVersion = safeIdentifier(config.consentVersion, "v1");
     const flushIntervalMs = Number.isInteger(config.flushIntervalMs)
       ? Math.max(5000, Math.min(config.flushIntervalMs, 60000))
       : 10000;
@@ -111,6 +110,23 @@
     let banner = null;
     let settingsButton = null;
     const scrollReported = new Set();
+    const dismissedKey = "tloomberg-analytics-dismissed-v1";
+
+    function isDismissed() {
+      try {
+        return Boolean(win.sessionStorage && win.sessionStorage.getItem(dismissedKey) === "1");
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function setDismissed(value) {
+      try {
+        if (!win.sessionStorage) return;
+        if (value) win.sessionStorage.setItem(dismissedKey, "1");
+        else win.sessionStorage.removeItem(dismissedKey);
+      } catch (_) {}
+    }
 
     async function request(path, method, body, keepalive) {
       if (!apiBase || !fetchImpl) throw new Error("analytics_api_not_configured");
@@ -337,6 +353,7 @@
         accept.disabled = true;
         try {
           await setConsent(true);
+          setDismissed(false);
           removeBanner();
           renderSettingsButton();
         } catch (error) {
@@ -353,6 +370,7 @@
       reject.textContent = "موافق نیستم";
       reject.addEventListener("click", async () => {
         await setConsent(false);
+        setDismissed(true);
         removeBanner();
         renderSettingsButton();
       });
@@ -412,6 +430,10 @@
       if (initialized) return getState();
       initialized = true;
       renderSettingsButton();
+      if (isDismissed()) {
+        consentState = "dismissed";
+        return getState();
+      }
       if (!apiBase) {
         consentState = "unconfigured";
         showConsentBanner(consentState);
