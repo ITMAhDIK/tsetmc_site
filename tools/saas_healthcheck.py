@@ -5,7 +5,12 @@ import argparse
 import subprocess
 import sys
 
-from tools.saas_db_ops import SaasDbOpsError, database_environment
+try:
+    from tools.saas_db_ops import SaasDbOpsError, database_environment
+except ModuleNotFoundError as import_error:
+    if import_error.name not in {"tools", "tools.saas_db_ops"}:
+        raise
+    from saas_db_ops import SaasDbOpsError, database_environment
 
 SQL = """
 SELECT CASE WHEN
