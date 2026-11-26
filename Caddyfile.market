@@ -1,0 +1,30 @@
+{$MARKET_API_DOMAIN} {
+    encode zstd gzip
+
+    request_body {
+        max_size 1MB
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    # Preserve the /api/v1 prefix: the existing Market dispatcher owns it.
+    handle /api/v1/* {
+        reverse_proxy market-api:8000
+    }
+
+    handle /healthz {
+        reverse_proxy market-api:8000
+    }
+
+    handle /readyz {
+        reverse_proxy market-api:8000
+    }
+
+    respond "Tloomberg Market API" 404
+}
