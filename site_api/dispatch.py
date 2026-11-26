@@ -6,7 +6,34 @@ API object. Keep this function deterministic and side-effect free except for
 the selected API method invocation.
 """
 
+import os
+
 from .errors import ApiError
+
+
+def _public_read_only() -> bool:
+    return os.getenv("MARKET_PUBLIC_READ_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _allow_public_read(method: str, rest: list[str]) -> bool:
+    """Allow only public market reads and side-effect-free screener POST queries."""
+    if method == "POST" and rest in (["screener", "query"], ["screener", "export"]):
+        return True
+    if method != "GET":
+        return False
+    if rest in (["market", "overview"], ["market", "watch"],
+                ["stocks", "search"], ["shareholders", "search"],
+                ["shareholders", "observation-history"], ["portfolios", "investors"]):
+        return True
+    if len(rest) == 2 and rest[0] in {"stocks", "portfolios"}:
+        return True
+    if len(rest) == 3 and rest[0] == "stocks" and rest[2] in {
+        "shareholders", "ownership-series", "corporate-actions", "data-quality", "prices"
+    }:
+        return True
+    if len(rest) == 3 and rest[0] == "portfolios" and rest[2] == "history":
+        return True
+    return False
 
 
 def dispatch_api(api, method, path, params, body):
@@ -18,6 +45,13 @@ def dispatch_api(api, method, path, params, body):
     seg = [s for s in path.split("/") if s]
     # seg: ['api','v1', ...]
     rest = seg[2:]
+    # Production market deployments are public read-only APIs. Sidecar
+    # write endpoints and operational admin routes must never be reachable
+    # through the unauthenticated public server.
+    if _public_read_only() and not _allow_public_read(method, rest):
+        if rest and rest[0] == "admin":
+            raise ApiError(404, "مسیر API یافت نشد: %s %s" % (method, path))
+        raise ApiError(403, "درگاه عمومی فقط دسترسی خواندنی به داده‌های بازار دارد.")
     if method == "GET" and rest == ["market", "overview"]:
         return api.market_overview(), 200, "json"
     if method == "GET" and rest == ["market", "watch"]:
