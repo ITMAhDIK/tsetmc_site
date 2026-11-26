@@ -55,22 +55,27 @@ consent, authenticated consent-gated event batches, server-derived user/session
 identity, event deduplication, privacy-minimized page/click/scroll/active-time
 fields, aggregate overview/pages/heatmap/sequential funnels/retention reports,
 minimum-cohort suppression and separately permission-gated user-level event
-history. Anonymous tracking, frontend SDK/banner, dashboard UI and automatic
-retention scheduling remain. No market-data database or service changes.
+history. A consent-gated browser SDK/banner is now wired into the Pages frontend
+for route changes, UI clicks, scroll thresholds and active time. Live telemetry
+remains disabled until a deployed API and real login/session cookie topology are
+configured. Admin analytics dashboard UI and automatic retention scheduling
+remain. No market-data database or service changes.
 
 ## Phase 8 — Superadmin console (API foundation started)
 Implemented on feat/tloomberg-saas-superadmin-phase8: superadmin-only dashboard
 and APIs for user management, support/admin role assignment, plans, subscriptions,
 payment reconciliation notes, wallet inspection and audited ledger adjustments,
-withdrawal review, referral visibility and audit logs. Superadmin role changes
-remain out-of-band; actual bank payout and provider payment overrides are not
-allowed. Frontend UI and database/security integration tests remain. No market
-data DB or service changes.
+withdrawal review, referral visibility and audit logs. The account page now
+supports phone OTP login; first-time verified phones create standard accounts,
+and only a backend match with the protected bootstrap phone secret receives
+the superadmin role. The browser cannot choose roles. A superadmin-only UI gate
+is present. Actual bank payout and provider payment overrides are not allowed.
+No market-data DB or service changes.
 
 ## Phase 9 — Production readiness (engineering foundation implemented; release gates open)
 Phase 9A–D on feat/tloomberg-saas-production-readiness-phase9 now includes:
 - Threat model, trust boundaries, explicit release gates and NOT READY status.
-- Dependency vulnerability audit (pip-audit), high-severity/high-confidence Bandit, Dependabot weekly checks for Python, GitHub Actions and Docker images, and pinned Actions commit SHAs. Latest confirmed combined-branch run: Python suite 198 passed in 11.23s; dependency audit, security analysis, and PostgreSQL backup/restore drill passed.
+- Dependency vulnerability audit (pip-audit), high-severity/high-confidence Bandit, Dependabot weekly checks for Python, GitHub Actions and Docker images, and pinned Actions commit SHAs. Latest confirmed combined-branch run: Python suite 198 passed in 12.83s; dependency audit, security analysis, and PostgreSQL backup/restore drill passed.
 - Production startup configuration checks, explicit host/CORS allow-lists, cookie CSRF origin checks, security headers, readiness endpoint, structured redacted request logs and bounded PostgreSQL connection pool.
 - Argon2id dummy verification for unknown user logins, serialized concurrent OTP rate limits, exact payment-event and admin-wallet idempotency, append-only wallet/reconciliation/admin audit tables.
 - Checksummed migration runner with advisory locking, per-migration transactions, drift detection, exact DB identity check, explicit rejection of unknown/non-empty schema without migration ledger, and bounded grants to a pre-created runtime role.
