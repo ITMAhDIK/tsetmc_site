@@ -1,0 +1,18 @@
+[Unit]
+Description=Tloomberg SaaS encrypted off-host PostgreSQL backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=saas-backup
+Group=saas-backup
+EnvironmentFile=/etc/tloomberg-saas/backup.env
+Environment=RCLONE_CONFIG=/etc/rclone/rclone.conf
+ExecStart=/opt/tloomberg-saas/scripts/saas_offsite_backup.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/tloomberg-saas
