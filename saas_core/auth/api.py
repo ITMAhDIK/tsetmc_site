@@ -68,6 +68,8 @@ _REQUIRED_SCHEMA_TABLES = (
 _REQUIRED_SCHEMA_COLUMNS = (
     "analytics_events.event_order",
     "sessions.mfa_verified_at",
+    "phone_verifications.signup_terms_version",
+    "phone_verifications.signup_privacy_version",
     "notification_outbox.locked_at",
     "notification_outbox.last_error",
 )
@@ -448,15 +450,18 @@ def register(body: RegisterBody, response: Response, conn=Depends(get_conn)):
         body.terms_accepted, body.terms_version, body.privacy_version
     )
     try:
-        user = register_password_user(conn, body.username, body.password, body.display_name)
-        with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO legal_acceptances
-                   (user_id,terms_version,privacy_version,source)
-                   VALUES (%s,%s,%s,'password_signup')""",
-                (user["id"], terms_version, privacy_version),
-            )
+        # The user row, initial role, wallet/preferences, legal acceptance,
+        # and session are one transaction. A failed consent write cannot leave
+        # behind an account that was registered without accepted legal text.
         with conn.transaction():
+            user = register_password_user(conn, body.username, body.password, body.display_name)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO legal_acceptances
+                       (user_id,terms_version,privacy_version,source)
+                       VALUES (%s,%s,%s,'password_signup')""",
+                    (user["id"], terms_version, privacy_version),
+                )
             token, expires = create_session(conn, user["id"])
         _set_session(response, token, expires)
         return {"user": {
@@ -487,7 +492,10 @@ def phone_request(body: OtpRequestBody, conn=Depends(get_conn)):
             body.terms_accepted, body.terms_version, body.privacy_version
         )
     try:
-        request_phone_otp(conn, body.phone, body.purpose)
+        request_phone_otp(
+            conn, body.phone, body.purpose,
+            terms_version=terms_version, privacy_version=privacy_version,
+        )
         return {"accepted": True, "delivery": "queued", "expires_in_seconds": 300,
                 "terms_version": terms_version, "privacy_version": privacy_version}
     except ValueError as exc:
