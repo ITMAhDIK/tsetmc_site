@@ -51,8 +51,8 @@ def _configure_otp(monkeypatch):
 def _latest_otp(conn,cipher,phone,purpose="login"):
     challenge=conn.execute(
         """SELECT otp_hash FROM phone_verifications
-           WHERE phone_e164=%s AND purpose=%s
-           ORDER BY created_at DESC,id DESC LIMIT 1""",(phone,purpose)
+           WHERE phone_e164=%s AND purpose=%s AND consumed_at IS NULL AND expires_at>now()
+           ORDER BY created_at DESC LIMIT 1""",(phone,purpose)
     ).fetchone()
     if not challenge:
         raise AssertionError("OTP challenge not found")
@@ -140,7 +140,7 @@ def test_linked_phone_cannot_be_claimed_by_a_second_password_account(migrated_cr
                 r=first.post("/auth/register",json={"username":f"owner_{uuid4().hex[:8]}","password":"a-long-secure-test-password"})
                 assert r.status_code==200
                 assert first.post("/auth/phone/link/request",json={"phone":phone}).status_code==200
-                otp=_latest_otp(conn,cipher,phone)
+                otp=_latest_otp(conn,cipher,phone,"link_identity")
                 assert first.post("/auth/phone/link/verify",json={"phone":phone,"otp":otp}).status_code==200
             with TestClient(app) as second:
                 r=second.post("/auth/register",json={"username":f"claim_{uuid4().hex[:8]}","password":"a-long-secure-test-password"})
