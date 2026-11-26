@@ -156,24 +156,6 @@ class AnalyticsService:
         self.require_ready = require_ready
         self._norm_date = norm_date
 
-    self._SCREEN_FIELDS = {
-        "ownership_percent_calculated": ("h.ownership_percent_calc", "num"),
-        "disclosed_shareholder_count":
-            ("w.resolved_shareholder_count", "num"),
-        "disclosed_ownership_percent_sum":
-            ("w.resolved_ownership_percent_sum", "num"),
-        "shares_change": ("h.shares_change", "num"),
-        "change_type": ("h.change_type", "str"),
-        "entry_status": ("h.entry_status", "str"),
-        "shareholder_type": ("n.shareholder_type", "str"),
-        "identity_status": ("h.identity_status", "str"),
-        "data_completeness": ("w.data_completeness", "str"),
-        "market": ("w.market", "str"),
-        "has_corporate_action": ("COALESCE(ca.n, 0)", "num"),
-        "date_gregorian": ("h.latest_date", "date"),
-    }
-    self._SCREEN_OPS = {">=", "<=", "=", ">", "<"}
-
     def _screener_query(self, body, limit):
         logic = str(body.get("logic", "AND")).upper()
         if logic not in ("AND", "OR"):
