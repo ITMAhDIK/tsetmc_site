@@ -39,6 +39,11 @@ jobs:
           python-version: "3.12"
       - name: Install SaaS test dependencies
         run: python -m pip install -r requirements-saas.txt
+      - name: Validate and test the frontend analytics SDK
+        run: |
+          node --check docs/analytics-config.js
+          node --check docs/analytics.js
+          node --test tests/pages/analytics.test.cjs
       - name: Apply all SaaS migrations with checksums and lock
         run: python scripts/manage_saas_migrations.py --apply
       - name: Verify migration history is current
