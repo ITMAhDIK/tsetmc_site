@@ -156,6 +156,7 @@ def test_console_financial_support_referral_and_analytics_views_are_permission_s
                     json={"bucket":"gift","amount_toman":50000,"reason":"approved goodwill","idempotency_key":key})
                 assert replay.status_code==200
                 assert conn.execute("SELECT count(*) AS n FROM wallet_ledger_entries WHERE idempotency_key=%s",(key,)).fetchone()["n"]==1
+                assert conn.execute("SELECT count(*) AS n FROM admin_audit_logs WHERE action='admin.wallet.adjusted' AND target_id=%s",(str(customer),)).fetchone()["n"]==1
                 assert client.get(f"/admin/console/wallets/{customer}",headers=root_headers).json()["gift_toman"]==50000
                 assert client.post(f"/admin/console/wallets/{customer}/adjust",headers=root_headers,
                     json={"bucket":"gift","amount_toman":-60000,"reason":"too much debit","idempotency_key":f"console-debit-{uuid4()}"}).status_code==422
