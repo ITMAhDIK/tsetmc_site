@@ -15,15 +15,29 @@ It calls these same-origin-or-CORS-enabled endpoints with
 `credentials: "include"`:
 
 - `POST /api/v1/auth/otp/request`
-  - Request: `{"phone_e164":"+989...","purpose":"login"}`
-  - Response: `{"ok":true,"challenge_id":"opaque-id","expires_in":300}`
+  - Login request: `{"phone_e164":"+989...","purpose":"login"}`.
+  - Registration request: `{"phone_e164":"+989...","purpose":"register","terms_accepted":true,"terms_version":"published-version"}`.
+  - Response: `{"ok":true,"challenge_id":"opaque-id","expires_in":300}`.
+  - Registration must be rejected unless the current published terms version
+    is active and explicitly accepted. The frontend placeholder
+    `pending-owner-content` is not a publishable terms version.
 - `POST /api/v1/auth/otp/verify`
-  - Request: `{"phone_e164":"+989...","code":"123456","challenge_id":"opaque-id"}`
-  - Response: `{"user":{"phone_e164":"+989...","public_id":"..."},"role":"superadmin","permissions":["..."]}`
+  - Registration adds `purpose":"register","terms_accepted":true,"terms_version":"published-version"`
+    to the OTP verification body; login uses `purpose":"login"`.
+  - Response: `{"user":{"phone_e164":"+989...","public_id":"TL-...","username":"..."},"role":"user","permissions":[]}`.
   - The response must also set a Secure, HttpOnly, SameSite cookie. Do not return a
     long-lived bearer token to browser JavaScript.
 - `GET /api/v1/auth/me`
-  - Returns the authenticated user and the role resolved from the database.
+  - Returns `{"user":{"public_id":"TL-...","username":"...","phone_e164":"..."},"role":"user"}`
+    for the authenticated session. The public ID is safe to display in the profile.
+- `GET /api/v1/auth/google/start?intent=login|register`
+  - Starts Google OAuth with server-generated state and PKCE. For registration,
+    the frontend sends the accepted terms version; the server stores it in the
+    signed OAuth state and rejects account creation while final terms are unpublished.
+- `GET /api/v1/auth/google/callback`
+  - Validates state, PKCE, issuer, audience, nonce and Google identity; creates
+    or links the account only under the verified identity-linking policy, then
+    redirects to the fixed `APP_ORIGIN/saas/?oauth=success`.
 - `POST /api/v1/auth/logout`
   - Revokes the server-side session and clears the cookie.
 
@@ -82,3 +96,14 @@ administrative endpoints or data based on this demo role. Remove/disable demo
 mode only after the real backend and SMS provider have been configured and
 verified. In the live API mode, the server remains solely responsible for role
 assignment and session creation.
+
+
+## Terms and registration consent
+
+The registration view requires an explicit checkbox before phone OTP
+registration or Google registration can begin. The linked legal page is
+`/saas/terms.html`. It currently contains a placeholder because the owner has
+not yet supplied the final legal text. Until a version is published, the
+backend must reject account creation and must not record acceptance of the
+placeholder as acceptance of final terms. Store accepted terms version,
+timestamp and user ID as an auditable consent record.

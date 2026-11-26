@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0e14">
-  <meta name="description" content="ورود امن به تلومبرگ با شماره موبایل و کد یک‌بارمصرف">
+  <meta name="description" content="ورود و ثبت‌نام امن در تلومبرگ با شماره موبایل یا حساب گوگل">
   <meta name="tloomberg-auth-api" content="">
   <title>ورود به تلومبرگ | Tloomberg</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css">
@@ -52,6 +52,20 @@
     .setup-note{margin-top:18px;padding:11px 12px;border:1px solid #6b552b;background:#3a2c151c;border-radius:11px;color:#e4c98e;font-size:10px;line-height:2}
     .privacy{display:flex;align-items:flex-start;gap:8px;color:#7f8ca1;font-size:9px;line-height:1.9;margin-top:17px}
     .privacy b{color:#b9c8dc;font-weight:600}
+    .mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:4px;margin:0 0 17px;background:#0d1420;border:1px solid var(--line);border-radius:12px}
+    .mode-button{border:0;border-radius:9px;padding:9px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+    .mode-button.active{background:#203858;color:#fff;font-weight:800}
+    .google-button{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;border:1px solid #46556b;border-radius:11px;padding:11px 14px;background:#f5f7fa;color:#1c2736;font-size:12px;font-weight:800;cursor:pointer}
+    .google-button:hover{background:#fff}
+    .google-g{font-family:Arial,sans-serif;font-size:19px;font-weight:900;color:#4285f4;line-height:1}
+    .auth-divider{display:flex;align-items:center;gap:10px;color:#7f8ba0;font-size:10px;margin:15px 0}
+    .auth-divider:before,.auth-divider:after{content:"";height:1px;flex:1;background:var(--line)}
+    .terms-row{display:none;align-items:flex-start;gap:9px;margin:15px 0 0!important;color:#aebbd0;font-size:10px;line-height:2}
+    .terms-row.show{display:flex}
+    .terms-row input{margin:5px 0 0;accent-color:var(--blue);flex:0 0 auto}
+    .terms-row a{color:#9fc0ff;text-decoration:underline;text-underline-offset:3px}
+    .account-id{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 12px;border:1px solid #2b3d54;background:#101a29;border-radius:11px;margin:13px 0 18px;font-size:10px}
+    .account-id strong{direction:ltr;text-align:left;color:#a8c8ff;font-size:12px;overflow-wrap:anywhere}
     .otp-area{display:none;margin-top:21px;padding-top:20px;border-top:1px solid var(--line)}
     .otp-area.show{display:block}
     .otp-input{letter-spacing:11px;text-align:center;font-size:22px;font-weight:800;padding-left:18px}
@@ -107,10 +121,20 @@
             <p>شماره موبایلت را وارد کن تا کد یک‌بارمصرف برایت ارسال شود.</p>
           </div>
 
+          <div class="mode-switch" role="group" aria-label="انتخاب ورود یا ثبت‌نام">
+            <button type="button" class="mode-button active" id="loginModeButton" aria-pressed="true">ورود</button>
+            <button type="button" class="mode-button" id="registerModeButton" aria-pressed="false">ثبت‌نام</button>
+          </div>
+          <button class="google-button" id="googleButton" type="button"><span class="google-g" aria-hidden="true">G</span> ادامه با حساب گوگل</button>
+          <div class="auth-divider">یا با شماره موبایل</div>
           <form id="phoneForm">
             <label for="phone">شماره موبایل</label>
             <input class="field" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+98 9xx xxx xxxx" maxlength="20" required>
             <div class="hint">کد تأیید فقط به شماره‌ای ارسال می‌شود که وارد می‌کنی.</div>
+            <label class="terms-row" id="termsRow" for="termsAccepted">
+              <input id="termsAccepted" name="termsAccepted" type="checkbox">
+              <span>با <a href="./terms.html" target="_blank" rel="noopener">قوانین و مقررات تلومبرگ</a> موافقم و آن‌ها را می‌پذیرم.</span>
+            </label>
             <button class="primary" id="sendButton" type="submit">ارسال کد تأیید <span aria-hidden="true">←</span></button>
           </form>
 
@@ -137,6 +161,7 @@
             <div><h3 id="welcomeTitle">به تلومبرگ خوش آمدی</h3><p id="maskedPhone"></p></div>
           </div>
           <div id="roleChip" class="role-chip">کاربر</div>
+          <div class="account-id"><span>شناسهٔ کاربر</span><strong id="publicUserId">در انتظار تخصیص از سرور</strong></div>
           <p id="accountDescription" style="font-size:12px;color:#aab6c9;line-height:2;margin:0">حساب شما با موفقیت تأیید شد.</p>
           <div id="accessGrid" class="access-grid"></div>
           <div class="account-actions">
@@ -165,6 +190,8 @@
       const statusBox = $('status');
       let currentPhone = '';
       let challengeId = null;
+      let currentMode = 'login';
+      const TERMS_VERSION = 'pending-owner-content';
 
       const toEnglishDigits = value => String(value || '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
       function normalizePhone(value) {
@@ -230,6 +257,7 @@
         $('accountView').classList.add('show');
         $('welcomeTitle').textContent = role === 'superadmin' ? (data.demo ? 'پیش‌نمایش سوپرادمین' : 'خوش آمدی، مدیر کل') : 'به تلومبرگ خوش آمدی';
         $('maskedPhone').textContent = maskPhone(data.user?.phone_e164 || currentPhone);
+        $('publicUserId').textContent = data.user?.public_id || data.user?.username || 'هنوز از سرور تخصیص داده نشده';
         const chip = $('roleChip');
         chip.textContent = ({superadmin: data.demo ? 'سوپرادمین · حالت نمایشی' : 'سوپرادمین',admin:'مدیر',support:'پشتیبانی',user:'کاربر عادی'})[role];
         chip.className = 'role-chip' + (role === 'superadmin' ? ' admin' : '');
@@ -249,6 +277,9 @@
       }
       async function sendCode() {
         try {
+          if (currentMode === 'register' && !$('termsAccepted').checked) {
+            throw new Error('برای ثبت‌نام، ابتدا تیک پذیرش قوانین سایت را فعال کن.');
+          }
           const phone = normalizePhone($('phone').value);
           if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new Error('شماره را با فرمت بین‌المللی معتبر وارد کن؛ مانند +989xxxxxxxxx.');
           currentPhone = phone;
@@ -260,7 +291,12 @@
             setStatus('حالت آزمایشی فعال شد؛ یک کد دلخواه چهاررقمی وارد کن.', 'info');
             return;
           }
-          const result = await request('/api/v1/auth/otp/request', { phone_e164: phone, purpose: 'login' });
+          const requestBody = { phone_e164: phone, purpose: currentMode };
+          if (currentMode === 'register') {
+            requestBody.terms_accepted = true;
+            requestBody.terms_version = TERMS_VERSION;
+          }
+          const result = await request('/api/v1/auth/otp/request', requestBody);
           challengeId = result.challenge_id || null;
           $('otpHint').textContent = 'کد برای ' + maskPhone(phone) + ' ارسال شده است. اعتبار کد محدود است.';
           showOtp();
@@ -283,11 +319,18 @@
           }
           if (code.length !== 6) throw new Error('کد تأیید باید شش رقم باشد.');
           $('verifyButton').disabled = true;
-          const result = await request('/api/v1/auth/otp/verify', {
+          const verifyBody = {
             phone_e164: currentPhone,
             code,
-            challenge_id: challengeId
-          });
+            challenge_id: challengeId,
+            purpose: currentMode,
+          };
+          if (currentMode === 'register') {
+            if (!$('termsAccepted').checked) throw new Error('پذیرش قوانین برای ثبت‌نام الزامی است.');
+            verifyBody.terms_accepted = true;
+            verifyBody.terms_version = TERMS_VERSION;
+          }
+          const result = await request('/api/v1/auth/otp/verify', verifyBody);
           renderAccount(result);
         } catch (error) {
           setStatus(error.message, 'error');
@@ -295,7 +338,37 @@
           $('verifyButton').disabled = false;
         }
       }
+      function setMode(mode) {
+        currentMode = mode === 'register' ? 'register' : 'login';
+        $('loginModeButton').classList.toggle('active', currentMode === 'login');
+        $('registerModeButton').classList.toggle('active', currentMode === 'register');
+        $('loginModeButton').setAttribute('aria-pressed', String(currentMode === 'login'));
+        $('registerModeButton').setAttribute('aria-pressed', String(currentMode === 'register'));
+        $('termsRow').classList.toggle('show', currentMode === 'register');
+        $('sendButton').textContent = currentMode === 'register' ? 'ادامهٔ ثبت‌نام ←' : 'ارسال کد تأیید ←';
+        resetOtp();
+      }
+      async function startGoogle() {
+        try {
+          if (currentMode === 'register' && !$('termsAccepted').checked) {
+            throw new Error('برای ثبت‌نام با گوگل، ابتدا تیک پذیرش قوانین سایت را فعال کن.');
+          }
+          requireApi();
+          const url = new URL(API_BASE + '/api/v1/auth/google/start', window.location.href);
+          url.searchParams.set('intent', currentMode);
+          if (currentMode === 'register') {
+            url.searchParams.set('terms_accepted', 'true');
+            url.searchParams.set('terms_version', TERMS_VERSION);
+          }
+          window.location.assign(url.toString());
+        } catch (error) {
+          setStatus(error.message, 'error');
+        }
+      }
       phoneForm.addEventListener('submit', event => { event.preventDefault(); sendCode(); });
+      $('loginModeButton').addEventListener('click', () => setMode('login'));
+      $('registerModeButton').addEventListener('click', () => setMode('register'));
+      $('googleButton').addEventListener('click', startGoogle);
       $('verifyButton').addEventListener('click', verifyCode);
       $('resendButton').addEventListener('click', () => {
         if (DEMO_OTP_MODE) setStatus('حالت تست فعال است؛ هر کد چهاررقمی پذیرفته می‌شود.', 'info');
@@ -310,6 +383,7 @@
         clearDemoMenuCookie();
         $('accountView').classList.remove('show');
         $('loginView').style.display = '';
+        $('publicUserId').textContent = 'در انتظار تخصیص از سرور';
         $('phone').value = '';
         $('accountStatus').className = 'status';
         resetOtp();
@@ -318,12 +392,19 @@
       $('otp').addEventListener('input', event => { event.target.value = toEnglishDigits(event.target.value).replace(/\D/g, '').slice(0, DEMO_OTP_MODE ? 4 : 6); });
       if (DEMO_OTP_MODE) {
         $('setupNote').style.display = '';
-        $('sendButton').textContent = 'ادامه به مرحلهٔ کد آزمایشی ←';
+        $('sendButton').textContent = 'ارسال کد تأیید ←';
+        $('googleButton').title = 'ورود گوگل پس از اتصال سرویس احراز هویت فعال می‌شود.';
       } else {
         $('setupNote').style.display = 'none';
         request('/api/v1/auth/me')
           .then(data => renderAccount(data))
           .catch(() => {});
+      }
+      const oauthResult = new URLSearchParams(window.location.search).get('oauth');
+      if (oauthResult === 'success' && !DEMO_OTP_MODE) {
+        request('/api/v1/auth/me').then(data => renderAccount(data)).catch(error => setStatus(error.message, 'error'));
+      } else if (oauthResult === 'error') {
+        setStatus('ورود با گوگل کامل نشد. دوباره تلاش کن.', 'error');
       }
     })();
   </script>

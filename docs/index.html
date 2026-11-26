@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>تلومبرگ | تحلیل بازار و مالکیت سهام</title>
   <meta name="description" content="تلومبرگ؛ پلتفرم تحلیل بازار سرمایه، سهام‌داران، مالکیت و پرتفوی." />
+  <meta name="tloomberg-auth-api" content="" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -67,6 +68,7 @@
     const API_BASE = window.location.protocol.startsWith('http') && window.location.port === '8000'
       ? ''
       : 'http://127.0.0.1:8000';
+    const AUTH_API_BASE = (document.querySelector('meta[name="tloomberg-auth-api"]')?.content || '').trim().replace(/\/+$/, '');
 
     async function apiFetch(path, options = {}) {
       const res = await fetch(`${API_BASE}${path}`, {
@@ -662,7 +664,7 @@
               <div className="flex flex-wrap gap-2">
                 <select value={selectedSector} onChange={e=>{setSelectedSector(e.target.value);setSectorSearch('');}} className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs min-w-56">
                   <option value="">انتخاب گروه بورسی…</option>
-                  {sectorGroups.map(group=><option key={group.code} value={group.code}>{group.label} · {group.code} ({fmtNum(group.instruments.length)})</option>)}
+                  {sectorGroups.map(group=><option key={group.code} value={group.code}>{group.label} ({fmtNum(group.instruments.length)})</option>)}
                 </select>
                 {selectedSector && <input value={sectorSearch} onChange={e=>setSectorSearch(e.target.value)} placeholder="جستجو در نمادهای گروه…" className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs" />}
               </div>
@@ -674,7 +676,7 @@
             ) : (
               <div className="p-3">
                 <div className="flex flex-wrap justify-between gap-2 text-xs mb-3">
-                  <strong>{selectedSectorGroup.label} <span className="num text-[var(--text-secondary)]">({selectedSectorGroup.code})</span></strong>
+                  <strong>{selectedSectorGroup.label}</strong>
                   <span className="text-[var(--text-secondary)]">{fmtNum(visibleSectorInstruments.length)} از {fmtNum(selectedSectorGroup.instruments.length)} نماد رسمی</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7 gap-2">
@@ -1411,12 +1413,8 @@
             </div>
           </div>
 
-          <section className="space-y-3">
+          <section>
             <AdvancedScreenerPanel onOpenStock={onOpenStock} />
-            <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
-              <h2 className="font-bold text-sm">غربال پیشرفتهٔ سهام‌داران و نمادها</h2>
-              <p className="text-[11px] text-[var(--text-secondary)] mt-1">شرط‌های مالکیت، تغییر سهام، نوع سهام‌دار، وضعیت هویت و کیفیت داده را همین‌جا ترکیب کن؛ نتایج فیلتر به صفحهٔ نماد متصل هستند.</p>
-            </div>
           </section>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
             <div className="lg:col-span-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
@@ -1795,7 +1793,6 @@
                           >
                             <div className="min-w-0">
                               <div className="font-semibold text-xs leading-5">{group.label}</div>
-                              <div className="text-[10px] text-[var(--text-secondary)] num mt-1">{group.code}</div>
                             </div>
                             <div className="flex items-end justify-between gap-2 mt-3">
                               <div className="text-[10px] text-[var(--text-secondary)]">امتیاز علاقه</div>
@@ -1822,14 +1819,14 @@
                         <div className="overflow-x-auto">
                           <table className="w-full text-right">
                             <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
-                              <tr><th className="p-2">کد / گروه</th><th className="p-2">تخصیص فعلی</th><th className="p-2">گرایش تاریخی</th><th className="p-2">چرخش خالص ۹۰ روز</th><th className="p-2">امتیاز علاقه</th></tr>
+                              <tr><th className="p-2">گروه بورسی</th><th className="p-2">تخصیص فعلی</th><th className="p-2">گرایش تاریخی</th><th className="p-2">چرخش خالص ۹۰ روز</th><th className="p-2">امتیاز علاقه</th></tr>
                             </thead>
                             <tbody className="divide-y divide-[var(--border-subtle)]">
                               {(portfolio.sector_affinity.official_groups || []).length === 0 ? (
-                                <tr><td colSpan="5" className="p-3 text-center text-[var(--text-secondary)]">گروه رسمی قابل‌محاسبه‌ای وجود ندارد.</td></tr>
+                                <tr><td colSpan="4" className="p-3 text-center text-[var(--text-secondary)]">گروه رسمی قابل‌محاسبه‌ای وجود ندارد.</td></tr>
                               ) : portfolio.sector_affinity.official_groups.map(group => (
                                 <tr key={group.code}>
-                                  <td className="p-2"><div className="font-semibold">{group.label}</div><div className="text-[10px] text-[var(--text-secondary)] num">{group.code}</div></td>
+                                  <td className="p-2"><div className="font-semibold">{group.label}</div></td>
                                   <td className="p-2 num">{fmtPct(group.current_weight_pct, 2)}</td>
                                   <td className="p-2 num">{fmtPct(group.historical_affinity_pct, 2)}</td>
                                   <td className="p-2"><div className={group.rotation_direction === 'increasing' ? 'text-emerald-400' : group.rotation_direction === 'decreasing' ? 'text-rose-400' : 'text-[var(--text-secondary)]'}>{group.rotation_direction === 'increasing' ? 'افزایش خالص' : group.rotation_direction === 'decreasing' ? 'کاهش خالص' : 'خنثی'}</div><div className="num text-[10px]">{fmtMoney(group.recent_net_change_value_rial, currency)}</div></td>
@@ -1843,7 +1840,7 @@
                       <div className="p-3 border-b border-[var(--border-subtle)]">
                         <div className="font-bold mb-2">دسته‌بندی تجمیعی داشبورد</div>
                         {(portfolio.sector_affinity.dashboard_categories || []).length === 0 ? (
-                          <p className="text-[11px] text-[var(--text-secondary)]">هنوز نگاشت صریحی بین کدهای رسمی و دسته‌های داشبورد تعریف نشده است. فایل dashboard_sector_categories.json را پس از بازبینی گروه‌ها تکمیل کنید.</p>
+                          <p className="text-[11px] text-[var(--text-secondary)]">هنوز نگاشت صریحی بین گروه‌های رسمی و دسته‌های داشبورد تعریف نشده است. فایل dashboard_sector_categories.json را پس از بازبینی گروه‌ها تکمیل کنید.</p>
                         ) : (
                           <div className="flex flex-wrap gap-2">
                             {portfolio.sector_affinity.dashboard_categories.map(category => (
@@ -2121,7 +2118,7 @@
         <div className="space-y-3 text-xs">
           <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2.5">
             <div className="flex flex-wrap justify-between items-center gap-2">
-              <h2 className="text-sm font-bold">فیلتر پیشرفتهٔ بازار</h2>
+              <div><h2 className="text-sm font-bold">فیلتر پیشرفتهٔ بازار</h2><p className="text-[11px] text-[var(--text-secondary)] mt-1">شرط‌های مالکیت، تغییر سهام، نوع سهام‌دار، وضعیت هویت و کیفیت داده را همین‌جا ترکیب کن؛ نتایج فیلتر به صفحهٔ نماد متصل هستند.</p></div>
               <div className="flex flex-wrap gap-2">
                 <select value={logic} onChange={e => setLogic(e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-bold">
                   <option value="AND">AND (همه شرط‌ها)</option>
@@ -2608,7 +2605,7 @@
 
     // --- Account menu drawer -------------------------------------------------
     // UI preview only: identity, balances, roles and transactions are server-owned.
-    function AccountMenuDrawer({ open, onClose, demoMenuRole, dateMode, setDateMode, currency, setCurrency, theme, setTheme, onNavigate, onLogout }) {
+    function AccountMenuDrawer({ open, onClose, demoMenuRole, authUser, dateMode, setDateMode, currency, setCurrency, theme, setTheme, onNavigate, onLogout }) {
       const [view, setView] = useState('home');
       const [supportExpanded, setSupportExpanded] = useState(true);
 
@@ -2632,7 +2629,10 @@
       }, [rendered]);
       if (!rendered) return null;
       const demo = Boolean(demoMenuRole);
-      const superadminPreview = demoMenuRole === 'superadmin';
+      const user = authUser?.user || (authUser?.public_id ? authUser : null);
+      const authenticated = Boolean(authUser && !authUser.demo && user);
+      const signedIn = demo || authenticated;
+      const superadminPreview = demoMenuRole === 'superadmin' || authUser?.role === 'superadmin';
       const SettingChoice = ({ label, aLabel, aValue, bLabel, bValue, value, onChange }) => (
         <div className="app-drawer-setting-row">
           <span>{label}</span>
@@ -2661,12 +2661,12 @@
                   <section className="app-drawer-user-card">
                     <div className="app-drawer-user-avatar">{superadminPreview ? 'مد' : demo ? 'ک' : 'م'}</div>
                     <div className="app-drawer-user-copy">
-                      <strong>{superadminPreview ? 'مدیر کل' : demo ? 'کاربر تلومبرگ' : 'مهمان تلومبرگ'}</strong>
-                      <small>{demo ? 'حالت آزمایشی · هویت از سرور تأیید نشده' : 'برای دسترسی به پروفایل وارد حساب شو'}</small>
+                      <strong>{superadminPreview ? 'مدیر کل' : (user?.display_name || user?.full_name || user?.username || (signedIn ? 'کاربر تلومبرگ' : 'مهمان تلومبرگ'))}</strong>
+                      <small>{demo ? 'حالت آزمایشی · هویت از سرور تأیید نشده' : authenticated ? `شناسهٔ کاربر: ${user?.public_id || user?.username || 'در انتظار تخصیص'}` : 'برای دسترسی به پروفایل وارد حساب شو'}</small>
                     </div>
                     <span className="app-drawer-status-dot" />
                   </section>
-                  {!demo && (
+                  {!signedIn && (
                     <a className="app-drawer-login" href="./saas/">
                       <span><strong>ورود یا ساخت حساب</strong><small>با شماره تماس یا حساب گوگل</small></span><b>←</b>
                     </a>
@@ -2714,11 +2714,11 @@
                   <div className="app-drawer-view-heading"><small>حساب کاربری</small><h2>پروفایل من</h2></div>
                   <div className="app-drawer-detail-card">
                     <div className="app-drawer-card-title">اطلاعات حساب</div>
-                    <div className="app-drawer-detail-row"><span>شناسهٔ عمومی</span><strong>پس از اتصال حساب</strong></div>
-                    <div className="app-drawer-detail-row"><span>نام کاربری</span><strong>ثبت‌نشده در حالت نمایشی</strong></div>
-                    <div className="app-drawer-detail-row"><span>شماره تماس</span><strong>نیازمند احراز هویت</strong></div>
-                    <div className="app-drawer-detail-row"><span>ایمیل</span><strong>نیازمند تأیید ایمیل</strong></div>
-                    <div className="app-drawer-detail-row"><span>نوع حساب</span><strong>{demo ? 'عادی · نمایشی' : 'مهمان'}</strong></div>
+                    <div className="app-drawer-detail-row"><span>شناسهٔ کاربر</span><strong>{user?.public_id || 'پس از اتصال حساب'}</strong></div>
+                    <div className="app-drawer-detail-row"><span>نام کاربری</span><strong>{user?.username || 'ثبت نشده'}</strong></div>
+                    <div className="app-drawer-detail-row"><span>شماره تماس</span><strong>{user?.phone_e164 || 'ثبت نشده'}</strong></div>
+                    <div className="app-drawer-detail-row"><span>ایمیل</span><strong>{user?.email || 'ثبت نشده'}</strong></div>
+                    <div className="app-drawer-detail-row"><span>نوع حساب</span><strong>{superadminPreview ? 'سوپرادمین' : authenticated ? (authUser?.role || 'کاربر') : demo ? 'عادی · نمایشی' : 'مهمان'}</strong></div>
                     <div className="app-drawer-detail-row"><span>وضعیت اشتراک</span><strong>از سرور استعلام می‌شود</strong></div>
                   </div>
                   <div className="app-drawer-detail-card">
@@ -2821,7 +2821,7 @@
               )}
             </div>
             <footer className="app-drawer-footer">
-              {demo ? <button type="button" className="app-drawer-logout" onClick={onLogout}>خروج از حساب آزمایشی <span>↪</span></button>
+              {signedIn ? <button type="button" className="app-drawer-logout" onClick={onLogout}>{demo ? 'خروج از حساب آزمایشی' : 'خروج از حساب'} <span>↪</span></button>
                 : <a href="./saas/" className="app-drawer-footer-login">ورود به حساب کاربری</a>}
               <small>اطلاعات مالی و دسترسی‌ها فقط پس از اتصال سرویس حساب نمایش داده می‌شوند.</small>
             </footer>
@@ -2866,6 +2866,7 @@
       // does not trigger a render, which left tab-4 text dates stale).
       const [, setDateModeTick] = useState(0);
       const [portfolioInvestor, setPortfolioInvestor] = useState('');
+      const [authUser, setAuthUser] = useState(null);
       const routeSnapshot = () => ({page, activeSymbol, portfolioInvestor, scrollY:window.scrollY});
       const restoreAppScroll = (targetY, attempt = 0) => {
         requestAnimationFrame(() => {
@@ -2907,11 +2908,38 @@
         const value = entry ? decodeURIComponent(entry.split('=').slice(1).join('=')) : '';
         return value === 'superadmin' || value === 'user' ? value : '';
       });
-      const logoutDemoMenu = () => {
+      const logoutDemoMenu = async () => {
+        if (AUTH_API_BASE && authUser && !authUser.demo) {
+          try {
+            await fetch(`${AUTH_API_BASE}/api/v1/auth/logout`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: '{}',
+            });
+          } catch (_) {}
+        }
         document.cookie = 'tloomberg_demo_menu=; Path=/; Max-Age=0; SameSite=Lax; Secure';
         setDemoMenuRole('');
+        setAuthUser(null);
         setMenuOpen(false);
       };
+
+      useEffect(() => {
+        if (!AUTH_API_BASE) return;
+        let cancelled = false;
+        fetch(`${AUTH_API_BASE}/api/v1/auth/me`, {
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        })
+          .then(response => {
+            if (!response.ok) throw new Error('No active account session');
+            return response.json();
+          })
+          .then(data => { if (!cancelled) setAuthUser(data); })
+          .catch(() => { if (!cancelled) setAuthUser(null); });
+        return () => { cancelled = true; };
+      }, []);
 
       useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
 
@@ -2988,7 +3016,7 @@
               <div className="app-user-menu">
                 <button type="button" className="app-menu-trigger" onClick={() => setMenuOpen(true)} aria-expanded={menuOpen} aria-haspopup="dialog" aria-label="باز کردن منوی حساب کاربری">
                   <span className="app-menu-trigger-icon" aria-hidden="true">☰</span>
-                  <strong>{demoMenuRole ? 'منو' : 'ورود'}</strong>
+                  <strong>{authUser || demoMenuRole ? 'حساب من' : 'ورود'}</strong>
                   <span className="app-menu-trigger-hint" aria-hidden="true">حساب و تنظیمات</span>
                 </button>
               </div>
@@ -3019,6 +3047,7 @@
             open={menuOpen}
             onClose={() => setMenuOpen(false)}
             demoMenuRole={demoMenuRole}
+            authUser={authUser}
             dateMode={dateMode}
             setDateMode={setDateMode}
             currency={currency}

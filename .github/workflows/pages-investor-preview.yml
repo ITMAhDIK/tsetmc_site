@@ -134,7 +134,7 @@ jobs:
                            "AccountMenuDrawer", "app-drawer-panel", "خرید اشتراک ویژه",
                            "تاریخچهٔ کیف پول", "مدیریت داده‌های بازار", "ChartAccessContext",
                            "۲٬۴۹۹٬۰۰۰", "۸۹۹٬۰۰۰", "اسنپ‌پی", "دیجی‌پی", "logoutDemoMenu",
-                           "دانلود فایل اکسل", "غربال پیشرفتهٔ سهام‌داران و نمادها"):
+                           "دانلود فایل اکسل", "فیلتر پیشرفتهٔ بازار", "ورود یا ساخت حساب", "شناسهٔ کاربر"):
               if required not in page:
                   raise SystemExit(f"Missing account menu behavior: {required}")
           if 'className="app-toolbar"' in page or 'app-tool-button' in page:
@@ -153,10 +153,29 @@ jobs:
           share_end = page.index("function PortfolioReconstructionPage", share_start)
           if "<AdvancedScreenerPanel onOpenStock={onOpenStock} />" not in page[share_start:share_end]:
               raise SystemExit("Advanced screener is not embedded in Shareholder Analysis")
+          if "غربال پیشرفتهٔ سهام‌داران و نمادها" in page[share_start:share_end]:
+              raise SystemExit("Old screener body remains in Shareholder Analysis")
           screener_at = page.index("<AdvancedScreenerPanel onOpenStock={onOpenStock} />", share_start)
-          explainer_at = page.index("غربال پیشرفتهٔ سهام‌داران و نمادها", screener_at)
-          if explainer_at < screener_at:
-              raise SystemExit("Shareholder screener explainer must appear below the advanced filter body")
+          if "غربال پیشرفتهٔ سهام‌داران و نمادها" in page:
+              raise SystemExit("Removed screener title still appears")
+          screener_component_start = page.index("function AdvancedScreenerPanel")
+          screener_component_end = page.index("// ---", screener_component_start + 25)
+          screener_component = page[screener_component_start:screener_component_end]
+          if "شرط‌های مالکیت، تغییر سهام، نوع سهام‌دار، وضعیت هویت و کیفیت داده" not in screener_component:
+              raise SystemExit("Combined screener body is not under the market filter title")
+          for visible_group_id in (" · {group.code}", "({selectedSectorGroup.code})", "{group.code}</div>", "کد / گروه", "کدهای رسمی"):
+              if visible_group_id in page:
+                  raise SystemExit(f"Visible official group identifier remains: {visible_group_id}")
+          for required_auth in ('id="googleButton"', 'id="publicUserId"', 'id="termsAccepted"',
+                                'href="./terms.html"', "/api/v1/auth/google/start",
+                                "terms_accepted = true", "data.user?.public_id"):
+              if required_auth not in auth:
+                  raise SystemExit(f"Missing auth/registration contract: {required_auth}")
+          terms = Path("docs/saas/terms.html")
+          if not terms.exists() or "قوانین و مقررات تلومبرگ" not in terms.read_text(encoding="utf-8"):
+              raise SystemExit("Linked terms page is missing")
+          if 'tloomberg-auth-api' not in page or 'authUser={authUser}' not in page:
+              raise SystemExit("Dashboard is not wired to authenticated user profile")
           if "{ id: 'screener'" in page:
               raise SystemExit("Old standalone screener tab still exists")
           if "ذخیره در دیتابیس" in page or "saved-filters" in page:
