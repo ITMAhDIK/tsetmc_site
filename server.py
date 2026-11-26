@@ -2075,6 +2075,7 @@ class SiteApi:
             resolve_symbol=self.market_service.resolve_symbol,
             company_daily=self.market_service._company_daily,
             majority_twin_map=self._majority_twin_map,
+            like_or_clause=_like_or_clause,
             q_str=_q_str,
             q_int=_q_int,
             like_or_clause=_like_or_clause,

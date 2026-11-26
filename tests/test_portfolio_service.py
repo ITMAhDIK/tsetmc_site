@@ -209,7 +209,7 @@ def portfolio_api(tmp_path):
 
 def test_site_api_composes_portfolio_service(portfolio_api):
     assert isinstance(portfolio_api.portfolio_service, PortfolioService)
-    assert portfolio_api.portfolio_service.majority_twin_map.__self__ is portfolio_api
+    assert portfolio_api.portfolio_service._majority_twin_map.__self__ is portfolio_api
 
 
 def test_portfolio_investors_keeps_existing_list_contract(portfolio_api):

@@ -29,6 +29,7 @@ class PortfolioService:
         site_dir,
         require_ready,
         majority_twin_map,
+        like_or_clause,
         q_str,
         q_int,
         norm_date,
@@ -46,6 +47,7 @@ class PortfolioService:
         self.site_dir = site_dir
         self.require_ready = require_ready
         self._majority_twin_map = majority_twin_map
+        self._like_or_clause = like_or_clause
         self._q_str = q_str
         self._q_int = q_int
         self._norm_date = norm_date
@@ -79,7 +81,7 @@ class PortfolioService:
             where = ""
             args = []
             if q:
-                frag, fargs = _like_or_clause(["n.name"], q)
+                frag, fargs = self._like_or_clause(["n.name"], q)
                 where = ("WHERE " + frag + " "
                          "OR CAST(i.shareholder_id AS TEXT) LIKE ?")
                 args = fargs + [_like(q)]
