@@ -2,6 +2,9 @@
 from __future__ import annotations
 from uuid import UUID
 from cryptography.fernet import Fernet
+import hashlib
+import hmac
+import json
 import os
 from .service import (OTP_MAX_ATTEMPTS, OTP_TTL, SESSION_TTL, AuthenticationError,
     hash_otp, hash_password, hash_session_token, new_otp, new_session_token,
@@ -71,6 +74,44 @@ def revoke_session(conn, token: str) -> None:
         cur.execute("UPDATE sessions SET revoked_at=now() WHERE token_hash=%s AND revoked_at IS NULL",
                     (hash_session_token(token),))
 
+
+def _ensure_bootstrap_superadmin_role(cur, user_id: UUID, verified_phone: str) -> bool:
+    """Grant the single configured bootstrap superadmin after verified phone OTP.
+
+    The phone number is read only from protected server configuration. The
+    browser cannot request a role or supply a trusted role claim.
+    """
+    configured_phone = os.environ.get("SAAS_SUPERADMIN_PHONE_E164", "").strip()
+    if not configured_phone:
+        return False
+    try:
+        configured_phone = normalize_phone(configured_phone)
+    except ValueError as exc:
+        raise RuntimeError("SAAS_SUPERADMIN_PHONE_E164 must be a valid E.164 number") from exc
+    if not hmac.compare_digest(verified_phone, configured_phone):
+        return False
+
+    cur.execute(
+        """INSERT INTO user_roles(user_id,role_id)
+           SELECT %s,id FROM roles WHERE code='superadmin'
+           ON CONFLICT DO NOTHING
+           RETURNING role_id""",
+        (user_id,),
+    )
+    granted = cur.fetchone()
+    if granted:
+        cur.execute(
+            """INSERT INTO admin_audit_logs
+               (actor_user_id,action,target_type,target_id,after_state)
+               VALUES (NULL,'auth.bootstrap_superadmin.granted','user',%s,%s::jsonb)""",
+            (str(user_id), json.dumps({
+                "role": "superadmin",
+                "grant_source": "verified_configured_phone",
+            })),
+        )
+        return True
+    return False
+
 def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
     phone = normalize_phone(phone)
     if purpose not in {"signup","login","purchase","link_identity","withdrawal"}:
@@ -106,9 +147,10 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
             encrypted_payload = cipher.encrypt(
                 ('{"otp":"' + otp + '","purpose":"' + purpose + '"}').encode("utf-8")
             ).decode("ascii")
+            phone_tag = hashlib.sha256(phone.encode("utf-8")).hexdigest()[:20]
             cur.execute("""INSERT INTO notification_outbox(channel,template_code,destination_token,payload,idempotency_key)
                 VALUES ('sms','phone_otp',%s,jsonb_build_object('encrypted_payload',%s::text),%s)""",
-                (encrypted_phone,encrypted_payload,f"otp:{phone}:{purpose}:{digest[:16]}"))
+                (encrypted_phone,encrypted_payload,f"otp:{phone_tag}:{purpose}:{digest[:16]}"))
 
 def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login"):
     phone = normalize_phone(phone)
@@ -135,22 +177,23 @@ def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login"):
                 user = cur.fetchone()
                 if purpose == "signup" and user:
                     invalid = True
-                elif purpose == "login" and not user:
-                    invalid = True
                 elif user and user["status"] != "active":
                     invalid = True
                 else:
+                    # A successful phone-OTP login is also the passwordless
+                    # first-registration flow when the E.164 number is new.
                     if not user:
-                        cur.execute("""INSERT INTO users(public_id,phone_e164,phone_verified_at)
-                            VALUES ('usr_' || encode(gen_random_bytes(12),'hex'),%s,now()) RETURNING id""", (phone,))
+                        cur.execute("""INSERT INTO users(public_id,phone_e164,phone_verified_at,last_login_at)
+                            VALUES ('usr_' || encode(gen_random_bytes(12),'hex'),%s,now(),now()) RETURNING id""", (phone,))
                         user_id = cur.fetchone()["id"]
-                        _ensure_user_role(cur,user_id)
                         cur.execute("INSERT INTO auth_identities(user_id,provider,provider_subject) VALUES (%s,'phone_otp',%s)", (user_id,phone))
                         cur.execute("INSERT INTO user_preferences(user_id) VALUES (%s)", (user_id,))
                         cur.execute("INSERT INTO wallet_accounts(user_id) VALUES (%s)", (user_id,))
                     else:
                         user_id = user["id"]
                         cur.execute("UPDATE users SET phone_verified_at=COALESCE(phone_verified_at,now()),last_login_at=now() WHERE id=%s", (user_id,))
+                    _ensure_user_role(cur,user_id)
+                    _ensure_bootstrap_superadmin_role(cur,user_id,phone)
                     result = create_session(conn,user_id)
     if invalid or result is None:
         raise AuthenticationError("invalid or expired verification code")
