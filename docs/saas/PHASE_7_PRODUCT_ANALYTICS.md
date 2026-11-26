@@ -46,11 +46,11 @@
 - PostgreSQL integration, high-volume ingestion/load tests, dashboard query benchmarks and privacy/security review have not been run.
 
 ## Validation status
-- Full combined Python suite: **187 passed in 9.28s** on PostgreSQL 16 CI.
+- Full combined Python suite: **198 passed in 12.83s** on PostgreSQL 16 CI.
 - Frontend SDK: **10 Node.js tests passed**; `node --check` passed for both browser scripts.
-- All nine SaaS migrations (001–009) applied with checksums and the migration lock; the migration history check passed.
+- All ten SaaS migrations (001–010) applied with checksums and the migration lock; the migration history check passed.
 - PostgreSQL route tests verify repeated two/three-step paths, exact repetition/session/user counts, same-timestamp ordering via `event_order`, no cross-session stitching, exclusion of non-page-view events, aggregate minimum-cohort suppression, user-level RBAC and audit logging.
 - The standard-user route matrix also includes both new GET endpoints and confirms denial without analytics permissions.
 - Dependency audit, Bandit analysis, encrypted backup/isolated restore, Docker/Compose/Caddy checks passed in the same CI revision.
 
-The CI database is a disposable PostgreSQL 16 service. The frontend SDK is present but live collection remains disabled until a persistent SaaS API host, same-site domain/cookie setup and real login integration are configured. No live website visitor events have been collected. Keep the API private until hosting, authentication, privacy and operational review are complete.
+The CI database is a disposable PostgreSQL 16 service. The frontend SDK and phone-OTP account UI are present, but live collection and real login remain disabled until a persistent SaaS API host, Kavenegar credentials/approved sender, protected bootstrap phone secret and same-site domain/cookie setup are provisioned. No live website visitor events or OTP SMS have been sent. Keep the API private until hosting, authentication, privacy and operational review are complete.
