@@ -2,7 +2,7 @@ import io
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
-from server import _build_screener_xlsx
+from server import _build_screener_xlsx, _screener_public_row
 
 
 def test_screener_xlsx_contains_only_the_approved_columns():
@@ -48,3 +48,25 @@ def test_screener_xlsx_treats_formula_like_text_as_a_literal_string():
     ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
     assert sheet.findall(".//x:f", ns) == []
     assert value in [node.text or "" for node in sheet.findall(".//x:is/x:t", ns)]
+
+
+
+def test_screener_query_projection_removes_unapproved_fields():
+    row = {
+        "symbol": "فملی",
+        "market": "بورس",
+        "shareholder_name": "سهام‌دار نمونه",
+        "ownership_percent_calculated": 4.0,
+        "shares_change": 10,
+        "disclosed_ownership_percent_sum": 22.5,
+        "private_internal_id": "do not send to browser",
+        "phone": "must never be part of market results",
+    }
+    public = _screener_public_row(row)
+    assert set(public) == {
+        "symbol", "market", "shareholder_name",
+        "ownership_percent_calculated", "shares_change",
+        "disclosed_ownership_percent_sum",
+    }
+    assert "private_internal_id" not in public
+    assert "phone" not in public

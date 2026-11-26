@@ -1917,6 +1917,18 @@ def _xlsx_column_name(index):
     return result
 
 
+SCREENER_PUBLIC_COLUMNS = (
+    "symbol", "market", "shareholder_name",
+    "ownership_percent_calculated", "shares_change",
+    "disclosed_ownership_percent_sum",
+)
+
+
+def _screener_public_row(row):
+    """Project a query result onto the fields explicitly approved for clients."""
+    return {key: row[key] for key in SCREENER_PUBLIC_COLUMNS}
+
+
 def _build_screener_xlsx(rows):
     """Build an XLSX export with a strict allow-list of public screener fields."""
     columns = (
@@ -4215,7 +4227,7 @@ class SiteApi:
         try:
             self.require_ready(sc)
             rows = sc.execute(sql, args + [limit]).fetchall()
-            return {"rows": [dict(r) for r in rows]}
+            return {"rows": [_screener_public_row(r) for r in rows]}
         finally:
             sc.close()
 
@@ -4229,12 +4241,7 @@ class SiteApi:
             rows = sc.execute(sql, args + [limit]).fetchall()
         finally:
             sc.close()
-        allowed_columns = (
-            "symbol", "market", "shareholder_name",
-            "ownership_percent_calculated", "shares_change",
-            "disclosed_ownership_percent_sum",
-        )
-        safe_rows = [{key: row[key] for key in allowed_columns} for row in rows]
+        safe_rows = [_screener_public_row(row) for row in rows]
         return _build_screener_xlsx(safe_rows)
 
     # -- 7. Saved filters + watchlist (sidecar) ------------------------------
