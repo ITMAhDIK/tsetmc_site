@@ -86,7 +86,7 @@ This threat model is a working engineering document, not an independent threat a
 ## Exit checklist
 
 - [x] Fresh-install SaaS migrations run on disposable PostgreSQL 16 in CI with checksum history.
-- [x] Full Python suite: 171 passed in 8.83s on the verified combined Phases 8–9 branch (including PostgreSQL 16 integration tests).
+- [x] Full Python suite: 172 passed in 10.45s on the verified combined Phases 8–9 branch (including PostgreSQL 16 integration tests).
 - [x] Dependency audit, high-severity/high-confidence Bandit, shell syntax, Python compilation, non-root image build, Compose and Caddy validation pass on the verified Phase 9 head.
 - [x] PostgreSQL-backed integration tests cover the explicitly listed critical flows.
 - [x] Age-encrypted backup/restore script rehearsal passes on an isolated disposable PostgreSQL 16 cluster in CI, using a separately provisioned read-only backup role and explicit TLS negative tests.
