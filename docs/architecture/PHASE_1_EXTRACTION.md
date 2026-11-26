@@ -27,7 +27,7 @@ The existing API methods and database access were not moved or rewritten. The so
 
 The Phase 0 baseline CI run executed the full pre-extraction test suite: **88 passed**.
 
-Phase 1 is considered complete only after CI passes on this extracted version too. Passing route-contract tests proves dispatcher parity for the inventory; it does not prove live database behavior, network deployment, load capacity or admin authorization. Those remain separate work items.
+**Slice 1 status: complete; Phase 1 as a whole remains in progress.** GitHub Actions run [45881509305](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45881509305) completed successfully on this extracted commit: **117 passed in 0.41s**. The 27-route manifest was exercised against both the extracted dispatcher and the legacy Handler adapter. Passing route-contract tests proves dispatcher parity for the inventory; it does not prove live database behavior, network deployment, load capacity or admin authorization. Those remain separate work items.
 
 ## Next extraction candidates
 
