@@ -107,12 +107,7 @@ def set_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reason:
                 SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
                 WHERE ur.user_id=%s AND r.code='superadmin') AS is_superadmin""",(user_id,))
             target_is_superadmin=cur.fetchone()["is_superadmin"]
-            if target_is_superadmin and status=="suspended":
-                cur.execute("""SELECT count(DISTINCT u.id)::int AS n FROM users u
-                    JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
-                    WHERE r.code='superadmin' AND u.status='active'""")
-                if cur.fetchone()["n"]<=1:
-                    raise ValueError("cannot suspend the last active superadmin")
+            if target_is_superadmin:
                 raise ValueError("superadmin accounts must be managed out of band")
             cur.execute("UPDATE users SET status=%s,updated_at=now() WHERE id=%s RETURNING id,status",(status,user_id))
             result=cur.fetchone()
