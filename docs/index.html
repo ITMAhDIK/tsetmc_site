@@ -3128,7 +3128,7 @@
 
       const loadUserAnalytics = async () => {
         const target = String(analyticsUserId || '').trim();
-        if (!/^\\d+$/.test(target)) {
+        if (!/^\d+$/.test(target)) {
           setError('شناسه عددی معتبر کاربر را وارد کنید.');
           return;
         }
