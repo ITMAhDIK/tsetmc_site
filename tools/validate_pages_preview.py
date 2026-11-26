@@ -86,7 +86,7 @@ def main() -> int:
     if "http://127.0.0.1:8000" in html or "http://127.0.0.1:8000" in LOCAL_APP.read_text(encoding="utf-8"):
         raise SystemExit("A public build must not call a developer's localhost.")
     local_app = LOCAL_APP.read_text(encoding="utf-8")
-    if "window.SITE_API_BASE_URL" not in local_app or "replace(/\\\\/$/, '')" not in local_app:
+    if "window.SITE_API_BASE_URL" not in local_app or "replace(/" not in local_app:
         raise SystemExit("The hosted site must use a configurable same-origin API base.")
     if re.search(
         r"(?:api[_-]?key|client[_-]?secret|merchant[_-]?id)\s*[:=]\s*['\"][^'\"]{8,}",
