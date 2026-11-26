@@ -220,26 +220,38 @@
         if (!allowedRoles.includes(role)) throw new Error('نقش دریافتی از سرور معتبر نیست.');
         $('loginView').style.display = 'none';
         $('accountView').classList.add('show');
-        $('welcomeTitle').textContent = role === 'superadmin' ? 'خوش آمدی، مدیر کل' : 'به تلومبرگ خوش آمدی';
+        $('welcomeTitle').textContent = role === 'superadmin' ? (data.demo ? 'پیش‌نمایش سوپرادمین' : 'خوش آمدی، مدیر کل') : 'به تلومبرگ خوش آمدی';
         $('maskedPhone').textContent = maskPhone(data.user?.phone_e164 || currentPhone);
         const chip = $('roleChip');
-        chip.textContent = ({superadmin:'سوپرادمین',admin:'مدیر',support:'پشتیبانی',user:'کاربر عادی'})[role];
+        chip.textContent = ({superadmin: data.demo ? 'سوپرادمین · حالت نمایشی' : 'سوپرادمین',admin:'مدیر',support:'پشتیبانی',user:'کاربر عادی'})[role];
         chip.className = 'role-chip' + (role === 'superadmin' ? ' admin' : '');
-        $('accountDescription').textContent = role === 'superadmin'
-          ? 'شمارهٔ شما توسط سرور به نقش سوپرادمین متصل شده است. ابزارهای مدیریتی فقط برای این نقش نمایش داده می‌شوند.'
-          : 'حساب شما با موفقیت تأیید شد. امکانات حساب کاربری بر اساس سطح دسترسی شما فعال می‌شوند.';
+        $('accountDescription').textContent = data.demo
+          ? (role === 'superadmin'
+              ? 'این شماره در نمونهٔ آزمایشی به‌عنوان سوپرادمین شناسایی شده است. این نمایش، احراز هویت یا مجوز مدیریتی واقعی نیست.'
+              : 'ورود آزمایشی انجام شد. امکانات حساب واقعی پس از اتصال سرویس احراز هویت فعال می‌شوند.')
+          : (role === 'superadmin'
+              ? 'شمارهٔ شما توسط سرور به نقش سوپرادمین متصل شده است. ابزارهای مدیریتی فقط برای این نقش نمایش داده می‌شوند.'
+              : 'حساب شما با موفقیت تأیید شد. امکانات حساب کاربری بر اساس سطح دسترسی شما فعال می‌شوند.');
         const items = role === 'superadmin'
           ? [['مدیریت کاربران','مشاهده و مدیریت حساب‌ها'],['نقش‌ها و دسترسی‌ها','کنترل مجوزهای مدیریتی'],['اشتراک و پرداخت','مدیریت طرح‌ها و سفارش‌ها'],['ممیزی و گزارش‌ها','پیگیری رویدادهای مدیریتی']]
           : [['داشبورد بازار','نمای بازار و نمادها'],['پرتفوی سرمایه‌گذاران','بررسی ترکیب دارایی‌ها'],['حساب کاربری','پروفایل و وضعیت اشتراک'],['تنظیمات','ترجیحات و امنیت حساب']];
         $('accessGrid').innerHTML = items.map(([title,desc]) => '<div class="access-item">' + title + '<small>' + desc + '</small></div>').join('');
+        if (data.demo) setStatus('حالت آزمایشی: این نقش فقط برای مشاهدهٔ ظاهر حساب است و دسترسی مدیریتی سمت سرور ایجاد نمی‌کند.', 'info', $('accountStatus'));
+        else $('accountStatus').className = 'status';
       }
       async function sendCode() {
         try {
-          requireApi();
           const phone = normalizePhone($('phone').value);
           if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new Error('شماره را با فرمت بین‌المللی معتبر وارد کن؛ مانند +989xxxxxxxxx.');
           currentPhone = phone;
           $('sendButton').disabled = true;
+          if (DEMO_OTP_MODE) {
+            challengeId = 'demo-' + String(Date.now());
+            $('otpHint').textContent = 'برای تست، هر عدد چهاررقمی قابل قبول است. پیامکی به گوشی ارسال نمی‌شود.';
+            showOtp();
+            setStatus('حالت آزمایشی فعال شد؛ یک کد دلخواه چهاررقمی وارد کن.', 'info');
+            return;
+          }
           const result = await request('/api/v1/auth/otp/request', { phone_e164: phone, purpose: 'login' });
           challengeId = result.challenge_id || null;
           $('otpHint').textContent = 'کد برای ' + maskPhone(phone) + ' ارسال شده است. اعتبار کد محدود است.';
@@ -253,8 +265,14 @@
       }
       async function verifyCode() {
         try {
-          requireApi();
           const code = toEnglishDigits($('otp').value).replace(/\D/g, '');
+          if (DEMO_OTP_MODE) {
+            if (!/^\d{4}$/.test(code)) throw new Error('برای تست، دقیقاً چهار رقم وارد کن.');
+            $('verifyButton').disabled = true;
+            const role = await isDemoSuperadmin(currentPhone) ? 'superadmin' : 'user';
+            renderAccount({ role, demo: true, user: { phone_e164: currentPhone } });
+            return;
+          }
           if (code.length !== 6) throw new Error('کد تأیید باید شش رقم باشد.');
           $('verifyButton').disabled = true;
           const result = await request('/api/v1/auth/otp/verify', {
@@ -271,18 +289,28 @@
       }
       phoneForm.addEventListener('submit', event => { event.preventDefault(); sendCode(); });
       $('verifyButton').addEventListener('click', verifyCode);
-      $('resendButton').addEventListener('click', sendCode);
+      $('resendButton').addEventListener('click', () => {
+        if (DEMO_OTP_MODE) setStatus('حالت تست فعال است؛ هر کد چهاررقمی پذیرفته می‌شود.', 'info');
+        else sendCode();
+      });
       $('changePhoneButton').addEventListener('click', resetOtp);
       $('logoutButton').addEventListener('click', async () => {
-        try { requireApi(); await request('/api/v1/auth/logout', {}); }
-        catch (error) { setStatus(error.message, 'error', $('accountStatus')); return; }
+        if (!DEMO_OTP_MODE) {
+          try { await request('/api/v1/auth/logout', {}); }
+          catch (error) { setStatus(error.message, 'error', $('accountStatus')); return; }
+        }
         $('accountView').classList.remove('show');
         $('loginView').style.display = '';
         $('phone').value = '';
+        $('accountStatus').className = 'status';
         resetOtp();
       });
-      $('otp').addEventListener('input', event => { event.target.value = toEnglishDigits(event.target.value).replace(/\D/g, '').slice(0,6); });
-      if (API_BASE) {
+      $('otp').maxLength = DEMO_OTP_MODE ? 4 : 6;
+      $('otp').addEventListener('input', event => { event.target.value = toEnglishDigits(event.target.value).replace(/\D/g, '').slice(0, DEMO_OTP_MODE ? 4 : 6); });
+      if (DEMO_OTP_MODE) {
+        $('setupNote').style.display = '';
+        $('sendButton').textContent = 'ادامه به مرحلهٔ کد آزمایشی ←';
+      } else {
         $('setupNote').style.display = 'none';
         request('/api/v1/auth/me')
           .then(data => renderAccount(data))
