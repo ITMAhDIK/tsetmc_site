@@ -26,6 +26,12 @@ class MarketService:
         self._fmt_gregorian_date = fmt_gregorian_date
         self._overview_cache = {"at": 0.0, "payload": None}
 
+    def resolve_symbol(self, sc, symbol):
+        row = self._resolve_symbol_row(sc, symbol)
+        if row is None:
+            raise ApiError(404, "نماد یافت نشد: %s" % symbol)
+        return row
+
     # -- 1. Market dashboard ----------------------------------------------
     def market_overview(self):
         now = time.time()
