@@ -11,9 +11,9 @@ referrals, support and product analytics.
   OTPs, passwords, payment data or private ticket content.
 
 ## Current implementation
-- \`schema/001_initial.sql\`: PostgreSQL schema and initial plans.
-- \`domain/wallet.py\`: pure cash/gift wallet rules.
-- \`../tests/saas/test_wallet_rules.py\`: wallet policy tests.
+- `schema/001_initial.sql`: PostgreSQL schema and initial plans.
+- `domain/wallet.py`: pure cash/gift wallet rules.
+- `../tests/saas/test_wallet_rules.py`: wallet policy tests.
 
 ## Wallet rules
 All money is integer Toman. Cash is user-funded and potentially withdrawable;
@@ -25,9 +25,9 @@ locks. The pure domain module is not a payment processor.
 
 ## Apply schema
 Create a dedicated SaaS PostgreSQL database, then run:
-\`\`\`powershell
+```powershell
 psql "$env:SAAS_DATABASE_URL" -v ON_ERROR_STOP=1 -f saas_core/schema/001_initial.sql
-\`\`\`
+```
 Never point this URL at the market-data database.
 
 Payment gateways, SMS, Google OAuth, production authentication and withdrawal
@@ -43,4 +43,9 @@ sandbox verification and dedicated service implementations.
 - Market-data administration is a staff permission, not a subscription feature.
 - The menu and checkout are frontend previews. SMS, Google sign-in, live payments, tickets and analytics collection need a deployed API.
 
-\n## Product analytics\n\nApply migration 003 after migrations 001 and 002 to the dedicated SaaS PostgreSQL database. The product analytics service requires explicit opt-in, a trusted server-side identity boundary and the \`analytics.read\` permission for reporting. It supports aggregated component engagement, ordered funnels, weekly cohort retention, audited user-level access and configurable event retention. See \`docs/saas/PRODUCT-ANALYTICS.md\`.\n\nThe service layer is implemented, but the public HTTP adapter, browser collector, consent UI and production deployment are not. Keep collection disabled until those pieces and the published privacy notice are ready.\n
+
+## Product analytics
+
+Apply migration 003 after migrations 001 and 002 to the dedicated SaaS PostgreSQL database. The product analytics service requires explicit opt-in, a trusted server-side identity boundary and the `analytics.read` permission for reporting. It supports aggregated component engagement, ordered funnels, weekly cohort retention, audited user-level access and configurable event retention. See `docs/saas/PRODUCT-ANALYTICS.md`.
+
+The service layer is implemented, but the public HTTP adapter, browser collector, consent UI and production deployment are not. Keep collection disabled until those pieces and the published privacy notice are ready.

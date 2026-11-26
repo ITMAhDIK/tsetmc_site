@@ -386,3 +386,43 @@ def test_date_windows_and_event_batches_are_bounded():
             [click_event() for _ in range(51)],
             user_id=USER_ID,
         )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda event: event.update({"event_name": []}),
+        lambda event: event.update({"element_role": []}),
+        lambda event: event.update({"event_name": "scroll_depth", "scroll_depth_pct": []}),
+    ],
+)
+def test_unhashable_event_enums_are_rejected_as_validation_errors(mutate):
+    calls = []
+    cursor = FakeCursor(fetchone=(True,))
+    service, _ = make_service(cursor, factory_calls=calls)
+    event = click_event()
+    mutate(event)
+    with pytest.raises(ProductAnalyticsError):
+        service.ingest_events([event], user_id=USER_ID)
+    assert calls == []
+
+
+def test_funnel_and_cohort_reject_unhashable_event_names():
+    calls = []
+    cursor = FakeCursor()
+    service, _ = make_service(cursor, factory_calls=calls)
+    with pytest.raises(ProductAnalyticsError):
+        service.funnel_report(
+            actor_user_id=ACTOR_ID,
+            steps=["page_view", []],
+            start_at=NOW - timedelta(days=1),
+            end_at=NOW,
+        )
+    with pytest.raises(ProductAnalyticsError):
+        service.cohort_retention(
+            actor_user_id=ACTOR_ID,
+            start_at=NOW - timedelta(days=1),
+            end_at=NOW,
+            activity_event=[],
+        )
+    assert calls == []

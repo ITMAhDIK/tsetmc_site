@@ -2,7 +2,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INITIAL = (ROOT / "saas_core" / "schema" / "001_initial.sql").read_text(encoding="utf-8")
-MIGRATION = (ROOT / "saas_core" / "schema" / "002_product_features_referrals_analytics.sql").read_text(encoding="utf-8")\nMIGRATION_003 = (ROOT / "saas_core" / "schema" / "003_product_analytics_ingestion.sql").read_text(encoding="utf-8")
+MIGRATION = (ROOT / "saas_core" / "schema" / "002_product_features_referrals_analytics.sql").read_text(encoding="utf-8")
+MIGRATION_003 = (ROOT / "saas_core" / "schema" / "003_product_analytics_ingestion.sql").read_text(encoding="utf-8")
 README = (ROOT / "saas_core" / "README.md").read_text(encoding="utf-8")
 
 

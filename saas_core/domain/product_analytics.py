@@ -259,7 +259,7 @@ class ProductAnalyticsService:
         if set(raw) - allowed_fields:
             raise ProductAnalyticsError("Event contains unapproved fields; identity and form values are never accepted.")
         event_name = raw.get("event_name")
-        if event_name not in _ALLOWED_EVENT_NAMES:
+        if not isinstance(event_name, str) or event_name not in _ALLOWED_EVENT_NAMES:
             raise ProductAnalyticsError("event_name is not in the approved event vocabulary.")
         event_id = _as_uuid(raw.get("event_id"), "event_id")
         page_path = self._validate_page_path(raw.get("page_path"))
@@ -270,7 +270,7 @@ class ProductAnalyticsService:
         ):
             raise ProductAnalyticsError("component_id must be a stable component identifier.")
         element_role = raw.get("element_role")
-        if element_role is not None and element_role not in _ALLOWED_ELEMENT_ROLES:
+        if element_role is not None and (not isinstance(element_role, str) or element_role not in _ALLOWED_ELEMENT_ROLES):
             raise ProductAnalyticsError("element_role is not eligible for analytics.")
         if event_name == "click" and (component_id is None or element_role is None):
             raise ProductAnalyticsError("click events require a stable component_id and eligible element_role.")
@@ -279,7 +279,7 @@ class ProductAnalyticsService:
 
         scroll_depth = raw.get("scroll_depth_pct")
         if event_name == "scroll_depth":
-            if isinstance(scroll_depth, bool) or scroll_depth not in _SCROLL_MILESTONES:
+            if isinstance(scroll_depth, bool) or not isinstance(scroll_depth, int) or scroll_depth not in _SCROLL_MILESTONES:
                 raise ProductAnalyticsError("scroll_depth_pct must be one of 25, 50, 75, 90 or 100.")
         elif scroll_depth is not None:
             raise ProductAnalyticsError("scroll_depth_pct is valid only for scroll_depth events.")
@@ -478,7 +478,7 @@ class ProductAnalyticsService:
         if (
             not isinstance(steps, (list, tuple))
             or not 2 <= len(steps) <= 8
-            or any(step not in _ALLOWED_EVENT_NAMES for step in steps)
+            or any(not isinstance(step, str) or step not in _ALLOWED_EVENT_NAMES for step in steps)
         ):
             raise ProductAnalyticsError("steps must contain 2–8 approved event names.")
         ctes = [
@@ -543,7 +543,7 @@ class ProductAnalyticsService:
         """Return weekly cohort activity counts without exposing visitor identities."""
         self._require_permission(actor_user_id)
         start, end = self._date_window(start_at, end_at)
-        if activity_event not in _ALLOWED_EVENT_NAMES:
+        if not isinstance(activity_event, str) or activity_event not in _ALLOWED_EVENT_NAMES:
             raise ProductAnalyticsError("activity_event is not approved.")
         weeks = self._limit(max_weeks, 12, 26)
         sql = """
