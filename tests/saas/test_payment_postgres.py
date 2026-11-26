@@ -216,13 +216,14 @@ def test_stale_pending_payments_enter_reconciliation_queue(migrated_test_databas
 
 def test_refund_worker_keeps_request_queued_until_gateway_is_configured(migrated_test_database):
     with connect() as conn:
-        user_id, order, attempt, provider_ref = make_pending_order(conn)
+        _, order, attempt, provider_ref = make_pending_order(conn)
+        admin_id=make_admin(conn)
         settle_provider_callback(
             conn, order_id=order["id"], attempt_id=attempt["id"], provider="snappay",
             verified=verified_for(provider_ref), payload_sha256="e" * 64,
         )
         refund = request_full_refund(
-            conn, order_id=order["id"], requested_by=user_id,
+            conn, order_id=order["id"], requested_by=admin_id,
             idempotency_key=f"worker-refund-{uuid4()}",
         )
         result = process_refund(conn, refund_id=refund["id"])

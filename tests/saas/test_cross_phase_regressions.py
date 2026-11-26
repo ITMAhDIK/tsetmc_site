@@ -3,7 +3,7 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -92,7 +92,8 @@ def test_password_account_can_link_verified_phone_then_create_subscription(migra
                 account=client.get("/auth/me")
                 assert account.status_code==200
                 uid=account.json()["user"]["id"]
-                stored=conn.execute("SELECT phone_e164,phone_verified_at FROM users WHERE id=%s",(uid,)).fetchone()
+                user_uuid=UUID(uid)
+                stored=conn.execute("SELECT phone_e164,phone_verified_at FROM users WHERE id=%s",(user_uuid,)).fetchone()
                 assert stored["phone_e164"]==phone and stored["phone_verified_at"] is not None
                 identity=conn.execute(
                     "SELECT user_id FROM auth_identities WHERE provider='phone_otp' AND provider_subject=%s",
@@ -100,16 +101,12 @@ def test_password_account_can_link_verified_phone_then_create_subscription(migra
                 ).fetchone()
                 assert str(identity["user_id"])==uid
                 order=create_subscription_order(
-                    conn,user_id=stored_user_id(conn,uid),plan_code="premium_monthly",
+                    conn,user_id=user_uuid,plan_code="premium_monthly",
                     idempotency_key=f"phase-link-order-{uuid4()}",
                 )
                 assert order["amount_toman"]==899000
         finally:
             app.dependency_overrides.pop(get_conn,None)
-
-
-def stored_user_id(conn,user_id):
-    return conn.execute("SELECT id FROM users WHERE id=%s",(user_id,)).fetchone()["id"]
 
 
 def test_linked_phone_cannot_be_claimed_by_a_second_password_account(migrated_cross_phase_database,monkeypatch):
