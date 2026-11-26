@@ -6,6 +6,7 @@ from zipfile import ZipFile
 
 import pytest
 
+import server
 from server import ApiError, SiteApi
 from site_api.analytics_service import AnalyticsService
 from site_api.dispatch import dispatch_api
@@ -18,12 +19,15 @@ def analytics_api(tmp_path):
     api = SiteApi(str(source_path), str(sidecar_path), "", "")
     side = api.sidecar()
     try:
+        side.execute(
+            "CREATE TABLE IF NOT EXISTS site_holder_history (id INTEGER PRIMARY KEY)"
+        )
         side.executemany(
             "INSERT OR REPLACE INTO site_meta(key,value) VALUES (?,?)",
             [
                 ("last_refresh", "2026-11-26T18:00:00"),
                 ("ownership_resolver_schema", "resolved-v1-source-exclusions"),
-                ("sidecar_version", "10"),
+                ("sidecar_version", str(server.SIDECAR_VERSION)),
             ],
         )
         side.executemany(
