@@ -46,11 +46,15 @@ _REQUIRED_SCHEMA_TABLES = (
     "users", "sessions", "roles", "permissions", "role_permissions",
     "plans", "subscriptions", "payment_orders", "payment_attempts",
     "wallet_accounts", "wallet_ledger_entries", "wallet_bank_accounts",
-    "withdrawal_requests", "referrals", "tickets", "ticket_messages",
+    "withdrawal_requests", "referrals", "tickets", "ticket_messages", "notification_outbox",
     "analytics_consents", "analytics_events", "admin_audit_logs",
     "payment_reconciliation_notes",
 )
-_REQUIRED_SCHEMA_COLUMNS = ("analytics_events.event_order",)
+_REQUIRED_SCHEMA_COLUMNS = (
+    "analytics_events.event_order",
+    "notification_outbox.locked_at",
+    "notification_outbox.last_error",
+)
 
 
 def validate_production_configuration() -> None:
