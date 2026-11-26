@@ -712,3 +712,75 @@ def test_phases_0_to_8_compose_with_separate_market_and_saas_databases(portfolio
     )
     assert (status, content_type) == (200, "json")
     assert market_again["summary"]["total_companies"] == 1
+
+
+def test_market_http_adapter_health_cors_and_public_read_only_boundary(portfolio_api, monkeypatch):
+    """Exercise the actual HTTP handler and CORS headers over a local socket."""
+    import http.client
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    monkeypatch.setenv("MARKET_PUBLIC_READ_ONLY", "true")
+    monkeypatch.setenv("MARKET_ALLOWED_ORIGINS", "https://itmahdik.github.io")
+    handler = type("IsolatedMarketHandler", (server.Handler,), {"api": portfolio_api})
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address
+
+    def request(method, path, *, origin=None, body=None):
+        connection = http.client.HTTPConnection(host, port, timeout=5)
+        headers = {}
+        if origin:
+            headers["Origin"] = origin
+        payload = None
+        if body is not None:
+            import json
+            payload = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        connection.request(method, path, body=payload, headers=headers)
+        response = connection.getresponse()
+        data = response.read()
+        result = (response.status, dict(response.getheaders()), data)
+        connection.close()
+        return result
+
+    try:
+        status, headers, payload = request("GET", "/healthz", origin="https://itmahdik.github.io")
+        assert status == 200
+        assert headers.get("Access-Control-Allow-Origin") == "https://itmahdik.github.io"
+        assert b'"service": "market-api"' in payload
+
+        status, headers, payload = request("GET", "/readyz")
+        assert status == 200
+        assert b'"status": "ready"' in payload
+
+        status, headers, payload = request("GET", "/api/v1/market/overview")
+        assert status == 200
+        assert b'"total_companies": 1' in payload
+
+        status, headers, payload = request(
+            "GET", "/api/v1/market/overview", origin="https://attacker.example"
+        )
+        assert status == 200
+        assert "Access-Control-Allow-Origin" not in headers
+
+        status, headers, payload = request("POST", "/api/v1/watchlists/default/symbols",
+                                           body={"symbol": "فولاد"})
+        assert status == 403
+
+        status, headers, payload = request("GET", "/api/v1/watchlists/default")
+        assert status == 403
+
+        status, headers, payload = request("GET", "/api/v1/admin/overview")
+        assert status == 404
+
+        live = portfolio_api.live()
+        try:
+            assert live.execute("PRAGMA query_only").fetchone()[0] == 1
+        finally:
+            live.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
