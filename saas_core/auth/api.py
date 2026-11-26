@@ -132,6 +132,10 @@ app.include_router(support_router)
 from saas_core.analytics.api import router as analytics_router
 app.include_router(analytics_router)
 
+# Administrative console reuses authenticated sessions and granular service permissions.
+from saas_core.admin.api import router as admin_console_router
+app.include_router(admin_console_router)
+
 
 class PhoneLinkRequestBody(BaseModel):
     phone: str = Field(min_length=9,max_length=16)
