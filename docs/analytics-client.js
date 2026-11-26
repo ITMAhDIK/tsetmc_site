@@ -109,15 +109,25 @@
   function onClick(event) {
     if (!state.enabled || !state.pagePath) return;
     const target = event.target && event.target.closest
-      ? event.target.closest("[data-analytics-id]")
+      ? event.target.closest("[data-analytics-id],button,a,[role='button'],[role='tab'],[role='menuitem']")
       : null;
     if (!target || target.closest("[data-analytics-exclude]")) return;
-    const componentId = String(target.getAttribute("data-analytics-id") || "");
-    if (!/^[A-Za-z0-9_-]{1,80}$/.test(componentId)) return;
-    const rawRole = String(target.getAttribute("data-analytics-role") || "").toLowerCase();
+
+    const declaredId = String(target.getAttribute("data-analytics-id") || "");
+    const rawRole = String(
+      target.getAttribute("data-analytics-role") ||
+      target.getAttribute("role") ||
+      (target.tagName === "A" ? "link" : "button")
+    ).toLowerCase();
     const role = ["button", "link", "tab", "navigation", "menuitem"].includes(rawRole)
       ? rawRole
-      : (target.tagName === "A" ? "link" : "button");
+      : "other";
+
+    // Only use a developer-declared component ID. For unlabelled controls,
+    // retain a generic role bucket; never inspect text, titles, values or labels.
+    const componentId = /^[A-Za-z0-9_-]{1,80}$/.test(declaredId)
+      ? declaredId
+      : "interactive-" + role;
     enqueue("click", { component_id: componentId, element_role: role });
   }
 
