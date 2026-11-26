@@ -910,6 +910,19 @@ def test_phone_otp_delivery_creates_standard_account_and_bootstraps_only_configu
     assert standard_me.json()["user"]["is_superadmin"] is False
     assert standard_me.json()["user"]["roles"] == ["user"]
 
+    # Bootstrap grants the role, not an MFA bypass. The new admin session
+    # must enroll and verify TOTP before any superadmin endpoint is available.
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    mfa_setup = client.post("/auth/mfa/setup", headers=_auth(superadmin_token))
+    assert mfa_setup.status_code == 200, mfa_setup.text
+    mfa_confirm = client.post(
+        "/auth/mfa/confirm",
+        headers=_auth(superadmin_token),
+        json={"code": __import__("saas_core.auth.mfa", fromlist=["totp_code"]).totp_code(
+            mfa_setup.json()["secret"]
+        )},
+    )
+    assert mfa_confirm.status_code == 200, mfa_confirm.text
     assert client.get("/admin/dashboard", headers=_auth(superadmin_token)).status_code == 200
     assert client.get("/admin/dashboard", headers=_auth(standard_token)).status_code == 403
 
