@@ -50,10 +50,11 @@ _REQUIRED_SCHEMA_TABLES = (
     "wallet_accounts", "wallet_ledger_entries", "wallet_bank_accounts",
     "withdrawal_requests", "referrals", "tickets", "ticket_messages", "notification_outbox",
     "analytics_consents", "analytics_events", "admin_audit_logs",
-    "payment_reconciliation_notes",
+    "payment_reconciliation_notes", "user_admin_mfa", "legal_acceptances",
 )
 _REQUIRED_SCHEMA_COLUMNS = (
     "analytics_events.event_order",
+    "sessions.mfa_verified_at",
     "notification_outbox.locked_at",
     "notification_outbox.last_error",
 )
