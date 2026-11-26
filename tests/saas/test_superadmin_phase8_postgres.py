@@ -295,3 +295,64 @@ def test_withdrawal_review_referrals_and_audit_are_readable_without_payout_endpo
     assert audit.status_code==200 and audit.json()["logs"]
     paths=set(client.get("/openapi.json").json()["paths"])
     assert f"/admin/withdrawals/{{withdrawal_id}}/pay" not in paths
+def test_new_privileged_session_requires_mfa_and_totp_cannot_be_replayed(admin_context, monkeypatch):
+    from cryptography.fernet import Fernet
+    import saas_core.auth.api as auth_api
+    from saas_core.auth.mfa import totp_code
+    from saas_core.auth.repository import create_session
+    from saas_core.auth.service import hash_session_token
+
+    c = admin_context
+    client, conn = c["client"], c["conn"]
+    token, _ = create_session(conn, c["root"])
+    conn.commit()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    denied = client.get("/admin/dashboard", headers=headers)
+    assert denied.status_code == 403
+    status = client.get("/auth/mfa/status", headers=headers)
+    assert status.status_code == 200
+    assert status.json() == {"enabled": True, "verified_for_session": False}
+
+    encrypted = conn.execute(
+        "SELECT encrypted_secret FROM user_admin_mfa WHERE user_id=%s",
+        (c["root"],),
+    ).fetchone()["encrypted_secret"]
+    secret = Fernet("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").decrypt(
+        encrypted.encode("ascii")
+    ).decode("ascii")
+
+    fake_now = (int(time.time() // 30) + 1) * 30 + 1
+    monkeypatch.setattr(auth_api.time, "time", lambda: fake_now)
+    code = totp_code(secret, for_time=fake_now)
+    verified = client.post("/auth/mfa/verify", headers=headers, json={"code": code})
+    assert verified.status_code == 200, verified.text
+    replay = client.post("/auth/mfa/verify", headers=headers, json={"code": code})
+    assert replay.status_code == 409
+    assert client.get("/admin/dashboard", headers=headers).status_code == 200
+
+    conn.execute(
+        "UPDATE sessions SET mfa_verified_at=now()-interval '13 hours' WHERE token_hash=%s",
+        (hash_session_token(token),),
+    )
+    conn.commit()
+    assert client.get("/admin/dashboard", headers=headers).status_code == 403
+
+
+def test_signup_requires_reviewed_current_legal_versions_before_otp_is_queued(admin_context, monkeypatch):
+    client = admin_context["client"]
+    monkeypatch.delenv("SAAS_TERMS_VERSION", raising=False)
+    monkeypatch.delenv("SAAS_PRIVACY_VERSION", raising=False)
+    blocked = client.post("/auth/phone/request", json={
+        "phone": "+989123450001", "purpose": "signup", "terms_accepted": True,
+        "terms_version": "v1", "privacy_version": "v1",
+    })
+    assert blocked.status_code == 503
+
+    monkeypatch.setenv("SAAS_TERMS_VERSION", "terms-reviewed-2026-01")
+    monkeypatch.setenv("SAAS_PRIVACY_VERSION", "privacy-reviewed-2026-01")
+    mismatch = client.post("/auth/phone/request", json={
+        "phone": "+989123450001", "purpose": "signup", "terms_accepted": True,
+        "terms_version": "old-terms", "privacy_version": "privacy-reviewed-2026-01",
+    })
+    assert mismatch.status_code == 422
