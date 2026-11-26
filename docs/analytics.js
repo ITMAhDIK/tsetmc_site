@@ -19,7 +19,7 @@
     "screener", "watchlist", "account", "admin"
   ]);
   const SCROLL_STEPS = [25, 50, 75, 100];
-  const SAFE_IDENTIFIER = /^[A-Za-z0-9_-]{1,80}$/;
+  const SAFE_IDENTIFIER = /^[A-Za-z][A-Za-z0-9_-]{0,79}$/;
   const TICKER_SLUG = /^[\p{L}\p{N}_-]{1,40}$/u;
 
   function safeIdentifier(value, fallback) {
