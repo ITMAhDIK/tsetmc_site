@@ -133,6 +133,8 @@ def change_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reas
             before=cur.fetchone()
             if not before:
                 raise LookupError("user not found")
+            if before["status"] not in {"active","suspended"}:
+                raise ValueError("deleted or pending accounts cannot be reactivated through the console")
             cur.execute(
                 """SELECT EXISTS(
                      SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
@@ -140,7 +142,7 @@ def change_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reas
                    ) AS is_superadmin""",(user_id,)
             )
             is_superadmin=cur.fetchone()["is_superadmin"]
-            if is_superadmin and status=="suspended":
+            if is_superadmin:
                 # Serialize all superadmin suspension decisions, not merely the
                 # target row, so two concurrent requests cannot remove the last
                 # active superadmins at the same time.
@@ -421,13 +423,33 @@ def adjust_wallet(conn, *, actor_id: UUID, user_id: UUID, bucket: str,
                   amount_toman: int, reason: str, idempotency_key: str):
     if bucket not in {"cash","gift"}:
         raise ValueError("bucket must be cash or gift")
-    if isinstance(amount_toman,bool) or not isinstance(amount_toman,int) or amount_toman==0:
-        raise ValueError("amount_toman must be a non-zero integer")
+    if (isinstance(amount_toman,bool) or not isinstance(amount_toman,int)
+            or amount_toman==0 or not -(2**63)+1<=amount_toman<=2**63-1):
+        raise ValueError("amount_toman must be a non-zero signed 64-bit integer")
     reason=reason.strip()
     if not 3<=len(reason)<=500:
         raise ValueError("reason must contain 3-500 characters")
+    if not idempotency_key or idempotency_key.strip()!=idempotency_key or len(idempotency_key)>120:
+        raise ValueError("a non-blank idempotency key of at most 120 characters is required")
+    entry_type="admin_credit" if amount_toman>0 else "admin_debit"
     with conn.transaction():
         with conn.cursor() as cur:
+            # Serialize use of one key even when callers target different users.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",(idempotency_key,))
+            cur.execute(
+                """SELECT id,user_id,bucket,entry_type,amount_toman,reference_type,
+                          reference_id,description
+                   FROM wallet_ledger_entries WHERE idempotency_key=%s FOR UPDATE""",
+                (idempotency_key,),
+            )
+            existing=cur.fetchone()
+            if existing:
+                expected=(user_id,bucket,entry_type,amount_toman,"admin_adjustment",None,reason)
+                actual=tuple(existing[k] for k in
+                    ("user_id","bucket","entry_type","amount_toman","reference_type","reference_id","description"))
+                if actual!=expected:
+                    raise ValueError("idempotency key was reused with different wallet adjustment data")
+                return existing
             cur.execute("SELECT status FROM users WHERE id=%s FOR UPDATE",(user_id,))
             if not cur.fetchone():
                 raise LookupError("user not found")
@@ -442,11 +464,9 @@ def adjust_wallet(conn, *, actor_id: UUID, user_id: UUID, bucket: str,
             if balance+amount_toman<0:
                 raise ValueError("adjustment cannot make the wallet bucket negative")
             entry=post_ledger_entry(
-                conn,user_id=user_id,bucket=bucket,
-                entry_type="admin_credit" if amount_toman>0 else "admin_debit",
+                conn,user_id=user_id,bucket=bucket,entry_type=entry_type,
                 amount_toman=amount_toman,idempotency_key=idempotency_key,
-                reference_type="admin_adjustment",reference_id=None,
-                description=reason,
+                reference_type="admin_adjustment",reference_id=None,description=reason,
             )
             _audit(conn,actor_id=actor_id,action="superadmin.wallet.adjust",
                    target_type="user",target_id=str(user_id),
