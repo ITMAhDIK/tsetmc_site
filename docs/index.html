@@ -1389,6 +1389,13 @@
             </div>
           </div>
 
+          <section className="space-y-3">
+            <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] p-3">
+              <h2 className="font-bold text-sm">غربال پیشرفتهٔ سهام‌داران و نمادها</h2>
+              <p className="text-[11px] text-[var(--text-secondary)] mt-1">شرط‌های مالکیت، تغییر سهام، نوع سهام‌دار، وضعیت هویت و کیفیت داده را همین‌جا ترکیب کن؛ نتایج فیلتر به صفحهٔ نماد متصل هستند.</p>
+            </div>
+            <AdvancedScreenerPanel onOpenStock={onOpenStock} />
+          </section>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
             <div className="lg:col-span-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
               <table className="w-full text-right">
@@ -2037,7 +2044,7 @@
       ['has_corporate_action', 'تعداد افزایش سرمایه', 'number'],
       ['date_gregorian', 'تاریخ میلادی (YYYY-MM-DD)', 'date'],
     ];
-    function ScreenerPage({ onOpenStock }) {
+    function AdvancedScreenerPanel({ onOpenStock }) {
       const [logic, setLogic] = useState('AND');
       const [conds, setConds] = useState([
         { field: 'ownership_percent_calculated', op: '>=', value: 5 },
@@ -2093,7 +2100,7 @@
         <div className="space-y-3 text-xs">
           <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2.5">
             <div className="flex flex-wrap justify-between items-center gap-2">
-              <h1 className="text-sm font-bold">فیلتر پیشرفته روی کل نمادها</h1>
+              <h2 className="text-sm font-bold">فیلتر پیشرفتهٔ بازار</h2>
               <div className="flex flex-wrap gap-2">
                 <select value={logic} onChange={e => setLogic(e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] font-bold">
                   <option value="AND">AND (همه شرط‌ها)</option>
@@ -2556,10 +2563,7 @@
       { id: 'shareholders', label: 'تحلیل سهام‌داران' },
       { id: 'portfolio', label: 'پرتفوی سرمایه‌گذاران' },
       { id: 'investor-history', label: 'تاریخچه و گرایش سرمایه‌گذار' },
-      { id: 'screener', label: 'فیلتر پیشرفته' },
-      { id: 'watchlist', label: 'دیده‌بان' },
-      { id: 'account', label: 'حساب و اشتراک' },
-      { id: 'admin', label: 'مدیریت داده' },
+      { id: 'account', label: 'خرید اشتراک' },
     ];
 
     function getInitialTheme() {
@@ -2717,7 +2721,6 @@
             {page === 'shareholders' && <ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode} />}
             {page === 'portfolio' && <PortfolioReconstructionPage currency={currency} theme={theme} onOpenStock={openStock} dateMode={dateMode} initialInvestor={portfolioInvestor} />}
             {page === 'investor-history' && <InvestorHistoryPage />}
-            {page === 'screener' && <ScreenerPage onOpenStock={openStock} />}
             {page === 'watchlist' && <WatchlistPage onOpenStock={openStock} currency={currency} />}
             {page === 'account' && <AccountAndPlansPage plan={plan} setPlan={setPlan} />}
             {page === 'admin' && <AdminDashboardPage />}
