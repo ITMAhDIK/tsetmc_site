@@ -125,6 +125,8 @@ def test_production_configuration_requires_explicit_https_hosts_and_separate_sec
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "otp-secret-" + "x" * 40)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_METRICS_TOKEN", "metrics-test-secret-" + "m" * 40)
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(monkeypatch.tmpdir) if hasattr(monkeypatch, "tmpdir") else "/tmp/prometheus-test")
     monkeypatch.setenv("SAAS_DB_POOL_MIN", "1")
     monkeypatch.setenv("SAAS_DB_POOL_MAX", "8")
     monkeypatch.setenv("SAAS_DB_POOL_TIMEOUT_SECONDS", "4")
