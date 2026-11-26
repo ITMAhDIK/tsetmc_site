@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b0e14">
   <meta name="description" content="ورود امن به تلومبرگ با شماره موبایل">
-  <meta name="tloomberg-auth-api" content="">
+  <meta name="tloomberg-auth-api" content="same-origin">
   <meta name="tloomberg-terms-version" content="">
   <meta name="tloomberg-privacy-version" content="">
   <title>ورود به تلومبرگ | Tloomberg</title>
@@ -183,7 +183,8 @@
 
   <script>
     (() => {
-      const API_BASE = (document.querySelector('meta[name="tloomberg-auth-api"]')?.content || '').trim().replace(/\/+$/, '');
+      const API_BASE_SETTING = (document.querySelector('meta[name="tloomberg-auth-api"]')?.content || '').trim();
+      const API_BASE = API_BASE_SETTING === 'same-origin' ? window.location.origin : API_BASE_SETTING.replace(/\/+$/, '');
       const DEMO_OTP_MODE = false;
       // This public hash is only a visual demo selector, never an auth secret.
       const DEMO_SUPERADMIN_PHONE_SHA256 = '363c2dd7650cfb7d22f3d624656f2bd69e79e16b4e0412bfaa75cea8490c10ce';
