@@ -112,6 +112,14 @@ def test_superadmin_gate_and_account_status_lifecycle(admin_context):
         conn.execute("INSERT INTO role_permissions(role_id,permission_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
                      (admin_role,permission["id"]))
     conn.commit()
+    # The router enforces MFA before business authorization; enroll the admin
+    # session too so this assertion reaches the last-superadmin domain guard.
+    from saas_core.auth.mfa import totp_code
+    admin_setup=client.post("/auth/mfa/setup",headers=c["admin_headers"])
+    assert admin_setup.status_code==200,admin_setup.text
+    admin_confirm=client.post("/auth/mfa/confirm",headers=c["admin_headers"],
+        json={"code":totp_code(admin_setup.json()["secret"])})
+    assert admin_confirm.status_code==200,admin_confirm.text
     last_root=client.patch(f"/admin/users/{c['root']}/status",headers=c["admin_headers"],
         json={"status":"suspended","reason":"last superadmin protection"})
     assert last_root.status_code==409
