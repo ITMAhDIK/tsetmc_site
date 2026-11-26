@@ -2567,6 +2567,7 @@
       const [analyticsOverview, setAnalyticsOverview] = useState(null);
       const [analyticsPaths, setAnalyticsPaths] = useState(null);
       const [analyticsUserId, setAnalyticsUserId] = useState('');
+      const [analyticsUsers, setAnalyticsUsers] = useState([]);
       const [analyticsUserEvents, setAnalyticsUserEvents] = useState([]);
       const [analyticsUserPaths, setAnalyticsUserPaths] = useState(null);
       const [analyticsBusy, setAnalyticsBusy] = useState(false);
@@ -3114,12 +3115,14 @@
           apiFetch('/api/v1/tickets'),
           apiFetch('/api/v1/analytics/admin/overview?days=30').catch(() => null),
           apiFetch('/api/v1/analytics/admin/paths?days=30&max_steps=5').catch(() => null),
+          apiFetch('/api/v1/site-admin/users').catch(() => ({ users: [] })),
         ]);
         setOverview(results[0]);
         setStaff(results[1].staff || []);
         setTickets(results[2].tickets || []);
         setAnalyticsOverview(results[3]);
         setAnalyticsPaths(results[4]);
+        setAnalyticsUsers(results[5].users || []);
       };
 
       useEffect(() => {
@@ -3284,10 +3287,14 @@
               <p className="text-[10px] text-[var(--text-secondary)] mt-1">این بخش فقط برای سوپرادمین فعال است؛ هر بار مشاهده در audit ثبت می‌شود.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <input type="number" min="1" step="1" value={analyticsUserId}
+              <select value={analyticsUserId}
                 onChange={e=>setAnalyticsUserId(e.target.value)}
-                placeholder="شناسه عددی کاربر"
-                className="min-w-[180px] flex-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2 text-xs" />
+                className="min-w-[220px] flex-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-2 text-xs">
+                <option value="">انتخاب کاربر از فهرست</option>
+                {analyticsUsers.map(person=><option key={person.id} value={person.id}>
+                  {person.display_name || person.username} · {person.public_id} · #{toFa(person.id)}
+                </option>)}
+              </select>
               <button type="button" disabled={analyticsBusy}
                 onClick={loadUserAnalytics}
                 className="rounded bg-blue-600 px-4 py-2 text-xs text-white disabled:opacity-50">
