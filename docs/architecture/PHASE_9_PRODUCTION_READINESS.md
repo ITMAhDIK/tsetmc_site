@@ -7,7 +7,7 @@
 - Private custom-format PostgreSQL backup, atomic publication, SHA-256 manifest,
   archive verification and explicitly confirmed destructive restore.
 - Bounded GET-only staging load probe.
-- CI applies migrations 001–004 to ephemeral PostgreSQL 16, checks schema
+- CI applies migrations 001–004 to ephemeral PostgreSQL 18, checks schema
   readiness and executes backup/verify/restore into a separate scratch database.
 
 ## Remaining production blockers
