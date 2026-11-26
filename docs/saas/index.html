@@ -184,7 +184,9 @@
   <script>
     (() => {
       const API_BASE_SETTING = (document.querySelector('meta[name="tloomberg-auth-api"]')?.content || '').trim();
-      const API_BASE = API_BASE_SETTING === 'same-origin' ? window.location.origin : API_BASE_SETTING.replace(/\/+$/, '');
+      const API_BASE = API_BASE_SETTING === 'same-origin'
+        ? (window.location.hostname.endsWith('.github.io') ? '' : window.location.origin)
+        : API_BASE_SETTING.replace(/\/+$/, '');
       const DEMO_OTP_MODE = false;
       // This public hash is only a visual demo selector, never an auth secret.
       const DEMO_SUPERADMIN_PHONE_SHA256 = '363c2dd7650cfb7d22f3d624656f2bd69e79e16b4e0412bfaa75cea8490c10ce';
