@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/membership-security-analytics
+      - feat/tloomberg-saas-superadmin-phase8
     paths:
       - "docs/**"
       - ".github/workflows/pages-preview.yml"
