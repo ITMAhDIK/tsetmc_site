@@ -26,7 +26,17 @@ def _prepare(tmp_path: Path):
     fake.write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\" >> \"$RCLONE_CAPTURE\"\n"
-        "case \"$1\" in copyto) exit 0 ;; lsf) printf 'object\\n'; exit 0 ;; esac\n"
+        "case \"$1\" in\n"
+        "  copyto) exit 0 ;;\n"
+        "  lsf) printf 'object\\n'; exit 0 ;;\n"
+        "  cat)\n"
+        "    if [[ \"$2\" == \"$RCLONE_LOCAL_ARCHIVE\" ]]; then\n"
+        "      if [[ \"${RCLONE_CORRUPT_REMOTE:-0}\" == 1 ]]; then printf 'corrupt'; "
+        "else cat \"$RCLONE_LOCAL_ARCHIVE\"; fi\n"
+        "    elif [[ \"$2\" == \"$RCLONE_LOCAL_CHECKSUM\" ]]; then "
+        "cat \"$RCLONE_LOCAL_CHECKSUM\"\n"
+        "    else exit 3; fi ;;\n"
+        "esac\n"
         "exit 2\n",
         encoding="utf-8",
     )
@@ -104,6 +114,7 @@ def test_offsite_backup_requires_named_remote_and_encrypted_archive(tmp_path):
     assert result.returncode == 2
     assert "rclone remote" in result.stderr
     assert not capture.exists()
+
 
 def test_offsite_backup_detects_remote_object_corruption(tmp_path):
     archive, capture, env = _prepare(tmp_path)
