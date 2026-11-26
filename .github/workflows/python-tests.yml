@@ -17,6 +17,8 @@ jobs:
           python-version: "3.12"
       - name: Validate static GitHub Pages preview
         run: python tools/validate_pages_preview.py
+      - name: Check first-party analytics JavaScript syntax
+        run: node --check analytics-client.js && node --check docs/analytics-client.js
       - name: Install test runner
         run: python -m pip install --upgrade pytest
       - name: Run test suite
