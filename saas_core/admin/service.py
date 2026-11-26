@@ -133,6 +133,8 @@ def change_user_status(conn, *, actor_id: UUID, user_id: UUID, status: str, reas
             before=cur.fetchone()
             if not before:
                 raise LookupError("user not found")
+            if before["status"] not in {"active","suspended"}:
+                raise ValueError("deleted or pending accounts cannot be reactivated through the console")
             cur.execute(
                 """SELECT EXISTS(
                      SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
