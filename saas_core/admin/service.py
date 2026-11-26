@@ -141,6 +141,10 @@ def change_user_role(conn, *, actor_id: UUID, user_id: UUID, role_code: str, gra
             cur.execute("SELECT id FROM users WHERE id=%s FOR UPDATE",(user_id,))
             if not cur.fetchone():
                 raise LookupError("user not found")
+            cur.execute("""SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+                           WHERE ur.user_id=%s AND r.code='superadmin') AS protected""",(user_id,))
+            if cur.fetchone()["protected"]:
+                raise ValueError("superadmin roles must be managed out of band")
             cur.execute("SELECT id FROM roles WHERE code=%s",(role_code,))
             role=cur.fetchone()
             if not role:
