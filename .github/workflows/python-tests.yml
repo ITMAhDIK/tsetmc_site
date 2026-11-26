@@ -43,7 +43,7 @@ jobs:
         run: |
           node --check docs/analytics-config.js
           node --check docs/analytics.js
-          node --test tests/pages/analytics.test.cjs
+          node --test tests/pages/analytics.test.cjs tests/pages/saas_pages.test.cjs
       - name: Apply all SaaS migrations with checksums and lock
         run: python scripts/manage_saas_migrations.py --apply
       - name: Verify migration history is current
