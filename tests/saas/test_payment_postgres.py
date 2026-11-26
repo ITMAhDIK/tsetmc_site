@@ -33,7 +33,8 @@ def migrated_test_database():
     root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     schema_dir = os.path.join(root, "saas_core", "schema")
     with psycopg.connect(DSN, autocommit=True, row_factory=dict_row) as conn:
-        for filename in ("001_initial.sql", "002_payment_lifecycle.sql", "002_payment_lifecycle.sql"):
+        for filename in ("001_initial.sql", "002_payment_lifecycle.sql", "003_wallet_referrals.sql",
+                         "002_payment_lifecycle.sql", "003_wallet_referrals.sql"):
             with open(os.path.join(schema_dir, filename), encoding="utf-8") as stream:
                 conn.execute(stream.read())
     yield
