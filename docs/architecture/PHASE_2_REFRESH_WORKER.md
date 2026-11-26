@@ -73,3 +73,12 @@ the worker CLI using the requested DB/sidecar paths.
 These tests use disposable files and fake refresh APIs. They do not scan or mutate
 the production holdings database, run a real multi-million-row refresh, or validate
 a production deployment.
+
+
+## CI result
+
+GitHub Actions passed on this implementation:
+- Push run: [45883418326](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45883418326) — **135 passed in 4.00s**.
+- Pull-request run: [45883425534](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45883425534) — **135 passed in 3.98s**.
+
+The passing suite includes the Phase 0 API-contract tests, Phase 1 HTTP-handler tests, and the new Phase 2 worker/locking tests.
