@@ -73,7 +73,7 @@ def test_pagination_is_bounded_before_database_access():
     assert not c.calls
 
 def test_last_active_superadmin_cannot_be_suspended():
-    c=Cursor(one=[("active",),(True,),(0,)])
+    c=Cursor(one=[("active",),(True,),(1,),(0,)])
     svc,conn=service(c)
     with pytest.raises(AdminConflict): svc.set_user_status(
         actor_user_id=ACTOR,target_user_id=TARGET,status="suspended",request_id="req-last")
@@ -123,7 +123,7 @@ def test_wallet_debit_cannot_consume_reserved_withdrawal_cash():
     assert conn.rollbacks==1
 
 def test_paid_withdrawal_requires_reference_and_is_audited():
-    c=Cursor(one=[(TARGET,"approved",120000),("paid",)])
+    c=Cursor(one=[(TARGET,"approved",120000),("paid",),(TARGET,)])
     svc,conn=service(c)
     result=svc.review_withdrawal(actor_user_id=ACTOR,withdrawal_id=RESOURCE,decision="paid",
        payout_reference="BANK-REF-1",request_id="req-paid")
