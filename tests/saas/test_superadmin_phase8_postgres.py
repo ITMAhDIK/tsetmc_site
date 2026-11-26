@@ -27,7 +27,8 @@ def phase8_schema():
                          "007_immutable_admin_audit.sql","008_analytics_path_sequences.sql",
                          "009_analytics_event_order.sql","010_sms_outbox_worker.sql",
                          "011_privileged_mfa_and_legal_acceptance.sql",
-                         "012_bind_legal_versions_to_otp.sql"):
+                         "012_bind_legal_versions_to_otp.sql",
+                         "013_immutable_legal_acceptance.sql"):
                 with open(os.path.join(root,"saas_core","schema",name),encoding="utf-8") as stream:
                     conn.execute(stream.read())
         yield schema
@@ -469,6 +470,24 @@ def test_password_signup_stores_legal_versions_and_issues_secure_same_origin_ses
         "terms_version": "terms-password-v1",
         "privacy_version": "privacy-password-v1",
         "source": "password_signup",
+    }
+
+    with pytest.raises(psycopg.errors.RaiseException, match="legal_acceptances are append-only"):
+        with conn.transaction():
+            conn.execute(
+                "UPDATE legal_acceptances SET terms_version='rewritten' WHERE user_id=%s",
+                (user_id,),
+            )
+    with pytest.raises(psycopg.errors.RaiseException, match="legal_acceptances are append-only"):
+        with conn.transaction():
+            conn.execute("DELETE FROM legal_acceptances WHERE user_id=%s", (user_id,))
+    unchanged = conn.execute(
+        "SELECT terms_version,privacy_version FROM legal_acceptances WHERE user_id=%s",
+        (user_id,),
+    ).fetchone()
+    assert unchanged == {
+        "terms_version": "terms-password-v1",
+        "privacy_version": "privacy-password-v1",
     }
 
 
