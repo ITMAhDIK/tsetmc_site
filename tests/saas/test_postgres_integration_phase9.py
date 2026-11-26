@@ -876,8 +876,14 @@ def test_phone_otp_delivery_creates_standard_account_and_bootstraps_only_configu
     monkeypatch.setenv("SAAS_PRIVACY_VERSION", "privacy-test-v1")
     monkeypatch.setattr(auth_repository, "new_otp", lambda: "135790")
 
-    auth_repository.request_phone_otp(db, superadmin_phone, "signup")
-    auth_repository.request_phone_otp(db, standard_phone, "signup")
+    auth_repository.request_phone_otp(
+        db, superadmin_phone, "signup",
+        terms_version="terms-test-v1", privacy_version="privacy-test-v1",
+    )
+    auth_repository.request_phone_otp(
+        db, standard_phone, "signup",
+        terms_version="terms-test-v1", privacy_version="privacy-test-v1",
+    )
 
     class RecordingSmsSender:
         def __init__(self):
@@ -948,7 +954,10 @@ def test_unconfigured_superadmin_phone_never_grants_elevated_role(db, monkeypatc
     monkeypatch.setattr(auth_repository, "new_otp", lambda: "246802")
     phone = "+989000000003"
 
-    auth_repository.request_phone_otp(db, phone, "signup")
+    auth_repository.request_phone_otp(
+        db, phone, "signup",
+        terms_version="terms-test-v1", privacy_version="privacy-test-v1",
+    )
     token, _ = auth_repository.consume_phone_otp(
         db, phone, "246802", "signup",
         terms_version="terms-test-v1", privacy_version="privacy-test-v1",
