@@ -244,6 +244,7 @@ def run_sms_worker() -> None:
                 database_name = conn.execute("SELECT current_database() AS name").fetchone()["name"]
                 if database_name != expected_db:
                     raise RuntimeError("connected database does not match configured SaaS database")
+                conn.commit()
                 result = dispatch_sms_batch(
                     conn,
                     sender=sms,
