@@ -31,6 +31,8 @@ jobs:
 
       - name: Validate HTML, JavaScript and public data privacy
         run: python tools/validate_pages_preview.py
+      - name: Check first-party analytics JavaScript syntax
+        run: node --check docs/analytics-client.js
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
