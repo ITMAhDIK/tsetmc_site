@@ -907,7 +907,7 @@ class AdminConsoleService:
                 raise AdminConflict("Only pending or active subscriptions can be cancelled.")
             cursor.execute(
                 """
-                UPDATE subscriptions SET status='cancelled',ends_at=now()
+                UPDATE subscriptions SET status='cancelled',ends_at=GREATEST(COALESCE(starts_at,now()),now())
                 WHERE id=%s RETURNING status,ends_at
                 """,
                 (subscription,),
