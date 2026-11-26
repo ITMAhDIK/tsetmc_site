@@ -1,9 +1,12 @@
-# Static SaaS pages and same-origin API gateway. Keep sessions first-party:
-# login/admin pages and /api/v1 are served from the same HTTPS site.
+# Static SaaS pages and same-origin API gateway. Keep sessions first-party.
 FROM caddy:2-alpine
 
 COPY Caddyfile.saas /etc/caddy/Caddyfile
-COPY docs/saas/ /srv/saas/
+RUN mkdir -p /srv/saas
+COPY docs/saas/index.html /srv/saas/index.html
+COPY docs/saas/admin.html /srv/saas/admin.html
+COPY docs/saas/terms.html /srv/saas/terms.html
+COPY docs/saas/privacy.html /srv/saas/privacy.html
 
 RUN test -s /srv/saas/index.html \
     && test -s /srv/saas/admin.html \
