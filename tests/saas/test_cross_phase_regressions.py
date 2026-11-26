@@ -15,6 +15,7 @@ from saas_core.auth.service import AuthenticationError, hash_session_token
 from saas_core.auth.repository import (
     authenticate_session, consume_phone_otp, request_phone_otp,
 )
+from saas_core.auth.service import hash_otp
 from saas_core.payments.repository import create_subscription_order, create_payment_attempt, attach_provider_checkout
 from saas_core.payments.domain import VerifiedPayment
 from saas_core.payments.settlement import settle_provider_callback
@@ -47,17 +48,28 @@ def _configure_otp(monkeypatch):
     return Fernet(key)
 
 
-def _latest_otp(conn,cipher,phone):
+def _latest_otp(conn,cipher,phone,purpose="login"):
+    challenge=conn.execute(
+        """SELECT otp_hash FROM phone_verifications
+           WHERE phone_e164=%s AND purpose=%s
+           ORDER BY created_at DESC,id DESC LIMIT 1""",(phone,purpose)
+    ).fetchone()
+    if not challenge:
+        raise AssertionError("OTP challenge not found")
     rows=conn.execute(
         """SELECT destination_token,payload->>'encrypted_payload' AS encrypted_payload
-           FROM notification_outbox WHERE template_code='phone_otp'
-           ORDER BY created_at DESC,id DESC"""
+           FROM notification_outbox
+           WHERE template_code='phone_otp' AND idempotency_key LIKE %s
+           ORDER BY created_at DESC,id DESC""",(f"otp:{phone}:{purpose}:%",)
     ).fetchall()
     for row in rows:
-        if cipher.decrypt(row["destination_token"].encode()).decode()==phone:
-            payload=json.loads(cipher.decrypt(row["encrypted_payload"].encode()).decode())
-            return payload["otp"]
-    raise AssertionError("encrypted OTP outbox record not found")
+        if cipher.decrypt(row["destination_token"].encode()).decode()!=phone:
+            continue
+        payload=json.loads(cipher.decrypt(row["encrypted_payload"].encode()).decode())
+        otp=payload["otp"]
+        if hash_otp(phone,purpose,otp)==challenge["otp_hash"]:
+            return otp
+    raise AssertionError("encrypted OTP for the latest challenge not found")
 
 
 def _grant_role(conn,user_id,role):
@@ -88,7 +100,7 @@ def test_password_account_can_link_verified_phone_then_create_subscription(migra
                 assert client.get("/auth/me").status_code==200
                 requested=client.post("/auth/phone/link/request",json={"phone":phone})
                 assert requested.status_code==200
-                otp=_latest_otp(conn,cipher,phone)
+                otp=_latest_otp(conn,cipher,phone,"link_identity")
                 verified=client.post("/auth/phone/link/verify",json={"phone":phone,"otp":otp})
                 assert verified.status_code==200
                 assert verified.json()["phone"]["phone_verified"] is True

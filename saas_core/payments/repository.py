@@ -33,10 +33,10 @@ def create_subscription_order(conn, *, user_id: UUID, plan_code: str, idempotenc
                 raise ValueError("subscription plan must have a positive payable price")
             cur.execute(
                 """INSERT INTO payment_orders
-                   (user_id,plan_id,amount_toman,status,idempotency_key,phone_e164,expires_at)
-                   VALUES (%s,%s,%s,'created',%s,%s,%s)
+                   (user_id,plan_id,amount_toman,duration_days,status,idempotency_key,phone_e164,expires_at)
+                   VALUES (%s,%s,%s,%s,'created',%s,%s,%s)
                    ON CONFLICT (idempotency_key) DO NOTHING
-                   RETURNING id,user_id,plan_id,amount_toman,status,created_at,expires_at""",
+                   RETURNING id,user_id,plan_id,amount_toman,duration_days,status,created_at,expires_at""",
                 (user_id, plan["id"], plan["price_toman"], plan["duration_days"], idempotency_key,
                  user["phone_e164"], datetime.now(timezone.utc) + ORDER_TTL),
             )
