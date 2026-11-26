@@ -245,6 +245,9 @@ class RegisterBody(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=12, max_length=256)
     display_name: str | None = Field(default=None, max_length=160)
+    terms_accepted: bool = False
+    terms_version: str | None = Field(default=None, max_length=80)
+    privacy_version: str | None = Field(default=None, max_length=80)
 
 
 class PasswordLoginBody(BaseModel):
@@ -255,10 +258,29 @@ class PasswordLoginBody(BaseModel):
 class OtpRequestBody(BaseModel):
     phone: str = Field(min_length=9, max_length=16)
     purpose: str = Field(default="login", pattern="^(signup|login)$")
+    terms_accepted: bool = False
+    terms_version: str | None = Field(default=None, max_length=80)
+    privacy_version: str | None = Field(default=None, max_length=80)
 
 
 class OtpVerifyBody(OtpRequestBody):
     otp: str = Field(min_length=6, max_length=6, pattern="^[0-9]{6}$")
+
+
+def _validate_legal_acceptance(accepted: bool, terms_version: str | None,
+                              privacy_version: str | None) -> tuple[str, str]:
+    """Fail closed until the owner publishes versioned legal text."""
+    required_terms = os.getenv("SAAS_TERMS_VERSION", "").strip()
+    required_privacy = os.getenv("SAAS_PRIVACY_VERSION", "").strip()
+    placeholders = {"pending", "draft", "pending-owner-content"}
+    if (not required_terms or not required_privacy
+            or required_terms.lower() in placeholders
+            or required_privacy.lower() in placeholders):
+        raise HTTPException(status_code=503,
+            detail="registration is disabled until reviewed terms and privacy versions are published")
+    if accepted is not True or terms_version != required_terms or privacy_version != required_privacy:
+        raise HTTPException(status_code=422, detail="current terms and privacy notice must both be accepted")
+    return required_terms, required_privacy
 
 
 def _set_session(response, token, expires):
@@ -358,8 +380,18 @@ def ready(conn=Depends(get_conn)):
 
 @app.post("/auth/register")
 def register(body: RegisterBody, response: Response, conn=Depends(get_conn)):
+    terms_version, privacy_version = _validate_legal_acceptance(
+        body.terms_accepted, body.terms_version, body.privacy_version
+    )
     try:
         user = register_password_user(conn, body.username, body.password, body.display_name)
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO legal_acceptances
+                   (user_id,terms_version,privacy_version,source)
+                   VALUES (%s,%s,%s,'password_signup')""",
+                (user["id"], terms_version, privacy_version),
+            )
         with conn.transaction():
             token, expires = create_session(conn, user["id"])
         _set_session(response, token, expires)
@@ -385,37 +417,71 @@ def login(body: PasswordLoginBody, response: Response, conn=Depends(get_conn)):
 
 @app.post("/auth/phone/request")
 def phone_request(body: OtpRequestBody, conn=Depends(get_conn)):
+    terms_version = privacy_version = None
+    if body.purpose == "signup":
+        terms_version, privacy_version = _validate_legal_acceptance(
+            body.terms_accepted, body.terms_version, body.privacy_version
+        )
     try:
         request_phone_otp(conn, body.phone, body.purpose)
-        return {"accepted": True, "delivery": "queued", "expires_in_seconds": 300}
+        return {"accepted": True, "delivery": "queued", "expires_in_seconds": 300,
+                "terms_version": terms_version, "privacy_version": privacy_version}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
 @app.post("/auth/phone/verify")
 def phone_verify(body: OtpVerifyBody, response: Response, conn=Depends(get_conn)):
+    terms_version = privacy_version = None
+    if body.purpose == "signup":
+        terms_version, privacy_version = _validate_legal_acceptance(
+            body.terms_accepted, body.terms_version, body.privacy_version
+        )
     try:
-        token, expires = consume_phone_otp(conn, body.phone, body.otp, body.purpose)
+        token, expires = consume_phone_otp(
+            conn, body.phone, body.otp, body.purpose,
+            terms_version=terms_version, privacy_version=privacy_version,
+        )
         _set_session(response, token, expires)
-        return {"authenticated": True, "expires_at": expires}
+        user = authenticate_session(conn, token)
+        roles = _user_roles(conn, user["id"])
+        return {"authenticated": True, "expires_at": expires,
+                "role": _primary_role(roles),
+                "user": {"id": str(user["id"]), "public_id": user["public_id"],
+                         "username": user["username"], "display_name": user["display_name"],
+                         "phone_e164": body.phone, "roles": roles}}
     except (AuthenticationError, ValueError):
         raise HTTPException(status_code=401, detail="invalid or expired verification code")
 
 
-@app.get("/auth/me")
-def me(user=Depends(current_user), conn=Depends(get_conn)):
+def _user_roles(conn, user_id):
     with conn.cursor() as cur:
         cur.execute(
             """SELECT COALESCE(array_agg(r.code ORDER BY r.code),'{}') AS roles
                FROM user_roles ur JOIN roles r ON r.id=ur.role_id
                WHERE ur.user_id=%s""",
-            (user["id"],),
+            (user_id,),
         )
-        roles = cur.fetchone()["roles"]
-    return {"user": {
+        return cur.fetchone()["roles"]
+
+
+def _primary_role(roles):
+    for role in ("superadmin", "admin", "support", "data_manager", "user"):
+        if role in roles:
+            return role
+    return "user"
+
+
+@app.get("/auth/me")
+def me(user=Depends(current_user), conn=Depends(get_conn)):
+    roles = _user_roles(conn, user["id"])
+    return {"role": _primary_role(roles), "user": {
         "id": str(user["id"]), "public_id": user["public_id"], "username": user["username"],
         "display_name": user["display_name"], "account_type": user["account_type"],
-        "roles": roles, "is_superadmin": "superadmin" in roles,
+        "phone_e164": user.get("phone_e164"), "roles": roles,
+        "is_superadmin": "superadmin" in roles,
+        "mfa_enabled": user.get("mfa_enabled", False),
+        "mfa_verified": user.get("mfa_verified_at") is not None,
     }}
 
 
