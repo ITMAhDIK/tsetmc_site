@@ -3491,9 +3491,12 @@
       },[user&&user.id]);
       useEffect(()=>{
         if(user&&analyticsConsent===true){
-          window.TloombergAnalytics?.setPage('/'+page);
+          const viewedPath=page==='stock'&&activeSymbol
+            ? '/stock/'+activeSymbol
+            : '/'+page;
+          window.TloombergAnalytics?.setPage(viewedPath);
         }
-      },[user&&user.id,page,analyticsConsent]);
+      },[user&&user.id,page,activeSymbol,analyticsConsent]);
 
       const saveAnalyticsConsent=async(enabled)=>{
         setPrivacySaving(true);
