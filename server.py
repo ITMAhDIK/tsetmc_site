@@ -4524,7 +4524,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(403, {"detail": "دسترسی مجاز نیست."})
             return
         if os.path.isdir(target):
-            target = os.path.join(target, "ai_studio_code.html")
+            index_target = os.path.join(target, "index.html")
+            legacy_target = os.path.join(target, "ai_studio_code.html")
+            target = index_target if os.path.isfile(index_target) else legacy_target
         if not os.path.isfile(target):
             self._send_json(404, {"detail": "فایل یافت نشد."})
             return
@@ -4576,7 +4578,13 @@ class Handler(BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         status = 200
         try:
-            if path in ("/", "/index.html", "/ai_studio_code.html"):
+            if path in ("/", "/index.html"):
+                pages_entry = os.path.join(self.api.site_dir, "index.html")
+                entry = "index.html" if os.path.isfile(pages_entry) else "ai_studio_code.html"
+                self._serve_file(entry)
+                status = 200
+                return
+            if path == "/ai_studio_code.html":
                 self._serve_file("ai_studio_code.html")
                 status = 200
                 return
@@ -4707,8 +4715,8 @@ def main():
                     help="path to the tsetmc_holdings SQLite database (read-only)")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--site-dir", default=here,
-                    help="folder holding ai_studio_code.html")
+    ap.add_argument("--site-dir", default=os.path.join(here, "docs"),
+                    help="folder holding the local website entrypoint (docs/ by default; pass . for the legacy ai_studio_code.html)")
     ap.add_argument("--output-dir", default=DEFAULT_OUTPUT,
                     help="folder holding the Excel workbooks")
     ap.add_argument("--refresh-minutes", type=float, default=10,
@@ -4718,12 +4726,15 @@ def main():
     if not os.path.isfile(args.db):
         print("ERROR: database not found: %s" % args.db)
         raise SystemExit(2)
-    if not os.path.isfile(os.path.join(args.site_dir, "ai_studio_code.html")):
-        print("ERROR: ai_studio_code.html not found in %s" % args.site_dir)
+    if not any(os.path.isfile(os.path.join(args.site_dir, name))
+               for name in ("index.html", "ai_studio_code.html")):
+        print("ERROR: index.html or ai_studio_code.html not found in %s" % args.site_dir)
         raise SystemExit(2)
 
+    # Keep the generated API sidecar beside server.py, not inside docs/,
+    # because docs/ is the public Pages directory and may be committed.
     api = SiteApi(args.db,
-                  os.path.join(args.site_dir, "site_data.sqlite"),
+                  os.path.join(here, "site_data.sqlite"),
                   args.site_dir, args.output_dir)
     Handler.api = api
 
