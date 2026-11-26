@@ -115,6 +115,9 @@ def test_console_financial_support_referral_and_analytics_views_are_permission_s
             VALUES (%s,100000,'requested','vault-reference:test')""",(customer,))
         conn.execute("""INSERT INTO tickets(user_id,subject,status) VALUES (%s,'Console support test','open')""",(customer,))
         conn.execute("INSERT INTO wallet_accounts(user_id) VALUES (%s)",(customer,))
+        conn.execute("""INSERT INTO wallet_ledger_entries(user_id,bucket,entry_type,amount_toman,idempotency_key,description)
+            VALUES (%s,'cash','topup',150000,%s,'fixture verified user-funded balance')""",
+            (customer,f"console-fixture-topup-{uuid4()}"))
         conn.commit()
         def database_connection():
             yield conn
