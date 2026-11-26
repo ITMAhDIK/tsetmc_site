@@ -7,10 +7,13 @@
 - Implement and test cash/gift wallet policy.
 - Keep existing market API/database untouched.
 
-## Phase 2 — Authentication and authorization
-Username/password, phone OTP, Google OAuth, verified identity linking,
-revocable sessions, password reset, rate limiting, server-side entitlements,
-and one-time out-of-band superadmin bootstrap.
+## Phase 2 — Authentication and authorization (in progress)
+Implemented on feat/tloomberg-saas-auth-phase2: username/password with Argon2id,
+phone OTP challenge persistence, encrypted SMS outbox, per-phone OTP request
+throttling, revocable opaque sessions, and server-side role/entitlement policy.
+Remaining before production: Google OAuth, verified identity linking, password
+reset, IP/distributed rate limiting, CSRF/CORS hardening, superadmin bootstrap,
+SMS worker, PostgreSQL integration tests and deployment security review.
 
 ## Phase 3 — Account and dashboard UX
 Menu, profile, preferences, sessions, account/subscription history and feature
