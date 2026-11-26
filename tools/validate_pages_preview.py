@@ -70,6 +70,15 @@ def main() -> int:
         raise SystemExit("The analytics client must never inspect user-entered or rendered text.")
     if "privacy-analytics-panel" not in html or "/api/v1/analytics/consent" not in html:
         raise SystemExit("The explicit analytics consent UI is missing.")
+    admin_report_markers = (
+        "/api/v1/analytics/admin/overview",
+        "/api/v1/analytics/admin/paths",
+        "/api/v1/analytics/admin/users/",
+        "analyticsUserEvents",
+        "تحلیل رفتار کاربران",
+    )
+    if any(marker not in html for marker in admin_report_markers):
+        raise SystemExit("The administrator behavior analytics reports are not wired into the UI.")
     if "http://127.0.0.1:8000" in html:
         raise SystemExit("The Pages preview must not call a developer's localhost.")
     if re.search(
