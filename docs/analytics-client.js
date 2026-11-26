@@ -144,17 +144,22 @@
   }
 
   function attachListeners() {
-    if (state.listenersAttached) return;
-    state.listenersAttached = true;
-    document.addEventListener("click", onClick, true);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("pagehide", () => {
-      flushActiveTime();
-      void flush();
-    });
-    state.flushTimer = window.setInterval(() => void flush(), FLUSH_INTERVAL_MS);
-    state.activeTimer = window.setInterval(flushActiveTime, ACTIVE_INTERVAL_MS);
+    if (!state.listenersAttached) {
+      state.listenersAttached = true;
+      document.addEventListener("click", onClick, true);
+      window.addEventListener("scroll", onScroll, { passive: true });
+      document.addEventListener("visibilitychange", onVisibilityChange);
+      window.addEventListener("pagehide", () => {
+        flushActiveTime();
+        void flush();
+      });
+    }
+    if (!state.flushTimer) {
+      state.flushTimer = window.setInterval(() => void flush(), FLUSH_INTERVAL_MS);
+    }
+    if (!state.activeTimer) {
+      state.activeTimer = window.setInterval(flushActiveTime, ACTIVE_INTERVAL_MS);
+    }
   }
 
   function setEnabled(enabled) {
