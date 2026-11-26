@@ -51,7 +51,9 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const API_BASE_SETTING = (document.querySelector('meta[name="tloomberg-admin-api"]')?.content || '').trim();
-  const API_BASE = API_BASE_SETTING === 'same-origin' ? window.location.origin : API_BASE_SETTING.replace(/\/$/, '');
+  const API_BASE = API_BASE_SETTING === 'same-origin'
+    ? (window.location.hostname.endsWith('.github.io') ? '' : window.location.origin)
+    : API_BASE_SETTING.replace(/\/$/, '');
   const state = { roles: [], section: 'overview', mfa: null };
   const notice = (message, type='') => {
     const n=$('notice'); n.textContent=message; n.className='alert'+(type?' '+type:'');
