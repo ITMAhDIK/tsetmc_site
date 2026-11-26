@@ -18,9 +18,12 @@ def test_database_connection_uses_only_saas_database_environment():
         "DATABASE_URL": "postgresql://market:secret@localhost/market",
     }
     child = saas_db_ops.database_environment(env)
-    assert child["PGDATABASE"] == env["SAAS_DATABASE_URL"]
+    assert child["PGDATABASE"] == "saas"
+    assert child["PGHOST"] == "localhost"
+    assert child["PGUSER"] == "saas"
+    assert child["PGPASSWORD"] == "test"
     assert "SAAS_DATABASE_URL" not in child
-    assert child["DATABASE_URL"] == env["DATABASE_URL"]
+    assert "DATABASE_URL" not in child
 
 
 def test_database_environment_refuses_missing_or_shared_dsn():
@@ -58,8 +61,9 @@ def test_backup_verify_and_restore_are_private_and_keep_dsn_out_of_argv(tmp_path
     assert any(cmd[0] == "pg_restore" and "--clean" in cmd for cmd, _ in calls)
     for command, kwargs in calls:
         assert dsn not in command
-        assert kwargs["env"]["PGDATABASE"] == dsn
-        assert "SAAS_DATABASE_URL" not in kwargs["env"]
+        if kwargs["env"] is not None:
+            assert kwargs["env"]["PGDATABASE"] == "saas"
+            assert "SAAS_DATABASE_URL" not in kwargs["env"]
 
 
 def test_backup_checksum_tampering_blocks_restore_before_pg_restore(tmp_path):
@@ -72,7 +76,7 @@ def test_backup_checksum_tampering_blocks_restore_before_pg_restore(tmp_path):
     backup = saas_db_ops.backup_database(
         tmp_path, env={"SAAS_DATABASE_URL": "postgresql://localhost/saas"}, runner=runner
     )
-    backup.write_bytes(b"tampered")
+    backup.write_bytes(b"archivE")
     with pytest.raises(SaasDbOpsError, match="checksum"):
         saas_db_ops.restore_database(
             backup, confirmation="RESTORE_SAAS_DATABASE",

@@ -56,7 +56,7 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: Apply SaaS migrations in order
         run: |
-          export PGDATABASE="$SAAS_DATABASE_URL"
+          export PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=ci_only_password PGDATABASE=tloomberg_saas
           for migration in saas_core/schema/001_initial.sql saas_core/schema/002_product_features_referrals_analytics.sql saas_core/schema/003_product_analytics_ingestion.sql saas_core/schema/004_admin_console.sql; do
             psql -X -v ON_ERROR_STOP=1 -f "$migration"
           done
@@ -70,5 +70,5 @@ jobs:
           restore_url="postgresql://postgres:ci_only_password@localhost:5432/tloomberg_saas_restore_test"
           SAAS_DATABASE_URL="$restore_url" python tools/saas_db_ops.py restore --file "$backup_file" --confirm-restore RESTORE_SAAS_DATABASE
           SAAS_DATABASE_URL="$restore_url" python tools/saas_healthcheck.py
-          restored_plans="$(PGDATABASE="$restore_url" psql -X -qAt -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM plans')"
+          restored_plans="$(PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=ci_only_password PGDATABASE=tloomberg_saas_restore_test psql -X -qAt -v ON_ERROR_STOP=1 -c 'SELECT count(*) FROM plans')"
           test "$restored_plans" = "3"

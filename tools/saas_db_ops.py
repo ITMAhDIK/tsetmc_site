@@ -16,6 +16,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import parse_qs, unquote, urlsplit
 
 
 class SaasDbOpsError(RuntimeError):
@@ -25,14 +26,51 @@ class SaasDbOpsError(RuntimeError):
 def database_environment(source=None):
     source = dict(os.environ if source is None else source)
     dsn = str(source.get("SAAS_DATABASE_URL", "")).strip()
-    if not dsn.startswith(("postgresql://", "postgres://")):
-        raise SaasDbOpsError("SAAS_DATABASE_URL must be a PostgreSQL URL; no other database variable is used.")
+    try:
+        parsed = urlsplit(dsn)
+        port = parsed.port or 5432
+        query = parse_qs(parsed.query, strict_parsing=True) if parsed.query else {}
+    except ValueError:
+        raise SaasDbOpsError("SAAS_DATABASE_URL is malformed.") from None
+    if (parsed.scheme not in {"postgresql", "postgres"} or not parsed.hostname
+            or not parsed.path.strip("/") or parsed.fragment):
+        raise SaasDbOpsError("SAAS_DATABASE_URL must be a complete PostgreSQL URL.")
+
+    def identity(url):
+        try:
+            item = urlsplit(str(url).strip())
+            item_port = item.port or 5432
+        except ValueError:
+            return None
+        if item.scheme not in {"postgresql", "postgres"} or not item.hostname:
+            return None
+        return (item.hostname.lower(), item_port, unquote(item.path.lstrip("/")))
+
     market_dsn = str(source.get("MARKET_DATABASE_URL", "")).strip()
-    if market_dsn and dsn == market_dsn:
-        raise SaasDbOpsError("SaaS and market database URLs must not be the same.")
+    if market_dsn and identity(market_dsn) == identity(dsn):
+        raise SaasDbOpsError("SaaS and market database URLs must not identify the same database.")
+
+    mappings = {
+        "sslmode": "PGSSLMODE",
+        "application_name": "PGAPPNAME",
+        "connect_timeout": "PGCONNECT_TIMEOUT",
+        "target_session_attrs": "PGTARGETSESSIONATTRS",
+        "options": "PGOPTIONS",
+    }
+    if set(query) - set(mappings) or any(len(values) != 1 for values in query.values()):
+        raise SaasDbOpsError("SAAS_DATABASE_URL contains unsupported or repeated query parameters.")
     child = dict(source)
-    child.pop("SAAS_DATABASE_URL", None)
-    child["PGDATABASE"] = dsn
+    for secret_key in ("SAAS_DATABASE_URL", "MARKET_DATABASE_URL", "DATABASE_URL"):
+        child.pop(secret_key, None)
+    child["PGHOST"] = parsed.hostname
+    child["PGPORT"] = str(port)
+    child["PGDATABASE"] = unquote(parsed.path.lstrip("/"))
+    if parsed.username is not None:
+        child["PGUSER"] = unquote(parsed.username)
+    if parsed.password is not None:
+        child["PGPASSWORD"] = unquote(parsed.password)
+    for key, values in query.items():
+        child[mappings[key]] = values[0]
     child["PGCONNECT_TIMEOUT"] = child.get("PGCONNECT_TIMEOUT", "10")
     return child
 
