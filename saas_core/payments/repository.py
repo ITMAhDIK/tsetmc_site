@@ -363,7 +363,7 @@ def finish_refund(conn, *, refund_id: UUID, provider_refund_id: str):
             cur.execute(
                 """INSERT INTO admin_audit_logs(action,target_type,target_id,after_state)
                    VALUES ('payment.refund.succeeded','payment_order',%s,
-                           jsonb_build_object('refund_id',%s::text,'provider_refund_id',%s))""",
+                           jsonb_build_object('refund_id',%s::text,'provider_refund_id',%s::text))""",
                 (str(refund["order_id"]),str(refund_id),provider_refund_id),
             )
 
