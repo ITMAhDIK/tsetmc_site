@@ -66,5 +66,14 @@ rclone copyto --immutable --checksum --retries 3 --low-level-retries 10 \
 rclone lsf "$remote_archive" >/dev/null
 rclone lsf "$remote_checksum" >/dev/null
 
-printf 'Off-host encrypted backup uploaded: %s\n' "$remote_archive"
+# Read both remote objects back through rclone and verify their actual content,
+# not only their existence or the metadata reported by the storage provider.
+remote_actual="$(rclone cat "$remote_archive" | sha256sum | awk '{print $1}')"
+remote_sidecar="$(rclone cat "$remote_checksum" | tr -d '[:space:]')"
+if [[ "$remote_actual" != "$expected" || "$remote_sidecar" != "$expected" ]]; then
+  printf 'Off-host backup content verification failed.\n' >&2
+  exit 4
+fi
+
+printf 'Off-host encrypted backup uploaded and verified: %s\n' "$remote_archive"
 printf 'Off-host checksum uploaded: %s\n' "$remote_checksum"
