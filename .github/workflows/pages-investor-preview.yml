@@ -130,7 +130,7 @@ jobs:
           Path("/tmp/tloomberg-auth.js").write_text(script, encoding="utf-8")
 
           page = Path("docs/index.html").read_text(encoding="utf-8")
-          for required in ("tloomberg_demo_menu=", "setMenuOpen", "demoMenuRole ? 'منو' : 'ورود'",
+          for required in ("tloomberg_demo_menu=", "setMenuOpen", "authUser || demoMenuRole ? 'حساب من' : 'ورود'",
                            "AccountMenuDrawer", "app-drawer-panel", "خرید اشتراک ویژه",
                            "تاریخچهٔ کیف پول", "مدیریت داده‌های بازار", "ChartAccessContext",
                            "۲٬۴۹۹٬۰۰۰", "۸۹۹٬۰۰۰", "اسنپ‌پی", "دیجی‌پی", "logoutDemoMenu",

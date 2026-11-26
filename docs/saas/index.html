@@ -309,6 +309,9 @@
       }
       async function verifyCode() {
         try {
+          if (currentMode === 'register' && !$('termsAccepted').checked) {
+            throw new Error('پذیرش قوانین برای ثبت‌نام الزامی است.');
+          }
           const code = toEnglishDigits($('otp').value).replace(/\D/g, '');
           if (DEMO_OTP_MODE) {
             if (!/^\d{4}$/.test(code)) throw new Error('برای تست، دقیقاً چهار رقم وارد کن.');
@@ -345,6 +348,7 @@
         $('loginModeButton').setAttribute('aria-pressed', String(currentMode === 'login'));
         $('registerModeButton').setAttribute('aria-pressed', String(currentMode === 'register'));
         $('termsRow').classList.toggle('show', currentMode === 'register');
+        $('termsAccepted').required = currentMode === 'register';
         $('sendButton').textContent = currentMode === 'register' ? 'ادامهٔ ثبت‌نام ←' : 'ارسال کد تأیید ←';
         resetOtp();
       }
