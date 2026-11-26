@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 
 from saas_core.analytics.service import get_funnels,get_overview,get_retention,get_user_activity,record_events,set_consent
