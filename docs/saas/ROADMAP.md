@@ -28,9 +28,13 @@
 - Disposable PostgreSQL 16 integration and concurrency tests run in CI.
 - SnapPay/DigiPay live adapters, provider callback authenticity and sandbox E2E remain blocked on official merchant docs and credentials; no live payments.
 
-## Phase 5 — Wallet and referrals
-Ledger, top-ups, gift/cash balance, withdrawal reservations, bank verification,
-referral qualification, abuse controls and SMS outbox.
+## Phase 5 — Wallet and referrals (integrated; external bank/provider gates remain)
+- Isolated SaaS wallet with append-only idempotent ledger, cash/gift buckets and gift-first spending.
+- Cash-only withdrawal reservations, verified bank-account gate, admin approval/rejection and audited confirmed payout settlement.
+- Server-generated referral codes and verified-phone referral attachment.
+- First verified paid subscription settlement issues one idempotent gift reward using a versioned reward policy.
+- PostgreSQL 16 integration/concurrency tests and migration re-run coverage.
+- Wallet top-ups, bank verification onboarding, automated payouts and advanced abuse controls remain blocked/deferred pending provider contracts and security work. No market-data database or service changes.
 
 ## Phase 6 — Support
 FAQ, ticket creation/replies, assignment, status and private internal notes.

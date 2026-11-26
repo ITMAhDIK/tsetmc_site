@@ -116,3 +116,8 @@ app.include_router(account_router)
 # Payment endpoints share the same isolated SaaS connection and session policy.
 from saas_core.payments.api import router as payments_router
 app.include_router(payments_router)
+
+
+# Wallet routes share the authenticated SaaS session and isolated DB connection.
+from saas_core.wallet.api import router as wallet_router
+app.include_router(wallet_router)

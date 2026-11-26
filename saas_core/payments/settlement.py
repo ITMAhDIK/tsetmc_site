@@ -1,6 +1,7 @@
 """Serialize provider-event handling and make callback retries idempotent."""
 from .domain import PaymentRejected
 from .repository import settle_verified_payment
+from saas_core.wallet.referrals import qualify_and_reward_referral
 
 
 def settle_provider_callback(conn, *, order_id, attempt_id, provider, verified, payload_sha256):
@@ -28,7 +29,7 @@ def settle_provider_callback(conn, *, order_id, attempt_id, provider, verified, 
                 if existing["processing_status"] == "processed":
                     return {"already_processed": True, "order_id": order_id}
                 raise PaymentRejected("provider event is already being processed")
-        return settle_verified_payment(
+        result = settle_verified_payment(
             conn,
             order_id=order_id,
             attempt_id=attempt_id,
@@ -36,3 +37,12 @@ def settle_provider_callback(conn, *, order_id, attempt_id, provider, verified, 
             verified=verified,
             payload_sha256=payload_sha256,
         )
+        if not result.get("already_processed"):
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM payment_orders WHERE id=%s", (order_id,))
+                paid_order=cur.fetchone()
+            if paid_order:
+                qualify_and_reward_referral(
+                    conn,referred_user_id=paid_order["user_id"],payment_order_id=order_id
+                )
+        return result
