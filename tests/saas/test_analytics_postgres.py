@@ -286,15 +286,15 @@ def test_consent_revocation_serializes_against_inflight_event_ingestion(migrated
             lock_acquired.set()
             with connect() as worker:
                 return record_events(worker,user_id=user,events=[payload])
-        with connect() as lock_conn:
-            with lock_conn.transaction():
-                lock_conn.execute("SELECT id FROM users WHERE id=%s FOR UPDATE",(user,))
-                with ThreadPoolExecutor(max_workers=1) as pool:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with connect() as lock_conn:
+                with lock_conn.transaction():
+                    lock_conn.execute("SELECT id FROM users WHERE id=%s FOR UPDATE",(user,))
                     future=pool.submit(ingest_after_lock_release)
                     assert lock_acquired.wait(timeout=2)
                     time.sleep(0.15)
                     set_consent(lock_conn,user_id=user,enabled=False)
-                # The worker was blocked on the account row until this transaction commits.
+                    # Commit releases the account-row lock before waiting for the worker.
             with pytest.raises(PermissionError,match="consent is required"):
                 future.result(timeout=5)
         with connect() as verify:
