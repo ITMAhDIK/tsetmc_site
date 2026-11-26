@@ -1918,9 +1918,15 @@ def _q_int(params, name, default, lo, hi):
 
 
 def _q_str(params, name, default=""):
-    v = params./workbook.xml.rels", workbook_relationships)
-        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
-    return output.getvalue()
+    v = params.get(name, [default])
+    return v[0] if v else default
+
+
+def _like(s):
+    return "%" + str(s).replace("%", "").replace("_", "") + "%"
+
+
+
 
 
 class SiteApi:
