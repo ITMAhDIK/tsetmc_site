@@ -1,30 +1,71 @@
-# SaaS authentication service — Phase 2
+# SaaS authentication service
 
-Independent FastAPI service. SAAS_DATABASE_URL must point only to the dedicated
-SaaS PostgreSQL database, never the market-data database.
+FastAPI authentication API for the dedicated SaaS PostgreSQL database.
+`SAAS_DATABASE_URL` must never point to the Market or collector database.
 
-## Included
+## Current capabilities
+
 - Username/password registration and login using Argon2id.
-- Random opaque sessions; only SHA-256 token hashes are stored in PostgreSQL.
-- HttpOnly, SameSite=Lax cookies (Secure by default), expiry and revocation.
-- Phone OTP challenge storage with five-minute expiry, one-time use and attempt cap.
-- OTP values are HMAC-SHA256 hashed using SAAS_OTP_HMAC_SECRET and SAAS_OUTBOX_FERNET_KEY.
-- OTP delivery is queued to notification_outbox; no SMS provider is called inline.
-- Minimal /auth/me and /health endpoints.
+- Opaque server-side sessions; only SHA-256 token hashes are stored.
+- Production session cookies are `HttpOnly; Secure; SameSite=Lax`.
+- Phone OTP is HMAC-protected, short-lived, rate-limited, single-use and
+  delivered from an encrypted outbox by `scripts/saas_sms_worker.py`.
+- The configured bootstrap phone receives superadmin only after verified OTP;
+  other new phone signups receive the ordinary user role.
+- Privileged accounts must enroll TOTP. The seed is Fernet-encrypted with
+  `SAAS_ADMIN_MFA_FERNET_KEY`, separate from OTP/outbox secrets. Verification
+  is session-bound, lasts at most 12 hours and rejects replayed counters.
+- Password/phone signup requires the exact terms and privacy versions from the
+  protected API environment. Phone signup versions are bound to the OTP
+  challenge; legal acceptance evidence is append-only.
+- Prometheus metrics use a separate bearer token and low-cardinality labels.
 
-## Not yet integrated
-Google OAuth, identity linking, password reset, SMS provider delivery,
-distributed rate limiting, CSRF protection, superadmin bootstrap command,
-authorization/entitlement middleware and production deployment remain.
-Public registration never grants administrative roles.
+## HTTP surface
 
-## Local setup
-Install requirements-saas.txt and apply saas_core/schema/001_initial.sql to a
-fresh dedicated SaaS database. Set SAAS_DATABASE_URL, SAAS_OTP_HMAC_SECRET
-(at least 32 random characters), and SAAS_COOKIE_SECURE=true outside localhost.
+- `POST /auth/register`, `POST /auth/login`
+- `POST /auth/phone/request`, `POST /auth/phone/verify`
+- `GET /auth/me`, `POST /auth/logout`
+- `GET /auth/mfa/status`, `POST /auth/mfa/setup`,
+  `POST /auth/mfa/confirm`, `POST /auth/mfa/verify`
+- `GET /health`, `GET /ready`
+- `GET /internal/metrics` — private bearer-protected route; public Caddy
+  deliberately does not proxy it.
 
-Run: uvicorn saas_core.auth.api:app --host 127.0.0.1 --port 8010
+Admin, support and analytics endpoints are mounted from separate routers.
 
-The SMS outbox remains pending until a separately configured worker exists.
-Do not expose publicly before rate limiting, CSRF, CORS allow-listing,
-monitoring and provider delivery are deployed.
+## Same-origin browser deployment
+
+Production Edge serves login/admin/legal pages and the API from one HTTPS
+origin. Browser API requests use `/api/v1`; Caddy strips that prefix before
+forwarding to FastAPI. This preserves first-party session cookies. The
+GitHub Pages copy is a preview only: it refuses API calls on `.github.io`
+and demo authentication is disabled.
+
+Google OAuth, identity linking and account recovery are not active browser
+flows. Do not present them as supported authentication methods.
+
+## Protected settings and legal release gate
+
+Use independent random values for:
+
+- `SAAS_OTP_HMAC_SECRET`
+- `SAAS_OUTBOX_FERNET_KEY`
+- `SAAS_ADMIN_MFA_FERNET_KEY`
+- `SAAS_METRICS_TOKEN`
+
+Configure dedicated database credentials, verified bootstrap phone, exact
+trusted host/origin allow-lists, SMS provider credentials and Prometheus
+multiprocess settings through a secret manager. Never commit real values.
+
+Do not set `SAAS_TERMS_VERSION` or `SAAS_PRIVACY_VERSION` until the owner and
+legal reviewer approve the text and immutable versions. The API fails closed
+while either is absent or a placeholder.
+
+## Migrations and verification
+
+Apply and checksum-verify migrations 001–013 using
+`scripts/manage_saas_migrations.py`. CI uses only a disposable PostgreSQL
+service. Latest verified branch commit:
+`fb0a15fa6c627fa3fd075ccc56e31efdf50f4c34` — **373 passed, 0 skipped**,
+with all SaaS security workflow jobs successful. This is not a production
+deployment or independent penetration test.
