@@ -105,6 +105,10 @@ def test_superadmin_gate_and_account_status_lifecycle(admin_context):
         json={"status":"suspended","reason":"last superadmin protection"})
     assert last_root.status_code==409
     assert conn.execute("SELECT status FROM users WHERE id=%s",(c["root"],)).fetchone()["status"]=="active"
+    for permission in elevated:
+        conn.execute("DELETE FROM role_permissions WHERE role_id=%s AND permission_id=%s",
+                     (admin_role,permission["id"]))
+    conn.commit()
 
     suspended=client.patch(f"/admin/users/{c['customer']}/status",headers=c["root_headers"],
         json={"status":"suspended","reason":"policy violation"})
