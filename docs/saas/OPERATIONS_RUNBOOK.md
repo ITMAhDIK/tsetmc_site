@@ -115,7 +115,7 @@ The backup script requires:
 
 The scripts require `psql`, `pg_dump`, `pg_restore`, `sha256sum` and `age`. Use a protected `.pgpass` or PostgreSQL service file rather than a password-bearing DSN. For non-loopback database hosts, include `sslmode=verify-full` in each runtime, migration, backup and restore connection string; provide the provider CA via `sslrootcert` when it is not in the system trust store. The backup script requires `SAAS_BACKUP_DATABASE_URL` for a dedicated read-only backup role and an `SAAS_BACKUP_AGE_RECIPIENT` public key, writes a custom-format `.dump.age` archive and SHA-256 sidecar with owner-only permissions, and never reads the private identity. Store the private `age` identity only in a secret manager or offline recovery vault.
 
-Run backup from a trusted host and transfer both files to encrypted, access-controlled, off-host storage. Set cadence, retention, immutability and RPO/RTO based on the business recovery requirement. No remote backup-storage integration or retention deletion job is included.
+Run backup from a trusted host and transfer both files using `scripts/saas_offsite_backup.sh` to an encrypted, access-controlled rclone remote. The uploader refuses plaintext, verifies the local SHA-256, uses immutable copy semantics and reads the remote objects back to verify their content. The systemd service/timer templates provide a daily UTC schedule. Configure provider-side object-lock/retention, rclone credentials, age identity custody, alerting on job age/failure and RPO/RTO at the actual hosting/storage provider. These external settings are not created by the repository.
 
 For restore verification, use a pre-created, empty PostgreSQL database on a separately confirmed non-production cluster. Required variables:
 - `SAAS_BACKUP_FILE` (the `.dump.age` archive).
@@ -156,7 +156,7 @@ This harness is a safe first-pass availability/latency check, not a benchmark or
 
 ## Monitoring and alerting requirements
 
-No monitoring provider or alert destination has been selected. The following telemetry is required before public traffic:
+`saas_core.auth.api` exposes a route-level Prometheus endpoint at `/internal/metrics`, protected by the separate `SAAS_METRICS_TOKEN`. The optional `monitoring` Compose profile starts a private Prometheus service with target-down, 5xx-rate and p95-latency alert rules. Caddy does not proxy the metrics path, and Prometheus has no public host port. No Alertmanager receiver, notification destination or host-level monitoring provider has been provisioned yet. The following telemetry is required before public traffic:
 
 - API availability, readiness, request latency, HTTP 5xx rate and database connection failures.
 - Authentication failures and OTP request/verification anomalies, aggregated without full phone numbers or secrets.
@@ -167,7 +167,7 @@ No monitoring provider or alert destination has been selected. The following tel
 - Database storage, connection saturation, slow queries, backup freshness and restore-test age.
 - Analytics retention-purge success/failure and support queue age.
 
-Use redacted structured logs with request correlation IDs. Never log passwords, raw session tokens, OTPs, secret values, raw bank tokens, full payment credentials or private ticket content. Define alert thresholds from measured staging behavior rather than guessing them. Assign an on-call owner and rehearse delivery to the actual alert destination.
+Use redacted structured logs with request correlation IDs. Never log passwords, raw session tokens, OTPs, secret values, raw bank tokens, full payment credentials or private ticket content. The Prometheus route labels are limited to method, registered route template and status to avoid cardinality and personal-data leakage. Define alert thresholds from measured staging behavior rather than guessing them. Configure an Alertmanager receiver, assign an on-call owner and rehearse delivery to the actual alert destination.
 
 ## Incident response
 
@@ -183,3 +183,11 @@ Assign named incident commander, technical lead, communications owner and legal/
 ## Legal/privacy review inputs
 
 Before accepting real users, document the operating entity, user and provider locations, categories of personal/financial data, hosting and backup countries, subprocessors, cross-border transfers, retention/deletion, payment and consumer obligations, support/analytics consent language, incident-notification rules and the user's rights/contact channel. Obtain advice for the actual jurisdictions; this runbook is not legal advice and does not assert that any particular regime applies.
+
+## Same-origin browser session and privileged MFA
+
+The production Edge image serves the public login, admin, terms and privacy HTML pages from `/srv/saas` on the same HTTPS origin as the API. Browser calls use `/api/v1/*`; Caddy strips that prefix before forwarding to the internal FastAPI service. This is intentional: keep the browser session cookie first-party (`HttpOnly; Secure; SameSite=Lax`) rather than depending on third-party cookies from a separate GitHub Pages/API origin. The GitHub Pages copy is only a preview and fails closed for authentication requests.
+
+Every route in the Superadmin router requires a server-side privileged role and recent session-bound TOTP. The MFA seed is encrypted with `SAAS_ADMIN_MFA_FERNET_KEY`, which must be a separate Fernet key from the SMS outbox key. MFA verification is valid for at most 12 hours; replayed TOTP counters are rejected. Configure a tested recovery procedure for a lost authenticator before enabling live administrators.
+
+Registration remains disabled until the owner/legal reviewer publishes the final terms and privacy documents and the exact immutable versions are configured as `SAAS_TERMS_VERSION` and `SAAS_PRIVACY_VERSION`. Empty, placeholder or mismatched versions fail closed. Signup OTP challenges bind the versions at request time; legal acceptance rows are append-only. Do not set arbitrary version strings to bypass this gate.
