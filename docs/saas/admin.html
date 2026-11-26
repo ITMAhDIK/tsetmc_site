@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="tloomberg-admin-api" content="">
+  <title>کنسول مدیریت | تلومبرگ</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0b1220;--panel:#111c2e;--panel2:#17243a;--line:#26364f;--ink:#eef4ff;--muted:#9fb0c8;--accent:#7dd3fc;--ok:#86efac;--warn:#fcd34d;--bad:#fca5a5}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.8 Tahoma,Arial,sans-serif}
+    a{color:var(--accent);text-decoration:none}button,input,select,textarea{font:inherit}
+    .shell{max-width:1500px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
+    h1{font-size:22px;margin:0}h2{font-size:17px;margin:0 0 12px}small,.muted{color:var(--muted)}
+    .pill{border:1px solid var(--line);border-radius:999px;padding:3px 10px;color:var(--muted);font-size:12px}
+    .alert{padding:12px 16px;border:1px solid var(--line);background:var(--panel);border-radius:12px;margin:14px 0}
+    .alert.error{border-color:#7f1d1d;color:var(--bad)}.alert.success{border-color:#166534;color:var(--ok)}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.tabs button,.btn{border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:8px 13px;border-radius:9px;cursor:pointer}
+    button:disabled{opacity:.45;cursor:not-allowed}.tabs button.active,.btn.primary{border-color:#247ba0;background:#12324a}
+    .btn.danger{border-color:#7f1d1d;color:var(--bad)}.btn.good{border-color:#166534;color:var(--ok)}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+    .metric{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:15px}
+    .metric strong{display:block;font-size:24px;font-variant-numeric:tabular-nums}.metric span{color:var(--muted);font-size:12px}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    input,select,textarea{background:#0c1626;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px;min-width:0}
+    input[type=search]{min-width:240px}textarea{width:100%;min-height:100px}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}
+    table{width:100%;border-collapse:collapse;min-width:700px}th,td{padding:10px 12px;text-align:right;border-bottom:1px solid var(--line);vertical-align:top}
+    th{color:var(--muted);font-weight:600;background:#101a2a;white-space:nowrap}tr:last-child td{border-bottom:0}
+    td .btn{margin:2px}.empty{padding:30px;text-align:center;color:var(--muted)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.row>*{flex:0 0 auto}
+    .hidden{display:none!important}.stack{display:grid;gap:12px}.ticket{border:1px solid var(--line);padding:12px;border-radius:10px;margin:8px 0}
+    .ticket.internal{border-color:#854d0e;background:#251d10}.ticket .body{white-space:pre-wrap;overflow-wrap:anywhere}
+    code{direction:ltr;display:inline-block;color:#bae6fd;overflow-wrap:anywhere}
+    @media(max-width:700px){.shell{padding:12px}.top{align-items:flex-start;flex-direction:column}.panel{padding:12px}input[type=search]{min-width:100%;width:100%}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div><h1>کنسول مدیریت تلومبرگ</h1><small>مدیریت کاربران، اشتراک‌ها، عملیات مالی، پشتیبانی و تحلیل محصول</small></div>
+    <div class="row"><span id="identity" class="pill">در حال بررسی نشست…</span><a class="btn" href="./index.html">بازگشت به حساب</a></div>
+  </header>
+  <div id="notice" class="alert">در حال اتصال به سرویس مدیریتی…</div>
+  <nav id="tabs" class="tabs hidden" aria-label="بخش‌های کنسول"></nav>
+  <main id="content" class="hidden"></main>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const apiOrigin = ($('unused')?.content || document.querySelector('meta[name="tloomberg-admin-api"]')?.content || '').trim().replace(/\/$/, '');
+  const state = { permissions: [], roles: [], section: 'overview', selectedTicket: null };
+  const notice = (message, type='') => {
+    const el=$('notice'); el.textContent=message; el.className='alert'+(type?' '+type:'');
+  };
+  const csrf = () => {
+    const entry=document.cookie.split(';').map(v=>v.trim()).find(v=>v.startsWith('__Host-tloomberg_csrf='));
+    return entry ? decodeURIComponent(entry.split('=').slice(1).join('=')) : '';
+  };
+  async function request(path, method='GET', body=null) {
+    if(!apiOrigin) throw new Error('آدرس API مدیریتی در meta تگ صفحه تنظیم نشده است.');
+    const headers={Accept:'application/json'};
+    const options={method,headers,credentials:'include',mode:'cors'};
+    if(body!==null){headers['Content-Type']='application/json';headers['X-CSRF-Token']=csrf();options.body=JSON.stringify(body);}
+    const response=await fetch(apiOrigin+'/api/v1/admin'+path,options);
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(payload.error?.message || ('خطای سرویس: '+response.status));
+    return payload.data;
+  }
+  const has = permission => state.permissions.includes(permission);
+  function el(tag, text, className) {
+    const node=document.createElement(tag);
+    if(text!==undefined && text!==null) node.textContent=String(text);
+    if(className) node.className=className;
+    return node;
+  }
+  function button(label, onClick, style='') {
+    const b=el('button',label,'btn '+style); b.type='button'; b.addEventListener('click',async()=>{b.disabled=true;try{await onClick();}catch(e){notice(e.message,'error');}finally{b.disabled=false;}});return b;
+  }
+  function panel(title) {
+    const p=el('section',undefined,'panel'); if(title)p.append(el('h2',title)); return p;
+  }
+  function table(headers, rows) {
+    const wrap=el('div',undefined,'table-wrap'), t=el('table'), thead=el('thead'), hr=el('tr');
+    headers.forEach(h=>hr.append(el('th',h)));thead.append(hr);t.append(thead);
+    const body=el('tbody');
+    if(!rows.length){const tr=el('tr'),td=el('td','موردی برای نمایش وجود ندارد','empty');td.colSpan=headers.length;tr.append(td);body.append(tr);}
+    rows.forEach(cells=>{const tr=el('tr');cells.forEach(cell=>{const td=el('td');if(cell instanceof Node)td.append(cell);else td.textContent=cell===null||cell===undefined?'—':String(cell);tr.append(td);});body.append(tr);});
+    t.append(body);wrap.append(t);return wrap;
+  }
+  function dateRange(days=7){const end=new Date(),start=new Date(end.getTime()-days*86400000);return {start_at:start.toISOString(),end_at:end.toISOString()};}
+  async function loadOverview(){
+    const data=await request('/overview');const p=panel('نمای کلی سامانه'),g=el('div',undefined,'grid');
+    const labels={users_total:'کل کاربران',users_active:'کاربران فعال',subscriptions_active:'اشتراک فعال',payments_pending:'پرداخت در انتظار',withdrawals_pending:'برداشت در انتظار',tickets_open:'تیکت باز',referrals_pending:'دعوت در انتظار'};
+    Object.entries(labels).forEach(([key,label])=>{const m=el('div',undefined,'metric');m.append(el('span',label),el('strong',data[key]??0));g.append(m);});
+    p.append(g);$('content').replaceChildren(p);
+  }
+  async function loadUsers(){
+    const p=panel('مدیریت کاربران'),bar=el('div',undefined,'toolbar'),search=el('input'),status=el('select'),go=button('جست‌وجو',refresh,'primary');
+    search.type='search';search.placeholder='نام، شناسه، ایمیل یا شماره';['همه وضعیت‌ها','active','suspended','pending','deleted'].forEach((s,i)=>{const o=el('option',s);o.value=i===0?'':s;status.append(o);});
+    bar.append(search,status,go);p.append(bar);const result=await request('/users');
+    function render(data){
+      const rows=(data.users||[]).map(user=>{
+        const actions=el('div',undefined,'row');
+        actions.append(button(user.status==='active'?'تعلیق':'فعال‌سازی',async()=>{
+          await request('/users/'+user.id+'/status','PATCH',{status:user.status==='active'?'suspended':'active'});
+          notice('وضعیت حساب تغییر کرد. نشست‌های قبلی کاربر باطل شدند.','success');await refresh();
+        },user.status==='active'?'danger':'good'));
+        if(has('wallet.read'))actions.append(button('کیف پول',async()=>{const w=await request('/users/'+user.id+'/wallet');renderWalletForUser(user,w);}));
+        return [user.public_id,user.display_name||user.username||'—',user.phone_e164||'—',user.email||'—',(user.roles||[]).join('، '),user.status,actions];
+      });
+      const old=p.querySelector('.table-wrap');if(old)old.remove();p.append(table(['شناسه','نام','موبایل','ایمیل','نقش‌ها','وضعیت','عملیات'],rows));
+    }
+    async function refresh(){render(await request('/users?q='+encodeURIComponent(search.value)+'&status='+encodeURIComponent(status.value)));}
+    p._refresh=refresh;render(result);$('content').replaceChildren(p);
+  }
+  function renderWalletForUser(user,wallet){
+    const p=panel('کیف پول '+(user.public_id||'')),balance=wallet.balances;
+    p.append(el('p','نقدی: '+balance.cash_balance_toman+' تومان | هدیه: '+balance.gift_balance_toman+' تومان | قابل برداشت: '+balance.available_to_withdraw_toman+' تومان'));
+    p.append(table(['نوع','مبلغ','شرح','زمان'],wallet.entries.map(x=>[x.entry_type,x.amount_toman,x.description,x.created_at])));
+    if(has('wallet.adjust')){
+      const controls=el('div',undefined,'toolbar'),bucket=el('select'),direction=el('select'),amount=el('input'),reason=el('input');
+      [['cash','نقدی'],['gift','هدیه']].forEach(([v,l])=>{const o=el('option',l);o.value=v;bucket.append(o);});
+      [['credit','افزایش'],['debit','کاهش']].forEach(([v,l])=>{const o=el('option',l);o.value=v;direction.append(o);});
+      amount.type='number';amount.min='1';amount.placeholder='مبلغ به تومان';reason.placeholder='دلیل الزامی';
+      controls.append(bucket,direction,amount,reason,button('ثبت اصلاحیه',async()=>{
+        await request('/users/'+user.id+'/wallet/adjustments','POST',{bucket:bucket.value,direction:direction.value,amount_toman:Number(amount.value),idempotency_key:'ui-'+crypto.randomUUID(),reason:reason.value});
+        notice('ثبت دفترکل انجام شد.','success');const data=await request('/users/'+user.id+'/wallet');renderWalletForUser(user,data);
+      },'primary'));p.append(controls);
+    }
+    const back=button('بازگشت به کاربران',()=>loadUsers());p.append(back);$('content').replaceChildren(p);
+  }
+  async function loadSubscriptions(){
+    const p=panel('اشتراک‌ها'),data=await request('/subscriptions');
+    const rows=data.subscriptions.map(s=>[s.public_id,s.plan_title,s.price_toman+' تومان',s.status,s.starts_at,s.ends_at,
+      s.status==='active'||s.status==='pending'?button('لغو اشتراک',async()=>{await request('/subscriptions/'+s.id+'/cancel','POST',{});notice('اشتراک لغو شد؛ از این پنل امکان فعال‌سازی دستی وجود ندارد.','success');await loadSubscriptions();},'danger'):'—']);
+    p.append(table(['کاربر','طرح','قیمت','وضعیت','شروع','پایان','عملیات'],rows));$('content').replaceChildren(p);
+  }
+  async function loadPayments(){
+    const p=panel('تطبیق پرداخت'),data=await request('/payments/reconciliation');
+    const rows=data.orders.map(o=>[o.public_id,o.plan_code,o.amount_toman+' تومان',o.order_status,o.attempt_count,o.event_count,o.last_gateway_status||'—',
+      button('ثبت بررسی',async()=>{
+        const outcome=window.prompt('نتیجه: matched / mismatch / provider_followup / blocked','provider_followup');
+        if(!outcome)return;const note=window.prompt('توضیح بررسی','')||'';
+        await request('/payments/'+o.order_id+'/review','POST',{outcome,note});
+        notice('نتیجهٔ بررسی ثبت شد؛ وضعیت پرداخت یا اشتراک تغییر داده نشد.','success');await loadPayments();
+      })]);
+    p.append(table(['کاربر','طرح','مبلغ','وضعیت سفارش','تلاش‌ها','رویدادها','آخرین وضعیت درگاه','عملیات'],rows));$('content').replaceChildren(p);
+  }
+  async function loadWithdrawals(){
+    const p=panel('درخواست‌های برداشت'),data=await request('/withdrawals');
+    const rows=data.withdrawals.map(w=>{
+      const actions=el('div',undefined,'row');
+      if(w.status==='requested')actions.append(button('تأیید',()=>review(w,'approved'),'good'));
+      if(w.status==='requested'||w.status==='approved')actions.append(button('رد',()=>review(w,'rejected'),'danger'));
+      if(w.status==='approved')actions.append(button('ثبت پرداخت',()=>review(w,'paid'),'primary'));
+      async function review(item,decision){
+        const payload={decision,note:window.prompt('توضیح','')||''};
+        if(decision==='paid'){payload.payout_reference=window.prompt('شناسهٔ پرداخت بانکی را وارد کن:','');if(!payload.payout_reference)return;}
+        await request('/withdrawals/'+item.id+'/review','POST',payload);
+        notice('وضعیت برداشت و دفترکل به‌صورت تراکنشی به‌روزرسانی شد.','success');await loadWithdrawals();
+      }
+      return [w.public_id,w.amount_toman+' تومان',w.status,w.requested_at,w.payout_reference||'—',actions];
+    });
+    p.append(table(['کاربر','مبلغ','وضعیت','زمان درخواست','شناسه پرداخت','عملیات'],rows));$('content').replaceChildren(p);
+  }
+  async function loadReferrals(){
+    const p=panel('دعوت و ارجاع'),data=await request('/referrals');
+    p.append(table(['نوع','دعوت‌کننده','کاربر دعوت‌شده','وضعیت','زمان'],data.referrals.map(r=>[r.record_type,r.inviter_user_id,r.referred_user_id,r.status,r.created_at])));$('content').replaceChildren(p);
+  }
+  async function loadTickets(){
+    const p=panel('تیکت‌های پشتیبانی'),data=await request('/tickets');
+    const rows=data.tickets.map(t=>[t.ticket_number,t.user_public_id,t.subject,t.priority,t.status,t.assigned_public_id||'—',
+      button('باز کردن',async()=>loadTicketDetail(t.id))]);
+    p.append(table(['شماره','کاربر','موضوع','اولویت','وضعیت','مسئول','جزئیات'],rows));$('content').replaceChildren(p);
+  }
+  async function loadTicketDetail(id){
+    const data=await request('/tickets/'+id),p=panel('تیکت شماره '+data.ticket.ticket_number);
+    p.append(el('p',data.ticket.subject+' · '+data.ticket.status+' · '+data.ticket.priority));
+    data.messages.forEach(m=>{const item=el('div',undefined,'ticket'+(m.is_internal_note?' internal':''));item.append(el('strong',(m.is_internal_note?'یادداشت داخلی · ':'پیام · ')+(m.sender_public_id||'')),el('div',m.body,'body'),el('small',m.created_at));p.append(item);});
+    const reply=el('textarea'),note=el('textarea');reply.placeholder='پاسخ قابل مشاهده برای کاربر';note.placeholder='یادداشت داخلی؛ برای کاربر نمایش داده نمی‌شود';
+    p.append(el('h2','ارسال پاسخ'),reply,button('ارسال پاسخ',async()=>{await request('/tickets/'+id+'/replies','POST',{body:reply.value});notice('پاسخ ثبت شد.','success');await loadTicketDetail(id);},'primary'));
+    p.append(el('h2','یادداشت داخلی'),note,button('ثبت یادداشت داخلی',async()=>{await request('/tickets/'+id+'/internal-notes','POST',{body:note.value});notice('یادداشت داخلی ثبت شد.','success');await loadTicketDetail(id);}));
+    p.append(button('بازگشت به تیکت‌ها',loadTickets));$('content').replaceChildren(p);
+  }
+  async function loadFaq(){
+    const p=panel('پرسش‌های متداول'),data=await request('/faq'),form=el('div',undefined,'stack');
+    const slug=el('input'),question=el('input'),answer=el('textarea'),published=el('select'),order=el('input');
+    slug.placeholder='slug مانند payment-help';question.placeholder='عنوان پرسش';answer.placeholder='پاسخ';order.type='number';order.value='0';
+    [['true','منتشر شود'],['false','پیش‌نویس']].forEach(([v,l])=>{const o=el('option',l);o.value=v;published.append(o);});
+    form.append(slug,question,answer,published,order,button('ذخیرهٔ مقاله',async()=>{
+      await request('/faq/'+encodeURIComponent(slug.value),'PUT',{question:question.value,answer:answer.value,published:published.value==='true',sort_order:Number(order.value)});
+      notice('مقاله ذخیره شد.','success');await loadFaq();
+    },'primary'));
+    p.append(form,panel('مقالات ثبت‌شده'));
+    p.append(table(['شناسه','پرسش','انتشار','ترتیب','عملیات'],data.articles.map(a=>[
+      a.slug,a.question,a.published?'منتشر':'پیش‌نویس',a.sort_order,
+      button('پنهان‌کردن',async()=>{await request('/faq/'+a.slug,'DELETE');notice('مقاله از انتشار خارج شد.','success');await loadFaq();},'danger')
+    ])));$('content').replaceChildren(p);
+  }
+  async function loadAnalytics(){
+    const p=panel('تحلیل رفتار کاربران'),range=dateRange(7),data=await request('/analytics/components?'+new URLSearchParams({...range}));
+    p.append(el('p','تعامل با اجزای صفحه در هفت روز گذشته'));
+    p.append(table(['صفحه','شناسهٔ جزء','کلیک','بازدید بخش','زمان فعال (ms)'],data.rows.map(x=>[x.page_path,x.component_id,x.clicks,x.section_views,x.active_duration_ms])));
+    $('content').replaceChildren(p);
+  }
+  async function loadAudit(){
+    const p=panel('گزارش حسابرسی'),data=await request('/audit-logs');
+    p.append(table(['زمان','اقدام','نوع هدف','شناسه هدف','شناسه درخواست','قبل','بعد'],data.entries.map(x=>[
+      x.created_at,x.action,x.target_type,x.target_id,x.request_id,
+      JSON.stringify(x.before_state||{}),JSON.stringify(x.after_state||{})
+    ])));$('content').replaceChildren(p);
+  }
+  const sections=[
+    ['overview','نمای کلی','admin.console.read',loadOverview],
+    ['users','کاربران','users.read',loadUsers],
+    ['subscriptions','اشتراک‌ها','subscriptions.manage',loadSubscriptions],
+    ['payments','پرداخت‌ها','payments.read',loadPayments],
+    ['withdrawals','برداشت‌ها','withdrawals.review',loadWithdrawals],
+    ['referrals','ارجاع‌ها','referrals.read',loadReferrals],
+    ['tickets','پشتیبانی','tickets.manage',loadTickets],
+    ['faq','راهنمایی و FAQ','faq.manage',loadFaq],
+    ['analytics','تحلیل محصول','analytics.read',loadAnalytics],
+    ['audit','گزارش حسابرسی','audit.read',loadAudit]
+  ];
+  async function selectSection(section){
+    state.section=section.id;
+    [...$('tabs').querySelectorAll('button')].forEach(b=>b.classList.toggle('active',b.dataset.id===section.id));
+    notice('در حال دریافت اطلاعات…');
+    try{await section.load();notice('اطلاعات به‌روز شد.','success');}
+    catch(e){notice(e.message,'error');}
+  }
+  async function start(){
+    try{
+      if(!apiOrigin){notice('API مدیریتی هنوز پیکربندی نشده است. این صفحه حالت نمایشی یا ورود آزمایشی ندارد.','error');return;}
+      const ctx=await request('/me');
+      state.permissions=ctx.permissions||[];state.roles=ctx.roles||[];
+      $('identity').textContent='نقش‌ها: '+state.roles.join('، ');
+      const visible=sections.filter(s=>has(s[2])).map(([id,label,permission,load])=>({id,label,permission,load}));
+      if(!visible.length){notice('این حساب هیچ مجوز مدیریتی برای کنسول ندارد.','error');return;}
+      visible.forEach(s=>{const b=el('button',s.label);b.type='button';b.dataset.id=s.id;b.addEventListener('click',()=>selectSection(s));$('tabs').append(b);});
+      $('tabs').classList.remove('hidden');$('content').classList.remove('hidden');
+      await selectSection(visible[0]);
+    }catch(e){notice(e.message,'error');}
+  }
+  start();
+})();
+</script>
+</body>
+</html>

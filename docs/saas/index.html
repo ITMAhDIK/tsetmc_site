@@ -251,7 +251,7 @@
       function renderAccount(data) {
         const role = String(data.role || data.user?.role || 'user').toLowerCase();
         if (data.demo) setDemoMenuCookie(role);
-        const allowedRoles = ['superadmin','admin','support','user'];
+        const allowedRoles = ['superadmin','admin','support','data_manager','user'];
         if (!allowedRoles.includes(role)) throw new Error('نقش دریافتی از سرور معتبر نیست.');
         $('loginView').style.display = 'none';
         $('accountView').classList.add('show');
@@ -259,7 +259,7 @@
         $('maskedPhone').textContent = maskPhone(data.user?.phone_e164 || currentPhone);
         $('publicUserId').textContent = data.user?.public_id || data.user?.username || 'هنوز از سرور تخصیص داده نشده';
         const chip = $('roleChip');
-        chip.textContent = ({superadmin: data.demo ? 'سوپرادمین · حالت نمایشی' : 'سوپرادمین',admin:'مدیر',support:'پشتیبانی',user:'کاربر عادی'})[role];
+        chip.textContent = ({superadmin: data.demo ? 'سوپرادمین · حالت نمایشی' : 'سوپرادمین',admin:'مدیر',support:'پشتیبانی',data_manager:'مدیر داده',user:'کاربر عادی'})[role];
         chip.className = 'role-chip' + (role === 'superadmin' ? ' admin' : '');
         $('accountDescription').textContent = data.demo
           ? (role === 'superadmin'
@@ -271,7 +271,11 @@
         const items = role === 'superadmin'
           ? [['مدیریت کاربران','مشاهده و مدیریت حساب‌ها'],['نقش‌ها و دسترسی‌ها','کنترل مجوزهای مدیریتی'],['اشتراک و پرداخت','مدیریت طرح‌ها و سفارش‌ها'],['ممیزی و گزارش‌ها','پیگیری رویدادهای مدیریتی']]
           : [['داشبورد بازار','نمای بازار و نمادها'],['پرتفوی سرمایه‌گذاران','بررسی ترکیب دارایی‌ها'],['حساب کاربری','پروفایل و وضعیت اشتراک'],['تنظیمات','ترجیحات و امنیت حساب']];
-        $('accessGrid').innerHTML = items.map(([title,desc]) => '<div class="access-item">' + title + '<small>' + desc + '</small></div>').join('');
+        const staffRole = !data.demo && ['superadmin','admin','support','data_manager'].includes(role);
+        if (staffRole) items.unshift(['کنسول مدیریت','پنل امن عملیات مدیریتی و گزارش‌ها','./admin.html']);
+        $('accessGrid').innerHTML = items.map(([title,desc,href]) => href
+          ? '<a class="access-item" href="' + href + '">' + title + '<small>' + desc + '</small></a>'
+          : '<div class="access-item">' + title + '<small>' + desc + '</small></div>').join('');
         if (data.demo) setStatus('حالت آزمایشی: این نقش فقط برای مشاهدهٔ ظاهر حساب است و دسترسی مدیریتی سمت سرور ایجاد نمی‌کند.', 'info', $('accountStatus'));
         else $('accountStatus').className = 'status';
       }
