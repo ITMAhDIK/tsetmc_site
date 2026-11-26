@@ -11,7 +11,9 @@ from saas_core.wallet.wallet_repository import (
     get_wallet_balances, post_ledger_entry, request_withdrawal,
     review_withdrawal, settle_withdrawal, spend_wallet,
 )
-from saas_core.wallet.referrals import (ensure_referral_code, attach_referral,\n    qualify_and_reward_referral)
+from saas_core.wallet.referrals import (
+    ensure_referral_code, attach_referral, qualify_and_reward_referral,
+)
 from saas_core.payments.repository import create_subscription_order, create_payment_attempt, attach_provider_checkout
 from saas_core.payments.domain import VerifiedPayment
 from saas_core.payments.settlement import settle_provider_callback
