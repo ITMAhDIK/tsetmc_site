@@ -69,7 +69,7 @@ def _page(limit=50, offset=0, maximum=200):
             raise AdminConsoleError("%s must be an integer." % field)
         if isinstance(value, int):
             return value
-        if isinstance(value, str) and re.fullmatch(r"-?\\d{1,10}", value.strip()):
+        if isinstance(value, str) and re.fullmatch(r"-?\d{1,10}", value.strip()):
             return int(value.strip())
         raise AdminConsoleError("%s must be an integer." % field)
 
@@ -496,8 +496,10 @@ class AdminConsoleService:
         with self._transaction() as cursor:
             cursor.execute(
                 """
-                SELECT COALESCE(b.cash_balance_toman,0),COALESCE(b.gift_balance_toman,0),
-                       COALESCE(w.reserved_toman,0),COALESCE(w.available_to_withdraw_toman,0)
+                SELECT COALESCE(b.cash_balance_toman,0) AS cash_balance_toman,
+                       COALESCE(b.gift_balance_toman,0) AS gift_balance_toman,
+                       COALESCE(w.reserved_toman,0) AS reserved_toman,
+                       COALESCE(w.available_to_withdraw_toman,0) AS available_to_withdraw_toman
                 FROM (SELECT %s::uuid AS user_id) t
                 LEFT JOIN wallet_balances b ON b.user_id=t.user_id
                 LEFT JOIN wallet_withdrawable_balances w ON w.user_id=t.user_id
@@ -563,8 +565,8 @@ class AdminConsoleService:
                 raise AdminConsoleError("Wallet account could not be locked.", 500)
             cursor.execute(
                 """
-                SELECT COALESCE(SUM(amount_toman) FILTER(WHERE bucket='cash'),0),
-                       COALESCE(SUM(amount_toman) FILTER(WHERE bucket='gift'),0)
+                SELECT COALESCE(SUM(amount_toman) FILTER(WHERE bucket='cash'),0) AS cash_balance,
+                       COALESCE(SUM(amount_toman) FILTER(WHERE bucket='gift'),0) AS gift_balance
                 FROM wallet_ledger_entries WHERE user_id=%s
                 """,
                 (target,),
@@ -573,13 +575,13 @@ class AdminConsoleService:
             cash, gift = (int(totals.get("cash_balance", 0)), int(totals.get("gift_balance", 0))) if isinstance(totals, Mapping) else (int(totals[0]), int(totals[1]))
             cursor.execute(
                 """
-                SELECT COALESCE(SUM(amount_toman),0) FROM withdrawal_requests
+                SELECT COALESCE(SUM(amount_toman),0) AS reserved_toman FROM withdrawal_requests
                 WHERE user_id=%s AND status IN ('requested','approved')
                 """,
                 (target,),
             )
             reserved_row = cursor.fetchone()
-            reserved = int(reserved_row.get("coalesce", 0) if isinstance(reserved_row, Mapping) else reserved_row[0])
+            reserved = int(reserved_row.get("reserved_toman", 0) if isinstance(reserved_row, Mapping) else reserved_row[0])
             available = cash - reserved if bucket == "cash" else gift
             if direction == "debit" and amount_toman > available:
                 raise AdminConflict("Adjustment would make the available %s balance negative." % bucket)
@@ -738,8 +740,8 @@ class AdminConsoleService:
         with self._transaction() as cursor:
             cursor.execute(
                 """
-                SELECT t.id,t.ticket_number,t.user_id,owner.public_id,t.assigned_to,
-                       assignee.public_id,t.subject,t.category,t.priority,t.status,
+                SELECT t.id,t.ticket_number,t.user_id,owner.public_id AS user_public_id,t.assigned_to,
+                       assignee.public_id AS assigned_public_id,t.subject,t.category,t.priority,t.status,
                        t.created_at,t.updated_at
                 FROM tickets t JOIN users owner ON owner.id=t.user_id
                 LEFT JOIN users assignee ON assignee.id=t.assigned_to
@@ -935,7 +937,7 @@ class AdminConsoleService:
         with self._transaction() as cursor:
             cursor.execute(
                 """
-                SELECT t.id,t.ticket_number,t.user_id,u.public_id,t.assigned_to,
+                SELECT t.id,t.ticket_number,t.user_id,u.public_id AS public_id,t.assigned_to,
                        t.subject,t.category,t.priority,t.status,t.created_at,t.updated_at
                 FROM tickets t JOIN users u ON u.id=t.user_id WHERE t.id=%s
                 """,
@@ -946,7 +948,7 @@ class AdminConsoleService:
                 raise AdminNotFound("Ticket")
             cursor.execute(
                 """
-                SELECT m.id,m.sender_user_id,u.public_id,m.body,m.is_internal_note,m.created_at
+                SELECT m.id,m.sender_user_id,u.public_id AS sender_public_id,m.body,m.is_internal_note,m.created_at
                 FROM ticket_messages m JOIN users u ON u.id=m.sender_user_id
                 WHERE m.ticket_id=%s ORDER BY m.created_at,m.id
                 """,
@@ -1055,4 +1057,27 @@ class AdminConsoleService:
         if result is None:
             raise AdminPermissionDenied("active staff session")
         return {"user_id": str(actor), "roles": result["roles"], "permissions": result["permissions"]}
+
+
+
+    def list_roles(self, *, actor_user_id):
+        """List server-defined roles and permissions for superadmin role management."""
+        self._actor(actor_user_id, "roles.manage")
+        with self._transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT r.code,r.title,
+                       COALESCE(array_agg(DISTINCT p.code)
+                         FILTER (WHERE p.code IS NOT NULL),ARRAY[]::text[]) AS permissions
+                FROM roles r
+                LEFT JOIN role_permissions rp ON rp.role_id=r.id
+                LEFT JOIN permissions p ON p.id=rp.permission_id
+                GROUP BY r.id,r.code,r.title
+                ORDER BY CASE r.code
+                    WHEN 'superadmin' THEN 0 WHEN 'admin' THEN 1
+                    WHEN 'support' THEN 2 WHEN 'data_manager' THEN 3 ELSE 4 END
+                """
+            )
+            rows=cursor.fetchall()
+        return {"roles":_many(rows,("code","title","permissions"))}
 

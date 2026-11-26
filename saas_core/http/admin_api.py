@@ -184,6 +184,8 @@ class SaasAdminAPI:
                 FROM sessions s JOIN users u ON u.id=s.user_id
                 WHERE s.token_hash=%s AND s.revoked_at IS NULL
                   AND s.expires_at>now()
+                  AND s.mfa_verified_at > now()-interval '12 hours'
+                  AND s.mfa_verified_at <= now()+interval '1 minute'
                 """,
                 (_hash_token(token),),
             )
@@ -300,6 +302,8 @@ class SaasAdminAPI:
 
         if method == "GET" and path == API_PREFIX + "/overview":
             return self.admin.overview(actor_user_id=actor)
+        if method == "GET" and path == API_PREFIX + "/roles":
+            return self.admin.list_roles(actor_user_id=actor)
         if method == "GET" and path == API_PREFIX + "/users":
             return self.admin.list_users(
                 actor_user_id=actor, query=self._one(query, "q"),
