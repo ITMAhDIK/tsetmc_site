@@ -261,8 +261,8 @@ def run_sms_worker() -> None:
         except KeyboardInterrupt:
             logger.info("SMS outbox worker stopping")
             return
-        except Exception:
+        except Exception as exc:
             # Exception text from libraries/providers may include URLs or personal
             # data; log only the class, never str(exc) or a traceback.
-            logger.error("SMS worker cycle failed (%s)", type(Exception).__name__)
+            logger.error("SMS worker cycle failed (%s)", type(exc).__name__)
             time.sleep(min(10, poll_seconds * 2))
