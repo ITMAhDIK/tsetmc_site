@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - "docs/**"
+      - "ui-refresh.css"
       - ".github/workflows/pages-investor-preview.yml"
       - "tools/inspect_pages_workbooks.py"
       - "tools/build_static_investor_demo.py"
@@ -63,25 +64,45 @@ jobs:
       - name: Build static investor history and affinity data
         run: python tools/build_static_investor_demo.py
 
-      - name: Validate SaaS OTP portal JavaScript and public privacy boundary
+      - name: Validate login demo, shareholder screener merge and navigation
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
-          html = Path("docs/saas/index.html").read_text(encoding="utf-8")
-          scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+          auth = Path("docs/saas/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", auth, flags=re.S)
           if len(scripts) != 1:
-              raise SystemExit(f"Expected exactly one inline auth script, got {len(scripts)}")
-          if "+989306311461" in html:
-              raise SystemExit("A private superadmin phone number must never be committed to the public page")
+              raise SystemExit(f"Expected one auth script, got {len(scripts)}")
           script = scripts[0]
+          if "+989306311461" in auth:
+              raise SystemExit("The owner phone must not appear in public source")
+          if "DEMO_OTP_MODE = !API_BASE" not in script or 'maxlength="4"' not in auth:
+              raise SystemExit("Four-digit no-SMS demo mode is not configured")
           if "localStorage" in script or "sessionStorage" in script:
               raise SystemExit("Auth sessions must not be stored in browser storage")
           for required in ("/api/v1/auth/otp/request", "/api/v1/auth/otp/verify",
                            "/api/v1/auth/me", "/api/v1/auth/logout"):
               if required not in script:
-                  raise SystemExit(f"Missing auth endpoint contract: {required}")
+                  raise SystemExit(f"Missing live API contract: {required}")
           Path("/tmp/tloomberg-auth.js").write_text(script, encoding="utf-8")
+
+          page = Path("docs/index.html").read_text(encoding="utf-8")
+          nav = re.search(r"const NAV_PAGES = \[(.*?)\];", page, flags=re.S)
+          if not nav:
+              raise SystemExit("Main navigation definition not found")
+          ids = re.findall(r"\{ id: '([^']+)', label:", nav.group(1))
+          expected = ['market', 'stock', 'shareholders', 'portfolio', 'investor-history', 'account']
+          if ids != expected:
+              raise SystemExit(f"Unexpected main tab order: {ids}")
+          share_start = page.index("function ShareholderIntelligencePage")
+          share_end = page.index("function PortfolioReconstructionPage", share_start)
+          if "<AdvancedScreenerPanel onOpenStock={onOpenStock} />" not in page[share_start:share_end]:
+              raise SystemExit("Advanced screener is not embedded in Shareholder Analysis")
+          if "{ id: 'screener'" in page:
+              raise SystemExit("Old standalone screener tab still exists")
+          css = Path("ui-refresh.css").read_text(encoding="utf-8")
+          if "justify-content:center" not in css:
+              raise SystemExit("Primary navigation is not centered")
           PY
           node --check /tmp/tloomberg-auth.js
 
