@@ -43,15 +43,20 @@ jobs:
       - name: Scan SaaS backend
         run: bandit --recursive saas_core scripts --severity-level high --confidence-level high
       - name: Validate operational shell scripts
-        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh
+        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh
       - name: Compile Python service and operations tools
-        run: python -m compileall -q saas_core scripts
+        run: python -m compileall -q server.py site_api saas_core scripts
       - name: Build the non-root SaaS API image
         run: |
           docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
           image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-saas-api:ci)"
           test "$image_user" = "10001:10001"
-      - name: Validate production Compose configuration
+      - name: Build the non-root Market API image
+        run: |
+          docker build --file Dockerfile.market --tag tloomberg-market-api:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-market-api:ci)"
+          test "$image_user" = "10001:10001"
+      - name: Validate production Compose configurations
         env:
           SAAS_API_IMAGE: tloomberg-saas-api:ci
           SAAS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@db.internal:5432/tloomberg_saas
@@ -66,6 +71,12 @@ jobs:
           SAAS_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
           SAAS_METRICS_TOKEN: ci-placeholder-metrics-token-with-more-than-32-chars
           PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+          SAAS_METRICS_TOKEN_FILE: /tmp/saas_metrics_token
+          MARKET_API_IMAGE: tloomberg-market-api:ci
+          MARKET_SOURCE_DB_PATH: /tmp/market-source.sqlite
+          MARKET_API_DOMAIN: market-api.example.com
+          MARKET_ALLOWED_ORIGINS: https://itmahdik.github.io
+          MARKET_REFRESH_MINUTES: "10"
           SAAS_TERMS_VERSION: ci-terms-review-version
           SAAS_PRIVACY_VERSION: ci-privacy-review-version
           SAAS_SUPERADMIN_PHONE_E164: "+989000000001"
@@ -73,10 +84,17 @@ jobs:
           SMS_API_KEY: ci-placeholder-kavenegar-key-123456789
           SMS_SENDER: "10004346"
         run: |
+          printf '%s' 'ci-placeholder-metrics-token-with-more-than-32-chars' > /tmp/saas_metrics_token
+          touch /tmp/market-source.sqlite
           docker compose -f docker-compose.saas.production.yml config --quiet
+          docker compose -f docker-compose.market.production.yml config --quiet
           docker run --rm \
             -e SAAS_DOMAIN=api.example.com \
             -v "$GITHUB_WORKSPACE/Caddyfile.saas:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm \
+            -e MARKET_API_DOMAIN=market-api.example.com \
+            -v "$GITHUB_WORKSPACE/Caddyfile.market:/etc/caddy/Caddyfile:ro" \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   backup-restore-drill:
