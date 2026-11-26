@@ -26,13 +26,13 @@ the API response contract.
 Terminal 1 — API only (no refresh thread is started):
 
 ```powershell
-python server.py --db "D:\\data\\tsetmc_holdings.sqlite" --sidecar ".\\site_data.sqlite" --refresh-mode external
+python server.py --db "D:\data\tsetmc_holdings.sqlite" --sidecar ".\site_data.sqlite" --refresh-mode external
 ```
 
 Terminal 2 — refresh worker:
 
 ```powershell
-python -m site_api.refresh_worker --db "D:\\data\\tsetmc_holdings.sqlite" --sidecar ".\\site_data.sqlite" --refresh-minutes 10
+python -m site_api.refresh_worker --db "D:\data\tsetmc_holdings.sqlite" --sidecar ".\site_data.sqlite" --refresh-minutes 10
 ```
 
 The worker performs a refresh immediately on startup, then waits ten minutes after
@@ -78,7 +78,7 @@ a production deployment.
 ## CI result
 
 GitHub Actions passed on this implementation:
-- Push run: [45883525545](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45883418326) — **135 passed in 3.86s**.
-- Pull-request run: [45883532727](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45883425534) — **135 passed in 3.9s**.
+- Push run: [45883525545](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45883525545) — **135 passed in 3.86s**.
+- Pull-request run: [45883532727](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45883532727) — **135 passed in 3.9s**.
 
 The passing suite includes the Phase 0 API-contract tests, Phase 1 HTTP-handler tests, and the new Phase 2 worker/locking tests.
