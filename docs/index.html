@@ -2623,6 +2623,17 @@
       const [plan, setPlan] = useState('premium');
       const [quickSearch, setQuickSearch] = useState('');
       const [searchResults, setSearchResults] = useState([]);
+      const [menuOpen, setMenuOpen] = useState(false);
+      const [demoMenuRole, setDemoMenuRole] = useState(() => {
+        const entry = document.cookie.split(';').map(x => x.trim()).find(x => x.startsWith('tloomberg_demo_menu='));
+        const value = entry ? decodeURIComponent(entry.split('=').slice(1).join('=')) : '';
+        return value === 'superadmin' || value === 'user' ? value : '';
+      });
+      const logoutDemoMenu = () => {
+        document.cookie = 'tloomberg_demo_menu=; Path=/; Max-Age=0; SameSite=Lax; Secure';
+        setDemoMenuRole('');
+        setMenuOpen(false);
+      };
 
       useEffect(() => { setDateModeGlobal(dateMode); setDateModeTick(t => t + 1); }, [dateMode]);
 
@@ -2692,17 +2703,35 @@
                   </div>
                 )}
               </div>
-              <a href="./saas/" className="app-tool-button" aria-label="ورود به حساب کاربری"><span className="app-tool-label">حساب</span><strong>ورود</strong></a>
-              <div className="app-toolbar" role="group" aria-label="تنظیمات نمایش">
-                <button onClick={toggleDateMode} className="app-tool-button" title="تغییر تقویم همهٔ تاریخ‌ها">
-                  <span className="app-tool-label">تاریخ</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
+              <div className="app-user-menu">
+                <button type="button" className="app-menu-trigger" onClick={() => setMenuOpen(v => !v)} aria-expanded={menuOpen} aria-haspopup="true">
+                  <span className="app-menu-trigger-icon" aria-hidden="true">☰</span>
+                  <strong>{demoMenuRole ? 'منو' : 'ورود'}</strong>
+                  <span className="app-menu-chevron" aria-hidden="true">{menuOpen ? '⌃' : '⌄'}</span>
                 </button>
-                <button onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} className="app-tool-button" title="تغییر واحد پول">
-                  <span className="app-tool-label">واحد</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
-                </button>
-                <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="app-tool-button" title={theme === 'dark' ? 'تغییر به پوستهٔ روشن' : 'تغییر به پوستهٔ تیره'} aria-label={theme === 'dark' ? 'فعال‌کردن پوستهٔ روشن' : 'فعال‌کردن پوستهٔ تیره'} aria-pressed={theme === 'light'}>
-                  <span className="app-tool-label">پوسته</span><strong>{theme === 'dark' ? 'روشن' : 'تیره'}</strong>
-                </button>
+                {menuOpen && (
+                  <div className="app-menu-panel" role="menu">
+                    {demoMenuRole ? (
+                      <div className="app-menu-profile">
+                        <span className="app-menu-avatar" aria-hidden="true">♙</span>
+                        <span><strong>{demoMenuRole === 'superadmin' ? 'مدیر کل' : 'کاربر تلومبرگ'}</strong><small>{demoMenuRole === 'superadmin' ? 'سوپرادمین · حالت آزمایشی' : 'کاربر عادی · حالت آزمایشی'}</small></span>
+                      </div>
+                    ) : (
+                      <a href="./saas/" className="app-menu-login" role="menuitem">ورود / ساخت حساب <span aria-hidden="true">←</span></a>
+                    )}
+                    <div className="app-menu-section-title">تنظیمات نمایش</div>
+                    <button type="button" className="app-menu-setting" onClick={toggleDateMode} role="menuitem">
+                      <span>تقویم</span><strong>{dateMode === 'jalali' ? 'شمسی' : 'میلادی'}</strong>
+                    </button>
+                    <button type="button" className="app-menu-setting" onClick={() => setCurrency(c => c === 'IRR' ? 'IRT' : 'IRR')} role="menuitem">
+                      <span>واحد پول</span><strong>{currency === 'IRR' ? 'ریال' : 'تومان'}</strong>
+                    </button>
+                    <button type="button" className="app-menu-setting" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} role="menuitem">
+                      <span>تم سایت</span><strong>{theme === 'light' ? 'روشن' : 'تیره'}</strong>
+                    </button>
+                    {demoMenuRole && <button type="button" className="app-menu-logout" onClick={logoutDemoMenu} role="menuitem">خروج از حساب آزمایشی</button>}
+                  </div>
+                )}
               </div>
             </div>
             <div className="app-nav-wrap">
