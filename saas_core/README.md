@@ -24,11 +24,14 @@ withdrawal logic must subtract pending/approved reservations under transaction
 locks. The pure domain module is not a payment processor.
 
 ## Apply schema
-Create a dedicated SaaS PostgreSQL database, then run:
+Create a dedicated SaaS PostgreSQL database, then apply every numbered migration in order. In PowerShell:
 \`\`\`powershell
-psql "$env:SAAS_DATABASE_URL" -v ON_ERROR_STOP=1 -f saas_core/schema/001_initial.sql
+Get-ChildItem saas_core/schema/*.sql | Sort-Object Name | ForEach-Object {
+    psql "$env:SAAS_DATABASE_URL" -v ON_ERROR_STOP=1 -f $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($_.Name)" }
+}
 \`\`\`
-Never point this URL at the market-data database.
+Never point this URL at the market-data database. Migrations are designed to be re-runnable; back up the SaaS database before applying production migrations.
 
 Payment gateways, SMS, Google OAuth, production authentication and withdrawal
 processing are intentionally not represented as live integrations yet.

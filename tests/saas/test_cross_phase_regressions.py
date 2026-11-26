@@ -15,7 +15,10 @@ from saas_core.auth.service import AuthenticationError, hash_session_token
 from saas_core.auth.repository import (
     authenticate_session, consume_phone_otp, request_phone_otp,
 )
-from saas_core.payments.repository import create_subscription_order
+from saas_core.payments.repository import create_subscription_order, create_payment_attempt, attach_provider_checkout
+from saas_core.payments.domain import VerifiedPayment
+from saas_core.payments.settlement import settle_provider_callback
+from saas_core.account.service import subscription_history
 
 DSN=os.getenv("SAAS_TEST_DATABASE_URL")
 pytestmark=pytest.mark.skipif(not DSN,reason="SAAS_TEST_DATABASE_URL is not configured")
@@ -27,7 +30,7 @@ def migrated_cross_phase_database():
     schema=os.path.join(root,"saas_core","schema")
     with psycopg.connect(DSN,autocommit=True,row_factory=dict_row) as conn:
         for name in ("001_initial.sql","002_payment_lifecycle.sql","003_wallet_referrals.sql",
-                     "004_support.sql","005_analytics.sql","005_analytics.sql"):
+                     "004_support.sql","005_analytics.sql","006_order_terms_snapshot.sql","005_analytics.sql","006_order_terms_snapshot.sql"):
             with open(os.path.join(schema,name),encoding="utf-8") as stream:
                 conn.execute(stream.read())
     yield
@@ -195,3 +198,87 @@ def test_phone_normalization_rejects_unicode_digits(migrated_cross_phase_databas
     from saas_core.auth.service import normalize_phone
     with pytest.raises(ValueError):
         normalize_phone("+۹۸۹۱۲۳۴۵۶۷۸")
+
+
+def test_subscription_history_and_settlement_use_terms_captured_when_order_was_created(migrated_cross_phase_database):
+    with connect() as conn:
+        user_id=uuid4()
+        conn.execute(
+            """INSERT INTO users(id,public_id,username,status,phone_e164,phone_verified_at)
+               VALUES (%s,%s,%s,'active','+989121234571',now())""",
+            (user_id,str(user_id)[:32],f"terms-{user_id.hex[:12]}"),
+        )
+        plan_code=f"terms_{uuid4().hex[:10]}"
+        conn.execute("INSERT INTO plans(code,title,duration_days,price_toman,active) VALUES (%s,'Snapshot test plan',30,899000,TRUE)",(plan_code,))
+        order=create_subscription_order(conn,user_id=user_id,plan_code=plan_code,
+                                        idempotency_key=f"terms-order-{uuid4()}")
+        assert order["amount_toman"]==899000 and order["duration_days"]==30
+        conn.execute("UPDATE plans SET price_toman=999000,duration_days=7 WHERE code=%s",(plan_code,))
+        attempt=create_payment_attempt(conn,order_id=order["id"],provider="snappay")
+        provider_ref=f"terms-provider-{uuid4()}"
+        attach_provider_checkout(conn,attempt_id=attempt["id"],provider_order_id=provider_ref,
+            redirect_url="https://sandbox.invalid/checkout",request_ref="terms-test")
+        verified=VerifiedPayment(provider_event_id=f"terms-event-{uuid4()}",
+            provider_order_id=provider_ref,amount_toman=899000,success=True,reference="terms-reference")
+        settle_provider_callback(conn,order_id=order["id"],attempt_id=attempt["id"],provider="snappay",
+            verified=verified,payload_sha256="9"*64)
+        subscription=conn.execute(
+            """SELECT EXTRACT(EPOCH FROM (ends_at-starts_at))/86400 AS days
+               FROM subscriptions WHERE payment_order_id=%s""",(order["id"],)
+        ).fetchone()
+        assert float(subscription["days"])==30.0
+        history=subscription_history(conn,user_id)
+        assert history[0]["price_toman"]==899000
+        assert history[0]["duration_days"]==30
+
+
+def test_account_api_profile_preferences_and_session_ownership(migrated_cross_phase_database):
+    from saas_core.auth.api import app,get_conn
+    from saas_core.auth.repository import create_session
+    from fastapi.testclient import TestClient
+    with connect() as conn:
+        user_id=uuid4();other_id=uuid4()
+        conn.execute(
+            """INSERT INTO users(id,public_id,username,status,display_name)
+               VALUES (%s,%s,%s,'active','Original Name'),(%s,%s,%s,'active','Other User')""",
+            (user_id,str(user_id)[:32],f"account_{user_id.hex[:10]}",other_id,str(other_id)[:32],f"other_{other_id.hex[:10]}"),
+        )
+        conn.execute("INSERT INTO user_preferences(user_id) VALUES (%s),(%s)",(user_id,other_id))
+        current_token,_=create_session(conn,user_id)
+        secondary_token,_=create_session(conn,user_id)
+        third_token,_=create_session(conn,user_id)
+        other_token,_=create_session(conn,other_id)
+        conn.commit()
+        foreign_session=conn.execute("SELECT id FROM sessions WHERE token_hash=%s",(hash_session_token(other_token),)).fetchone()["id"]
+        def database_connection():
+            yield conn
+        app.dependency_overrides[get_conn]=database_connection
+        try:
+            with TestClient(app) as client:
+                headers={"Authorization":f"Bearer {current_token}"}
+                profile=client.get("/account/profile",headers=headers)
+                assert profile.status_code==200 and profile.json()["profile"]["display_name"]=="Original Name"
+                updated=client.patch("/account/profile",headers=headers,json={"display_name":"Updated Name"})
+                assert updated.status_code==200
+                assert client.get("/account/profile",headers=headers).json()["profile"]["display_name"]=="Updated Name"
+                assert client.patch("/account/profile",headers=headers,json={"display_name":"Bad","status":"deleted"}).status_code==422
+                preferences=client.patch("/account/preferences",headers=headers,json={"theme":"dark","currency":"rial"})
+                assert preferences.status_code==200
+                assert preferences.json()["preferences"]["theme"]=="dark"
+                assert client.patch("/account/preferences",headers=headers,json={"is_admin":True}).status_code==422
+                sessions=client.get("/account/sessions",headers=headers)
+                assert sessions.status_code==200 and len(sessions.json()["sessions"])==3
+                own_ids={row["id"] for row in sessions.json()["sessions"]}
+                current_id=next(row["id"] for row in sessions.json()["sessions"] if row["is_current"])
+                assert client.delete(f"/account/sessions/{current_id}",headers=headers).status_code==409
+                assert client.delete(f"/account/sessions/{foreign_session}",headers=headers).status_code==404
+                secondary_id=str(conn.execute("SELECT id FROM sessions WHERE token_hash=%s",(hash_session_token(secondary_token),)).fetchone()["id"])
+                assert secondary_id in own_ids
+                assert client.delete(f"/account/sessions/{secondary_id}",headers=headers).status_code==200
+                revoked=client.post("/account/sessions/revoke-others",headers=headers)
+                assert revoked.status_code==200 and revoked.json()["revoked_count"]==1
+                assert authenticate_session(conn,third_token) is None
+                assert authenticate_session(conn,other_token)["id"]==other_id
+                assert authenticate_session(conn,current_token)["id"]==user_id
+        finally:
+            app.dependency_overrides.pop(get_conn,None)
