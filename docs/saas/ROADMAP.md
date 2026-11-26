@@ -21,13 +21,12 @@
 - No market-data schema, database, collector or API changes.
 - Dashboard frontend and PostgreSQL integration tests remain.
 
-## Phase 4 — Subscriptions and payments (lifecycle foundation integrated; production blocked)
-- Server-priced idempotent subscription orders and verified-phone purchase gate.
-- Provider-neutral checkout/verification contracts and payment-attempt tracking.
-- Atomic settlement, provider-event deduplication and subscription renewal extension.
-- Refund-request schema only; no refund execution or reconciliation worker.
-- SnapPay/DigiPay adapters fail closed pending official merchant packs and sandbox credentials.
-- PostgreSQL integration/concurrency tests, provider end-to-end tests and callback-authenticity review remain.
+## Phase 4 — Subscription/payment lifecycle (PostgreSQL-tested; gateway onboarding blocked)
+- Server-priced, phone-verified, idempotent orders and hosted checkout attempt lifecycle.
+- Atomic settlement, amount/provider-reference validation, callback replay protection and serialized renewals.
+- Expired-order maintenance, audited full-refund queue/worker contract and stale-payment reconciliation queue.
+- Disposable PostgreSQL 16 integration and concurrency tests run in CI.
+- SnapPay/DigiPay live adapters, provider callback authenticity and sandbox E2E remain blocked on official merchant docs and credentials; no live payments.
 
 ## Phase 5 — Wallet and referrals
 Ledger, top-ups, gift/cash balance, withdrawal reservations, bank verification,

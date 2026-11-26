@@ -64,6 +64,9 @@ def test_payment_routes_are_registered_on_saas_api():
     assert "/payments/orders/{order_id}/checkout" in paths
     assert "/payments/orders/{order_id}" in paths
     assert "/payments/providers/{provider}/return" in paths
+    assert "/payments/admin/orders/{order_id}/refunds" in paths
+    assert "/payments/admin/reconciliation/run" in paths
+    assert "/payments/admin/reconciliation" in paths
 
 
 @pytest.mark.parametrize("provider", ["snappay", "digipay"])

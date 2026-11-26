@@ -28,6 +28,8 @@ def create_subscription_order(conn, *, user_id: UUID, plan_code: str, idempotenc
             plan = cur.fetchone()
             if not plan:
                 raise LookupError("active subscription plan not found")
+            if isinstance(plan["price_toman"], bool) or plan["price_toman"] <= 0:
+                raise ValueError("subscription plan must have a positive payable price")
             cur.execute(
                 """INSERT INTO payment_orders
                    (user_id,plan_id,amount_toman,status,idempotency_key,phone_e164,expires_at)
@@ -157,11 +159,11 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
             event = cur.fetchone()
             if not event:
                 cur.execute(
-                    "SELECT processing_status FROM gateway_events WHERE provider=%s AND provider_event_id=%s",
+                    "SELECT order_id,processing_status FROM gateway_events WHERE provider=%s AND provider_event_id=%s",
                     (provider,verified.provider_event_id),
                 )
                 duplicate = cur.fetchone()
-                if duplicate and duplicate["processing_status"] == "processed":
+                if duplicate and duplicate["order_id"] == order_id and duplicate["processing_status"] == "processed":
                     return {"already_processed": True, "order_id": order_id}
                 raise PaymentRejected("provider event was already received and needs reconciliation")
             if row["status"] == "paid":
@@ -214,3 +216,202 @@ def find_attempt_by_provider_order(conn, *, provider: str, provider_order_id: st
             (provider,provider_order_id),
         )
         return cur.fetchone()
+
+
+def expire_payment_orders(conn, *, limit: int = 200) -> int:
+    """Cancel expired unpaid orders and release their checkout attempts."""
+    if not 1 <= limit <= 2000:
+        raise ValueError("limit must be between 1 and 2000")
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                """WITH due AS (
+                     SELECT id FROM payment_orders
+                     WHERE status IN ('created','pending') AND expires_at <= now()
+                     ORDER BY expires_at
+                     FOR UPDATE SKIP LOCKED LIMIT %s
+                   )
+                   UPDATE payment_orders o
+                   SET status='cancelled',updated_at=now()
+                   FROM due WHERE o.id=due.id
+                   RETURNING o.id""",
+                (limit,),
+            )
+            order_ids = [row["id"] for row in cur.fetchall()]
+            if order_ids:
+                cur.execute(
+                    """UPDATE payment_attempts SET status='expired'
+                       WHERE order_id = ANY(%s) AND status IN ('initiated','pending')""",
+                    (order_ids,),
+                )
+            return len(order_ids)
+
+
+def request_full_refund(conn, *, order_id: UUID, requested_by: UUID,
+                        idempotency_key: str, reason: str | None = None):
+    """Create an auditable full-refund request; does not call a gateway."""
+    if not idempotency_key or len(idempotency_key) > 120:
+        raise ValueError("a valid refund idempotency key is required")
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id,user_id,amount_toman,status FROM payment_orders
+                   WHERE id=%s FOR UPDATE""", (order_id,)
+            )
+            order = cur.fetchone()
+            if not order or order["status"] != "paid":
+                raise ValueError("only paid orders can be refunded")
+            cur.execute(
+                """SELECT id FROM payment_attempts
+                   WHERE order_id=%s AND status='verified'
+                   ORDER BY verified_at DESC NULLS LAST LIMIT 1""", (order_id,)
+            )
+            attempt = cur.fetchone()
+            if not attempt:
+                raise ValueError("verified payment attempt not found")
+            cur.execute(
+                """SELECT id,order_id,payment_attempt_id,amount_toman,status,
+                          idempotency_key,reason,created_at
+                   FROM payment_refunds WHERE idempotency_key=%s""",
+                (idempotency_key,),
+            )
+            prior = cur.fetchone()
+            if prior:
+                if prior["order_id"] != order_id or prior["amount_toman"] != order["amount_toman"]:
+                    raise ValueError("refund idempotency key was used for another request")
+                return prior
+            cur.execute(
+                """SELECT COALESCE(SUM(amount_toman),0) AS amount
+                   FROM payment_refunds
+                   WHERE order_id=%s AND status IN ('requested','pending','succeeded')""",
+                (order_id,),
+            )
+            already_refunded = cur.fetchone()["amount"]
+            if already_refunded:
+                raise ValueError("a refund is already pending or has been issued")
+            cur.execute(
+                """INSERT INTO payment_refunds
+                   (order_id,payment_attempt_id,amount_toman,status,idempotency_key,
+                    reason,requested_by)
+                   VALUES (%s,%s,%s,'requested',%s,%s,%s)
+                   ON CONFLICT (idempotency_key) DO NOTHING
+                   RETURNING id,order_id,payment_attempt_id,amount_toman,status,
+                             idempotency_key,reason,created_at""",
+                (order_id,attempt["id"],order["amount_toman"],idempotency_key,
+                 (reason or "")[:300] or None,requested_by),
+            )
+            refund = cur.fetchone()
+            if refund is None:
+                cur.execute(
+                    """SELECT id,order_id,payment_attempt_id,amount_toman,status,
+                              idempotency_key,reason,created_at
+                       FROM payment_refunds WHERE idempotency_key=%s""",
+                    (idempotency_key,),
+                )
+                refund = cur.fetchone()
+                if refund["order_id"] != order_id or refund["amount_toman"] != order["amount_toman"]:
+                    raise ValueError("refund idempotency key was used for another request")
+            cur.execute(
+                """INSERT INTO admin_audit_logs(actor_user_id,action,target_type,target_id,after_state)
+                   VALUES (%s,'payment.refund.requested','payment_order',%s,
+                           jsonb_build_object('refund_id',%s::text,'amount_toman',%s))""",
+                (requested_by,str(order_id),str(refund["id"]),refund["amount_toman"]),
+            )
+            return refund
+
+
+def claim_refund(conn, *, refund_id: UUID):
+    """Atomically claim a refund for a worker; repeated claims cannot race."""
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE payment_refunds SET status='pending',updated_at=now()
+                   WHERE id=%s AND status='requested'
+                   RETURNING id,order_id,payment_attempt_id,amount_toman,
+                             idempotency_key,provider_refund_id""",
+                (refund_id,),
+            )
+            return cur.fetchone()
+
+
+def finish_refund(conn, *, refund_id: UUID, provider_refund_id: str):
+    if not provider_refund_id or len(provider_refund_id) > 160:
+        raise ValueError("invalid provider refund reference")
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT order_id,amount_toman,status FROM payment_refunds
+                   WHERE id=%s FOR UPDATE""", (refund_id,)
+            )
+            refund = cur.fetchone()
+            if not refund or refund["status"] != "pending":
+                raise ValueError("refund is not pending")
+            cur.execute(
+                """UPDATE payment_refunds SET status='succeeded',provider_refund_id=%s,
+                   completed_at=now(),updated_at=now() WHERE id=%s""",
+                (provider_refund_id,refund_id),
+            )
+            cur.execute(
+                """UPDATE payment_orders SET status='refunded',updated_at=now()
+                   WHERE id=%s AND status='paid'""", (refund["order_id"],)
+            )
+            cur.execute(
+                """UPDATE subscriptions SET status='refunded'
+                   WHERE payment_order_id=%s AND status='active'""",
+                (refund["order_id"],),
+            )
+            cur.execute(
+                """INSERT INTO admin_audit_logs(action,target_type,target_id,after_state)
+                   VALUES ('payment.refund.succeeded','payment_order',%s,
+                           jsonb_build_object('refund_id',%s::text,'provider_refund_id',%s))""",
+                (str(refund["order_id"]),str(refund_id),provider_refund_id),
+            )
+
+
+def release_refund_for_retry(conn, *, refund_id: UUID, safe_to_retry: bool):
+    """Only a definitive provider rejection is retryable; ambiguous results stay pending."""
+    with conn.transaction():
+        with conn.cursor() as cur:
+            status = "requested" if safe_to_retry else "pending"
+            cur.execute(
+                """UPDATE payment_refunds SET status=%s,updated_at=now()
+                   WHERE id=%s AND status='pending'""", (status,refund_id)
+            )
+
+
+def enqueue_stale_payment_reconciliation(conn, *, older_than_minutes: int = 30,
+                                         limit: int = 200) -> int:
+    if not 1 <= older_than_minutes <= 10080 or not 1 <= limit <= 2000:
+        raise ValueError("invalid reconciliation window or limit")
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO payment_reconciliation_cases
+                   (order_id,payment_attempt_id,reason,status)
+                   SELECT o.id,a.id,'stale_pending_payment','open'
+                   FROM payment_orders o
+                   JOIN payment_attempts a ON a.order_id=o.id
+                   WHERE o.status='pending' AND a.status='pending'
+                     AND a.created_at < now() - (%s * interval '1 minute')
+                   ORDER BY a.created_at
+                   LIMIT %s
+                   ON CONFLICT (payment_attempt_id,reason) DO NOTHING""",
+                (older_than_minutes,limit),
+            )
+            return cur.rowcount
+
+
+def list_payment_reconciliation_cases(conn, *, limit: int = 100):
+    if not 1 <= limit <= 500:
+        raise ValueError("limit must be between 1 and 500")
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT c.id,c.order_id,c.payment_attempt_id,c.reason,c.status,c.created_at,
+                      o.amount_toman,o.status AS order_status,a.provider,a.provider_order_id
+               FROM payment_reconciliation_cases c
+               JOIN payment_orders o ON o.id=c.order_id
+               JOIN payment_attempts a ON a.id=c.payment_attempt_id
+               WHERE c.status='open' ORDER BY c.created_at LIMIT %s""",
+            (limit,),
+        )
+        return cur.fetchall()

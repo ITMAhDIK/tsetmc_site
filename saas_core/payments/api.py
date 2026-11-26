@@ -7,12 +7,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from saas_core.auth.api import current_user, get_conn
+from saas_core.auth.authorization import AuthorizationDenied, require_permission
 from .domain import PaymentNotConfigured, PaymentRejected, PaymentRequest
 from .gateways import get_gateway
 from .settlement import settle_provider_callback
 from .repository import (
     attach_provider_checkout, create_payment_attempt, create_subscription_order,
     find_attempt_by_provider_order, get_order_for_user, mark_attempt_failed,
+    request_full_refund, enqueue_stale_payment_reconciliation,
+    list_payment_reconciliation_cases,
 )
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -134,3 +137,64 @@ async def provider_return(provider: str, request: Request, conn=Depends(get_conn
         raise HTTPException(status_code=400, detail="payment verification failed") from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+class RefundRequestBody(BaseModel):
+    reason: str = Field(default="", max_length=300)
+
+
+def _require_payment_admin(conn, user):
+    try:
+        require_permission(conn, user["id"], "payments.read")
+    except AuthorizationDenied as exc:
+        raise HTTPException(status_code=403, detail="payment administration permission required") from exc
+
+
+@router.post("/admin/orders/{order_id}/refunds", status_code=202)
+def create_refund_request(
+    order_id: UUID,
+    body: RefundRequestBody,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=120),
+    user=Depends(current_user),
+    conn=Depends(get_conn),
+):
+    _require_payment_admin(conn, user)
+    try:
+        refund = request_full_refund(
+            conn, order_id=order_id, requested_by=user["id"],
+            idempotency_key=idempotency_key, reason=body.reason,
+        )
+        return {"refund": refund, "execution": "queued"}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="payment order not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/admin/reconciliation/run")
+def run_reconciliation(
+    older_than_minutes: int = 30,
+    user=Depends(current_user),
+    conn=Depends(get_conn),
+):
+    _require_payment_admin(conn, user)
+    try:
+        created = enqueue_stale_payment_reconciliation(
+            conn, older_than_minutes=older_than_minutes
+        )
+        return {"cases_created": created}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/admin/reconciliation")
+def get_reconciliation_cases(
+    limit: int = 100,
+    user=Depends(current_user),
+    conn=Depends(get_conn),
+):
+    _require_payment_admin(conn, user)
+    try:
+        return {"cases": list_payment_reconciliation_cases(conn, limit=limit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

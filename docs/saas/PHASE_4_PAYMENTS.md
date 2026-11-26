@@ -1,45 +1,36 @@
 # Phase 4 — Subscriptions and payments
 
-## Implemented foundation
-- Dedicated SaaS PostgreSQL migration `002_payment_lifecycle.sql` adds order expiry/currency metadata,
-  payment-attempt amount/currency/failure metadata, subscription-to-order linkage,
-  and an idempotent refund-request table.
-- Order creation reads the active plan price from the database; clients cannot
-  submit or override the amount.
-- Purchase requires a verified phone number.
-- Order creation accepts an idempotency key and rejects reuse across a different
-  user or plan.
-- Checkout and order-status API routes are mounted on the SaaS API.
-- Provider-neutral gateway protocol defines initiate, verify and refund.
-- Payment settlement validates the server-verified amount, deduplicates gateway
-  events, marks the order paid and activates exactly one subscription atomically.
-- Renewals extend from the latest active subscription end date rather than
-  truncating remaining paid time.
-- Browser redirects are not trusted as proof of payment.
+## Implemented lifecycle
+- Server-priced subscription orders; clients cannot set the amount.
+- Verified-phone purchase gate and idempotent order creation.
+- HTTPS hosted-checkout contract and one active checkout per order.
+- Provider-neutral verification contract; amount, provider order reference and event identity are checked server-side.
+- Atomic order settlement, one subscription per paid order, and serialized renewal extension per user.
+- Provider-event callback retries are serialized with a PostgreSQL advisory transaction lock.
+- Expired orders are cancelled in bounded batches and their active checkout attempts are expired.
+- Full-refund requests are idempotent, permission-gated, audited and queued for a worker.
+- Successful refund completion updates the order and linked subscription in one transaction.
+- Stale pending payments are placed in an admin reconciliation queue with a review API.
+- Migration 002 is safe to re-run and creates refund and reconciliation structures.
 
-## API routes
-- POST /payments/orders — create order from a server-side plan price.
-- POST /payments/orders/{order_id}/checkout — initiate hosted checkout.
-- GET /payments/orders/{order_id} — read own order status.
-- POST /payments/providers/{provider}/return — server-side provider verification
-  entry point (must be wired to the provider's official verification contract).
+## API
+- POST /payments/orders
+- POST /payments/orders/{order_id}/checkout
+- GET /payments/orders/{order_id}
+- POST /payments/providers/{provider}/return
+- POST /payments/admin/orders/{order_id}/refunds
+- POST /payments/admin/reconciliation/run
+- GET /payments/admin/reconciliation
 
-## Provider onboarding is intentionally blocked
-SnapPay and DigiPay gateway classes currently fail closed with
-`PaymentNotConfigured`. No API URLs, credential names, signature algorithms,
-callback fields or refund payloads have been guessed. Live adapters require the
-merchant's current official integration pack, merchant onboarding and sandbox
-credentials. Do not expose payment endpoints publicly until those adapters,
-callback authenticity checks, rate limits, CSRF/CORS, and sandbox tests exist.
+## Operations
+Run the bounded maintenance functions from a scheduled worker:
+- `expire_payment_orders(conn)`
+- `enqueue_stale_payment_reconciliation(conn)`
 
-## Refunds and reconciliation
-The migration stores refund requests and provider references, but refund
-execution, partial-refund policy, settlement reports, scheduled reconciliation,
-and operational admin review are not implemented yet. Payment history remains
-immutable; corrections must be represented as compensating financial records.
+Refund execution is intentionally a separate worker action. It must claim a request, call the provider using its stable idempotency key, and only then record the provider refund reference with `finish_refund`. An ambiguous timeout must remain pending for reconciliation, never be blindly retried as a new refund.
 
-## Validation status
-Focused unit tests cover amount validation, verified-amount matching, failed
-verification rejection, and the fail-closed gateway behavior. PostgreSQL
-integration tests, concurrent idempotency tests, provider sandbox tests and
-end-to-end callback tests have not been run.
+## Gateway limitation — not production complete
+SnapPay and DigiPay adapters still fail closed. Live initiation, server-to-server verification, callback signature/authenticity, refunds, and sandbox E2E cannot responsibly be implemented without each merchant's current official integration guide, merchant account, and sandbox credentials. Do not accept live payments or expose callbacks publicly until those are supplied and verified. No gateway URL, signature scheme, credential or callback field is guessed.
+
+## Validation
+CI now provisions a disposable PostgreSQL 16 service, applies the isolated SaaS schema/migration, and runs real database integration tests alongside unit tests. No production database or real money is touched.
