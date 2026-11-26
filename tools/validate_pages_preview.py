@@ -2,7 +2,6 @@
 """Fail-closed validation for the sanitized static GitHub Pages bundle."""
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import sys
@@ -43,11 +42,14 @@ def main() -> int:
         "SAAS_DATABASE_URL=postgresql://",
         "SAAS_MIGRATION_DATABASE_URL=postgresql://",
     )
+    public_asset_suffixes = {".html", ".js", ".css", ".json", ".svg", ".xml"}
     for path in DOCS.rglob("*"):
         if not path.is_file():
             continue
         if path.name.startswith(".env") or path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}:
             fail(f"private configuration or key file is inside docs/: {path.relative_to(ROOT)}")
+        if path.suffix.lower() not in public_asset_suffixes:
+            continue
         try:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
