@@ -67,7 +67,7 @@ def test_real_http_get_routes_through_handler_adapter_and_preserves_query(http_a
     assert response.headers["Content-Type"].startswith("application/json")
     assert payload == {
         "called": "market_watch",
-        "args": ({"limit": ["7"], "q": ["alpha"]},),
+        "args": [{"limit": ["7"], "q": ["alpha"]}],
     }
     assert api.calls == [
         ("market_watch", ({"limit": ["7"], "q": ["alpha"]},))
@@ -80,7 +80,7 @@ def test_real_http_get_decodes_path_parameter_before_dispatch(http_api):
         payload = json.loads(response.read().decode("utf-8"))
 
     assert response.status == 200
-    assert payload == {"called": "stock_detail", "args": ("TEST SYMBOL",)}
+    assert payload == {"called": "stock_detail", "args": ["TEST SYMBOL"]}
     assert api.calls == [("stock_detail", ("TEST SYMBOL",))]
 
 
@@ -97,7 +97,7 @@ def test_real_http_post_passes_json_body_to_extracted_dispatcher(http_api):
         payload = json.loads(response.read().decode("utf-8"))
 
     assert response.status == 200
-    assert payload == {"called": "screener_query", "args": (body,)}
+    assert payload == {"called": "screener_query", "args": [body]}
     assert api.calls == [("screener_query", (body,))]
 
 
