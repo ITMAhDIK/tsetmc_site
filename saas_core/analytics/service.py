@@ -14,6 +14,7 @@ ELEMENT_ROLES = {"button", "link", "tab", "menuitem", "navigation", "section", "
 _METADATA_KEYS = {"feature", "funnel_name", "funnel_step"}
 _PATH = re.compile(r"^/[A-Za-z0-9_./~-]{0,299}$")
 _COMPONENT = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
+_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 def set_consent(conn, *, user_id: UUID, enabled: bool):
@@ -75,8 +76,8 @@ def _validate_event(event):
                 raise ValueError("funnel_step must be an integer from 1 to 20 on funnel events")
             normalized[key] = value
         else:
-            if not isinstance(value, str) or not 1 <= len(value.strip()) <= 64:
-                raise ValueError(f"metadata {key} must be short non-empty text")
+            if not isinstance(value, str) or not _SLUG.fullmatch(value.strip()):
+                raise ValueError(f"metadata {key} must be a short lowercase identifier")
             normalized[key] = value.strip()
     if event["event_name"] == "funnel_step" and not {"funnel_name", "funnel_step"}.issubset(normalized):
         raise ValueError("funnel events require funnel_name and funnel_step")
@@ -145,8 +146,17 @@ def get_overview(conn, *, start: date, end: date):
                  AND occurred_at >= %s AND occurred_at < %s
                GROUP BY page_path ORDER BY views DESC,page_path LIMIT 20""", (start_at,end_at),
         )
+        top_pages = cur.fetchall()
+        cur.execute(
+            """SELECT page_path,component_id,element_role,count(*)::int AS interactions,
+                      count(DISTINCT user_id)::int AS users
+               FROM analytics_events WHERE user_id IS NOT NULL AND component_id IS NOT NULL
+                 AND event_name IN ('click','navigation') AND occurred_at >= %s AND occurred_at < %s
+               GROUP BY page_path,component_id,element_role
+               ORDER BY interactions DESC,page_path,component_id LIMIT 100""", (start_at,end_at),
+        )
         return {"start": start.isoformat(),"end": end.isoformat(),"daily":daily,
-                "event_mix":event_mix,"top_pages":cur.fetchall()}
+                "event_mix":event_mix,"top_pages":top_pages,"component_activity":cur.fetchall()}
 
 
 def get_funnels(conn, *, start: date, end: date):

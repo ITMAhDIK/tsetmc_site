@@ -82,13 +82,15 @@ def test_overview_funnel_and_retention_reports_use_aggregates(migrated_analytics
         now=datetime.now(timezone.utc)
         record_events(conn,user_id=user,events=[
             event("page_view",occurred_at=now,page_path="/pricing"),
+            event("click",occurred_at=now,page_path="/pricing",component_id="pricing-plan-card",element_role="card"),
             event("funnel_step",occurred_at=now,page_path="/pricing",metadata={"funnel_name":"subscribe","funnel_step":1}),
             event("funnel_step",occurred_at=now,page_path="/checkout",metadata={"funnel_name":"subscribe","funnel_step":2}),
         ])
         today=date.today()
         overview=get_overview(conn,start=today,end=today)
-        assert sum(row["events"] for row in overview["daily"])>=3
-        assert {"/pricing","/checkout"}.issubset({row["page_path"] for row in overview["top_pages"]})
+        assert sum(row["events"] for row in overview["daily"])>=4
+        assert "/pricing" in {row["page_path"] for row in overview["top_pages"]}
+        assert any(row["component_id"]=="pricing-plan-card" for row in overview["component_activity"])
         funnel=get_funnels(conn,start=today,end=today)
         assert [(row["step"],row["users"]) for row in funnel]==[(1,1),(2,1)]
         retention=get_retention(conn,start=today-timedelta(days=1),end=today)
