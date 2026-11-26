@@ -113,6 +113,11 @@ def _call(fn,*args,**kwargs):
     except ValueError as exc:
         raise HTTPException(status_code=422,detail=str(exc)) from exc
 
+@router.get("/ui",response_class=HTMLResponse)
+def console_ui(user=Depends(current_user),conn=Depends(get_conn)):
+    _call(console_overview,conn,actor_id=user["id"])
+    return HTMLResponse(_CONSOLE_HTML)
+
 @router.get("/overview")
 def overview(user=Depends(current_user),conn=Depends(get_conn)):
     return _call(console_overview,conn,actor_id=user["id"])
