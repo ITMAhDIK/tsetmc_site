@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+import server as server_module
 from server import ApiError, Handler
+from site_api.dispatch import dispatch_api
+from site_api.errors import ApiError as ModuleApiError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +43,15 @@ def invoke_current_dispatcher(method, path):
     try:
         result = handler._dispatch(method, path, PARAMS, BODY)
     except ApiError as exc:
+        return api, exc
+    return api, result
+
+
+def invoke_extracted_dispatcher(method, path):
+    api = RecordingApi()
+    try:
+        result = dispatch_api(api, method, path, PARAMS, BODY)
+    except ModuleApiError as exc:
         return api, exc
     return api, result
 
@@ -123,3 +135,58 @@ def test_admin_mutation_placeholders_remain_unimplemented():
         assert isinstance(result, ApiError)
         assert result.status == 501
         assert api.calls == []
+
+
+
+@pytest.mark.parametrize("route", load_contract()["routes"],
+                         ids=lambda route: f'{route["method"]} {route["path"]}')
+def test_manifest_route_matches_extracted_dispatcher(route):
+    api, result = invoke_extracted_dispatcher(route["method"], route["test_path"])
+
+    if route["status"] != 200:
+        assert isinstance(result, ModuleApiError)
+        assert result.status == route["status"]
+        assert str(result)
+        assert api.calls == []
+        return
+
+    assert not isinstance(result, ModuleApiError)
+    payload, status, content_type = result
+    assert status == route["status"]
+    assert content_type == route["response"]
+    assert payload == {"called": route["handler"]}
+    assert len(api.calls) == 1
+    called_name, args = api.calls[0]
+    assert called_name == route["handler"]
+
+    expected = {
+        "none": [],
+        "params": [PARAMS],
+        "body": [BODY],
+        "symbol": ["TEST_SYMBOL"],
+        "symbol_params": ["TEST_SYMBOL", PARAMS],
+        "investor_params": [route["test_path"].split("/")[4], PARAMS],
+    }[route["argument"]]
+    assert args == tuple(expected)
+
+
+def test_handler_keeps_the_legacy_dispatch_entry_point(monkeypatch):
+    calls = []
+
+    def fake_dispatch(api, method, path, params, body):
+        calls.append((api, method, path, params, body))
+        return {"delegated": True}, 202, "json"
+
+    monkeypatch.setattr(server_module, "dispatch_api", fake_dispatch)
+    api = RecordingApi()
+    handler = Handler.__new__(Handler)
+    handler.api = api
+
+    result = handler._dispatch("GET", "/api/v1/market/overview", PARAMS, BODY)
+
+    assert result == ({"delegated": True}, 202, "json")
+    assert calls == [(api, "GET", "/api/v1/market/overview", PARAMS, BODY)]
+
+
+def test_server_and_dispatcher_share_the_same_api_error_type():
+    assert ApiError is ModuleApiError

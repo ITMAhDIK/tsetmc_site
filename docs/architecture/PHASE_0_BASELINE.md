@@ -82,8 +82,13 @@ The latter has a more explicit database boundary and is the preferred target dir
 - [x] Data ownership and rebuildability documented.
 - [x] Decisions recorded for modular-monolith-first migration and SaaS consolidation.
 - [x] Route contract tests added against the existing dispatcher.
-- [ ] CI must execute the new and existing suites successfully before Phase 1 is considered complete.
+- [x] CI executed the full baseline suite successfully: **88 passed in 0.31s**.
 
 ## Scope discipline
 
 Phase 0 adds architecture evidence and contract tests only. It does not alter the API behavior, database schema, frontend URLs, authentication policy or deployment. Risks are recorded rather than silently changed during a structural refactor.
+
+
+## Phase 0 verification result
+
+GitHub Actions run [45881235873](https://github.com/ITMAhDIK/tsetmc_site/actions/runs/45881235873) completed successfully on the Phase 0 branch. The full suite reported **88 passed in 0.31s**. Phase 0 exit criteria are met; Phase 1 extraction is recorded separately in [PHASE_1_EXTRACTION.md](PHASE_1_EXTRACTION.md).
