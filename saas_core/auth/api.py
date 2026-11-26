@@ -50,6 +50,7 @@ _REQUIRED_SCHEMA_TABLES = (
     "analytics_consents", "analytics_events", "admin_audit_logs",
     "payment_reconciliation_notes",
 )
+_REQUIRED_SCHEMA_COLUMNS = ("analytics_events.event_order",)
 
 
 def validate_production_configuration() -> None:
@@ -328,7 +329,18 @@ def ready(conn=Depends(get_conn)):
             (list(_REQUIRED_SCHEMA_TABLES),),
         )
         missing = cur.fetchone()["missing"]
-    if missing:
+        cur.execute(
+            """SELECT COUNT(*)::integer AS missing
+               FROM unnest(%s::text[]) AS required(value)
+               LEFT JOIN information_schema.columns c
+                 ON c.table_schema='public'
+                AND c.table_name=split_part(required.value,'.',1)
+                AND c.column_name=split_part(required.value,'.',2)
+               WHERE c.column_name IS NULL""",
+            (list(_REQUIRED_SCHEMA_COLUMNS),),
+        )
+        missing_columns = cur.fetchone()["missing"]
+    if missing or missing_columns:
         raise HTTPException(status_code=503, detail="SaaS database schema is not ready")
     return {"status": "ready", "service": "saas-api"}
 
