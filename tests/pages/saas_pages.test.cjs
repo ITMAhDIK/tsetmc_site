@@ -59,6 +59,8 @@ test('legal pages are both present and explicitly identify unapproved placeholde
   assert.match(terms, /متن نهایی قوانین هنوز/);
   assert.match(privacy, /متن نهایی هنوز/);
   assert.match(privacy, /noindex,nofollow/);
+  assert.doesNotMatch(read('docs/saas/index.html'), /href="\.\.\/index\.html"/);
+  assert.match(read('docs/saas/index.html'), /https:\/\/itmahdik\.github\.io\/tsetmc_site\//);
 });
 
 test('Caddy serves static SaaS pages and proxies only the versioned API prefix', () => {
