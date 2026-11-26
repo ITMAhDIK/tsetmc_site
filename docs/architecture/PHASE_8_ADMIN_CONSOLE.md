@@ -60,10 +60,16 @@ Phase 8 PostgreSQL integration tests exercise:
 - Payment review through the real domain service, verifying the review row and
   audit row commit while the payment order remains pending.
 - The last-active-superadmin guard against real role and user rows, verifying
-  the attempted suspension rolls back.
+  both attempted suspension and superadmin-role revocation are rejected and
+  leave the database unchanged.
 - The WSGI admin API with real database-backed sessions and role permissions,
   verifying an MFA-authenticated superadmin can read the overview while a
   normal user receives a permission-denied response.
+
+The latest full PostgreSQL-backed Python CI run completed with **250 passed
+in 4.91 seconds**. The separate production-readiness Python job completed with
+247 passed and the three database-dependent integration tests skipped because
+that job does not configure the integration-test database.
 
 These are disposable CI databases. They are not production database tests.
 
