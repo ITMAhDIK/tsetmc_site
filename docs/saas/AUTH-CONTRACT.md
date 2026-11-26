@@ -69,3 +69,16 @@ is an out-of-band operation, never a public signup option.
 
 The live SMS integration and API hosting remain pending until the SMS gateway,
 PostgreSQL host and backend deployment have been provisioned and tested.
+
+## GitHub Pages demo mode (temporary)
+
+When the auth API meta value is blank, the public login screen runs in a
+clearly labelled UI-only demo: it accepts any four-digit value and does not
+send SMS, create a server session, or authorize API calls. The screen identifies
+the configured owner's test identity by a client-side SHA-256 comparison only
+to preview the superadmin label. This is intentionally NOT an authentication
+mechanism: hashes embedded in public JavaScript are not secrets. Do not expose
+administrative endpoints or data based on this demo role. Remove/disable demo
+mode only after the real backend and SMS provider have been configured and
+verified. In the live API mode, the server remains solely responsible for role
+assignment and session creation.
