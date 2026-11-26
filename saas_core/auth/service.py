@@ -24,10 +24,10 @@ def _required_secret(name: str) -> bytes:
 
 def normalize_phone(phone: str) -> str:
     value = phone.strip()
-    if len(value) > 16 or not value.startswith("+") or not value[1:].isdigit():
-        raise ValueError("phone must be in E.164 format")
-    if not 8 <= len(value[1:]) <= 15 or value[1] == "0":
-        raise ValueError("phone must be a valid E.164 number")
+    if (len(value) > 16 or not value.startswith("+") or
+            not 8 <= len(value[1:]) <= 15 or value[1] not in "123456789" or
+            any(char < "0" or char > "9" for char in value[1:])):
+        raise ValueError("phone must be a valid ASCII E.164 number")
     return value
 
 def hash_password(password: str) -> str:

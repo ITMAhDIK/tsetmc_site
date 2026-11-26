@@ -5,7 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 import psycopg
 from psycopg.rows import dict_row
-from .repository import (authenticate_session, consume_phone_otp, login_password,
+from .repository import (authenticate_session, consume_phone_otp, consume_phone_link_otp, login_password,
     register_password_user, request_phone_otp, revoke_session, create_session)
 from .service import AuthenticationError
 
@@ -131,3 +131,32 @@ app.include_router(support_router)
 # Product analytics uses the same authenticated SaaS session and isolated database.
 from saas_core.analytics.api import router as analytics_router
 app.include_router(analytics_router)
+
+
+class PhoneLinkRequestBody(BaseModel):
+    phone: str = Field(min_length=9,max_length=16)
+
+class PhoneLinkVerifyBody(PhoneLinkRequestBody):
+    otp: str = Field(min_length=6,max_length=6,pattern="^[0-9]{6}$")
+
+@app.post("/auth/phone/link/request")
+def phone_link_request(body:PhoneLinkRequestBody,user=Depends(current_user),conn=Depends(get_conn)):
+    try:
+        request_phone_otp(conn,body.phone,"link_identity")
+        return {"accepted":True,"delivery":"queued","expires_in_seconds":300}
+    except ValueError as exc:
+        raise HTTPException(status_code=422,detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503,detail="phone verification is not configured") from exc
+
+@app.post("/auth/phone/link/verify")
+def phone_link_verify(body:PhoneLinkVerifyBody,user=Depends(current_user),conn=Depends(get_conn)):
+    try:
+        linked=consume_phone_link_otp(conn,user_id=user["id"],phone=body.phone,otp=body.otp)
+        return {"phone":linked}
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401,detail="invalid or expired verification code") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422,detail=str(exc)) from exc
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409,detail="phone is already linked to another account") from exc

@@ -5,6 +5,7 @@ All money is integer Toman. Every mutation targets the isolated SaaS database.
 from __future__ import annotations
 from uuid import UUID
 from saas_core.domain.wallet import WalletBalances, validate_withdrawal
+from saas_core.auth.authorization import require_permission
 
 
 def _lock_wallet(conn, user_id: UUID):
@@ -60,6 +61,10 @@ def post_ledger_entry(conn, *, user_id: UUID, bucket: str, entry_type: str,
         raise ValueError("invalid ledger entry type")
     if isinstance(amount_toman,bool) or not isinstance(amount_toman,int) or amount_toman==0:
         raise ValueError("ledger amount must be a non-zero integer Toman")
+    if entry_type in {"topup","referral_reward","refund","admin_credit"} and amount_toman < 0:
+        raise ValueError(f"{entry_type} ledger entries must be credits")
+    if entry_type in {"purchase_debit","withdrawal_debit","admin_debit"} and amount_toman > 0:
+        raise ValueError(f"{entry_type} ledger entries must be debits")
     if not idempotency_key or len(idempotency_key)>120:
         raise ValueError("valid idempotency key is required")
     with conn.transaction():
@@ -169,6 +174,7 @@ def settle_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID,
     if not payout_reference or len(payout_reference)>160:
         raise ValueError("a valid external payout reference is required")
     with conn.transaction():
+        require_permission(conn,reviewer_id,"withdrawals.review")
         with conn.cursor() as cur:
             cur.execute("SELECT user_id FROM withdrawal_requests WHERE id=%s",(withdrawal_id,))
             owner=cur.fetchone()
@@ -176,12 +182,23 @@ def settle_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID,
                 raise LookupError("withdrawal request not found")
             _lock_wallet(conn,owner["user_id"])
             cur.execute(
-                """SELECT user_id,amount_toman,status FROM withdrawal_requests
+                """SELECT user_id,amount_toman,status,payout_reference FROM withdrawal_requests
                    WHERE id=%s FOR UPDATE""",(withdrawal_id,)
             )
             request=cur.fetchone()
             if not request:
                 raise LookupError("withdrawal request not found")
+            if request["status"]=="paid":
+                cur.execute(
+                    """SELECT id FROM wallet_ledger_entries WHERE idempotency_key=%s
+                       AND user_id=%s AND bucket='cash' AND entry_type='withdrawal_debit'
+                       AND amount_toman=%s AND reference_type='withdrawal' AND reference_id=%s""",
+                    (idempotency_key,request["user_id"],-request["amount_toman"],withdrawal_id),
+                )
+                prior=cur.fetchone()
+                if prior and request["payout_reference"] == payout_reference:
+                    return {"withdrawal_id":withdrawal_id,"status":"paid","already_processed":True}
+                raise ValueError("withdrawal was already settled with different payout data")
             if request["status"]!="approved":
                 raise ValueError("only approved withdrawals can be settled")
             post_ledger_entry(
@@ -260,6 +277,7 @@ def review_withdrawal(conn, *, withdrawal_id: UUID, reviewer_id: UUID,
     if not note or len(note)>500:
         raise ValueError("a review note between 1 and 500 characters is required")
     with conn.transaction():
+        require_permission(conn,reviewer_id,"withdrawals.review")
         with conn.cursor() as cur:
             cur.execute("SELECT user_id FROM withdrawal_requests WHERE id=%s",(withdrawal_id,))
             owner=cur.fetchone()

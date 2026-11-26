@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
@@ -50,7 +51,7 @@ def _validate_event(event):
     if event["event_name"] not in EVENT_NAMES:
         raise ValueError("unsupported analytics event")
     path = event["page_path"]
-    if not isinstance(path, str) or not _PATH.fullmatch(path) or ".." in path or "//" in path:
+    if not isinstance(path, str) or not _PATH.fullmatch(path) or ".." in path or "//" in path or "/./" in path:
         raise ValueError("page_path must be a normalized path without query or fragment")
     component = event.get("component_id")
     if component is not None and (not isinstance(component, str) or not _COMPONENT.fullmatch(component)):
@@ -59,7 +60,7 @@ def _validate_event(event):
     if role is not None and role not in ELEMENT_ROLES:
         raise ValueError("unsupported element_role")
     occurred = event["occurred_at"]
-    if occurred.tzinfo is None or occurred.utcoffset() is None:
+    if not isinstance(occurred, datetime) or occurred.tzinfo is None or occurred.utcoffset() is None:
         raise ValueError("occurred_at must include a timezone")
     now = datetime.now(timezone.utc)
     if occurred < now - timedelta(days=30) or occurred > now + timedelta(minutes=5):
@@ -74,11 +75,15 @@ def _validate_event(event):
     duration = event.get("active_duration_ms")
     if duration is not None and (isinstance(duration, bool) or not 0 <= duration <= 300000):
         raise ValueError("active duration must be between 0 and 300000 ms")
+    if event["event_name"] == "scroll" and depth is None:
+        raise ValueError("scroll events require scroll_depth_pct")
     if depth is not None and event["event_name"] != "scroll":
         raise ValueError("scroll_depth_pct is only valid for scroll events")
+    if event["event_name"] == "active_time" and duration is None:
+        raise ValueError("active_time events require active_duration_ms")
     if duration is not None and event["event_name"] != "active_time":
         raise ValueError("active_duration_ms is only valid for active_time events")
-    metadata = event.get("metadata") or {}
+    metadata = event.get("metadata", {})
     if not isinstance(metadata, dict) or set(metadata) - _METADATA_KEYS:
         raise ValueError("metadata contains unsupported fields")
     normalized = {}
@@ -113,21 +118,40 @@ def record_events(conn, *, user_id: UUID, events: list[dict]):
                 raise PermissionError("product analytics consent is required")
             inserted = 0
             for event, metadata in prepared:
+                payload = {
+                    "event_name":event["event_name"],"page_path":event["page_path"],
+                    "session_id":str(event["session_id"]) if event.get("session_id") else None,
+                    "component_id":event.get("component_id"),"element_role":event.get("element_role"),
+                    "occurred_at":event["occurred_at"].astimezone(timezone.utc).isoformat(),
+                    "viewport_width":event.get("viewport_width"),"viewport_height":event.get("viewport_height"),
+                    "scroll_depth_pct":float(event["scroll_depth_pct"]) if event.get("scroll_depth_pct") is not None else None,
+                    "active_duration_ms":event.get("active_duration_ms"),"consent_version":consent["consent_version"],
+                    "metadata":metadata,
+                }
+                payload_sha256=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(",",":")).encode("utf-8")).hexdigest()
                 cur.execute(
                     """INSERT INTO analytics_events
                        (user_id,anonymous_id,session_id,client_event_id,event_name,page_path,
                         component_id,element_role,occurred_at,viewport_width,viewport_height,
-                        scroll_depth_pct,active_duration_ms,consent_version,metadata)
-                       VALUES (%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                        scroll_depth_pct,active_duration_ms,consent_version,payload_sha256,metadata)
+                       VALUES (%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                        ON CONFLICT (user_id,client_event_id) WHERE client_event_id IS NOT NULL
                        DO NOTHING RETURNING id""",
                     (user_id,event.get("session_id"),event["event_id"],event["event_name"],
                      event["page_path"],event.get("component_id"),event.get("element_role"),
                      event["occurred_at"],event.get("viewport_width"),event.get("viewport_height"),
-                     event.get("scroll_depth_pct"),event.get("active_duration_ms"),consent["consent_version"],json.dumps(metadata)),
+                     event.get("scroll_depth_pct"),event.get("active_duration_ms"),consent["consent_version"],payload_sha256,json.dumps(metadata)),
                 )
                 if cur.fetchone():
                     inserted += 1
+                else:
+                    cur.execute(
+                        "SELECT payload_sha256 FROM analytics_events WHERE user_id=%s AND client_event_id=%s",
+                        (user_id,event["event_id"]),
+                    )
+                    existing=cur.fetchone()
+                    if not existing or existing["payload_sha256"] != payload_sha256:
+                        raise ValueError("event idempotency key was reused with different event data")
             return {"accepted": inserted, "duplicates": len(events) - inserted}
 
 
@@ -139,7 +163,8 @@ def _range(start: date, end: date):
     return datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc), datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
 
 
-def get_overview(conn, *, start: date, end: date):
+def get_overview(conn, *, actor_id: UUID, start: date, end: date):
+    require_permission(conn,actor_id,"analytics.read")
     start_at, end_at = _range(start, end)
     with conn.cursor() as cur:
         cur.execute(
@@ -174,7 +199,8 @@ def get_overview(conn, *, start: date, end: date):
                 "event_mix":event_mix,"top_pages":top_pages,"component_activity":cur.fetchall()}
 
 
-def get_funnels(conn, *, start: date, end: date):
+def get_funnels(conn, *, actor_id: UUID, start: date, end: date):
+    require_permission(conn,actor_id,"analytics.read")
     start_at, end_at = _range(start, end)
     with conn.cursor() as cur:
         cur.execute(
@@ -188,7 +214,8 @@ def get_funnels(conn, *, start: date, end: date):
         return cur.fetchall()
 
 
-def get_retention(conn, *, start: date, end: date):
+def get_retention(conn, *, actor_id: UUID, start: date, end: date):
+    require_permission(conn,actor_id,"analytics.read")
     start_at, end_at = _range(start, end)
     with conn.cursor() as cur:
         cur.execute(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from .domain import PaymentRejected, validate_verified_payment
+from saas_core.auth.authorization import require_permission
 
 ORDER_TTL = timedelta(minutes=20)
 
@@ -132,7 +133,7 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT o.id,o.user_id,o.plan_id,o.amount_toman,o.status,
+                """SELECT o.id,o.user_id,o.plan_id,o.amount_toman,o.status,o.expires_at,
                           p.duration_days,a.provider,a.provider_order_id,a.status AS attempt_status
                    FROM payment_orders o
                    JOIN plans p ON p.id=o.plan_id
@@ -147,6 +148,8 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
                 raise PaymentRejected("provider order reference mismatch")
             if row["attempt_status"] != "pending":
                 raise PaymentRejected("payment attempt is not awaiting verification")
+            if row["expires_at"] and row["expires_at"] <= datetime.now(timezone.utc):
+                raise PaymentRejected("payment order has expired")
             validate_verified_payment(expected_amount_toman=row["amount_toman"],verified=verified)
             cur.execute(
                 """INSERT INTO gateway_events
@@ -253,6 +256,7 @@ def request_full_refund(conn, *, order_id: UUID, requested_by: UUID,
     if not idempotency_key or len(idempotency_key) > 120:
         raise ValueError("a valid refund idempotency key is required")
     with conn.transaction():
+        require_permission(conn, requested_by, "payments.read")
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id,user_id,amount_toman,status FROM payment_orders
@@ -436,6 +440,7 @@ def resolve_payment_reconciliation_case(conn, *, case_id: UUID, resolved_by: UUI
         raise ValueError("a resolution note between 1 and 500 characters is required")
     status = "dismissed" if dismissed else "resolved"
     with conn.transaction():
+        require_permission(conn, resolved_by, "payments.read")
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE payment_reconciliation_cases

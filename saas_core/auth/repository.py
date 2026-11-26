@@ -75,6 +75,9 @@ def request_phone_otp(conn, phone: str, purpose: str = "login") -> None:
     expires = utc_now() + OTP_TTL
     with conn.transaction():
         with conn.cursor() as cur:
+            # Serialize the per-phone limit check so concurrent requests cannot
+            # exceed the three-challenge window.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (phone,))
             cur.execute("""SELECT count(*) AS recent_count FROM phone_verifications
                 WHERE phone_e164=%s AND created_at > now() - interval '15 minutes'""", (phone,))
             if cur.fetchone()["recent_count"] >= 3:
@@ -143,3 +146,60 @@ def consume_phone_otp(conn, phone: str, otp: str, purpose: str = "login"):
     if invalid or result is None:
         raise AuthenticationError("invalid or expired verification code")
     return result
+
+
+def consume_phone_link_otp(conn, *, user_id: UUID, phone: str, otp: str):
+    """Attach a verified phone to the already-authenticated account; never log into another account."""
+    phone = normalize_phone(phone)
+    if not isinstance(otp, str) or not otp.isascii() or not otp.isdigit() or len(otp) != 6:
+        raise AuthenticationError("invalid or expired verification code")
+    invalid = False
+    linked = False
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM users WHERE id=%s FOR UPDATE", (user_id,))
+            account = cur.fetchone()
+            if not account or account["status"] != "active":
+                invalid = True
+            else:
+                cur.execute(
+                    """SELECT id,otp_hash,attempts FROM phone_verifications
+                       WHERE phone_e164=%s AND purpose='link_identity'
+                         AND consumed_at IS NULL AND expires_at>now()
+                       ORDER BY created_at DESC LIMIT 1 FOR UPDATE""", (phone,)
+                )
+                challenge = cur.fetchone()
+                if not challenge or challenge["attempts"] >= OTP_MAX_ATTEMPTS:
+                    invalid = True
+                elif not verify_otp_hash(challenge["otp_hash"], phone, "link_identity", otp):
+                    cur.execute("UPDATE phone_verifications SET attempts=attempts+1 WHERE id=%s", (challenge["id"],))
+                    invalid = True
+                else:
+                    # Consume even a valid code that attempts to claim a phone
+                    # already attached to another identity; it cannot be replayed.
+                    cur.execute("UPDATE phone_verifications SET consumed_at=now() WHERE id=%s", (challenge["id"],))
+                    cur.execute("SELECT id FROM users WHERE phone_e164=%s", (phone,))
+                    phone_owner = cur.fetchone()
+                    cur.execute(
+                        """SELECT user_id FROM auth_identities
+                           WHERE provider='phone_otp' AND provider_subject=%s""", (phone,)
+                    )
+                    identity_owner = cur.fetchone()
+                    if ((phone_owner and phone_owner["id"] != user_id) or
+                            (identity_owner and identity_owner["user_id"] != user_id)):
+                        invalid = True
+                    else:
+                        cur.execute(
+                            """UPDATE users SET phone_e164=%s,
+                                      phone_verified_at=COALESCE(phone_verified_at,now()),updated_at=now()
+                               WHERE id=%s""", (phone,user_id)
+                        )
+                        cur.execute(
+                            """INSERT INTO auth_identities(user_id,provider,provider_subject)
+                               VALUES (%s,'phone_otp',%s) ON CONFLICT(provider,provider_subject) DO NOTHING""",
+                            (user_id,phone),
+                        )
+                        linked = True
+    if invalid or not linked:
+        raise AuthenticationError("invalid or expired verification code")
+    return {"phone_e164": phone, "phone_verified": True}

@@ -61,17 +61,17 @@ def ingest(body:EventBatch,user=Depends(current_user),conn=Depends(get_conn)):
 @router.get("/admin/overview")
 def overview(start:date=Query(...),end:date=Query(...),user=Depends(current_user),conn=Depends(get_conn)):
     _admin(conn,user);_dates(start,end)
-    return get_overview(conn,start=start,end=end)
+    return get_overview(conn,actor_id=user["id"],start=start,end=end)
 
 @router.get("/admin/funnels")
 def funnels(start:date=Query(...),end:date=Query(...),user=Depends(current_user),conn=Depends(get_conn)):
     _admin(conn,user);_dates(start,end)
-    return {"funnels":get_funnels(conn,start=start,end=end)}
+    return {"funnels":get_funnels(conn,actor_id=user["id"],start=start,end=end)}
 
 @router.get("/admin/retention")
 def retention(start:date=Query(...),end:date=Query(...),user=Depends(current_user),conn=Depends(get_conn)):
     _admin(conn,user);_dates(start,end)
-    return {"retention":get_retention(conn,start=start,end=end)}
+    return {"retention":get_retention(conn,actor_id=user["id"],start=start,end=end)}
 
 @router.get("/admin/users/{user_id}")
 def user_activity(user_id:UUID,start:date=Query(...),end:date=Query(...),
