@@ -91,6 +91,21 @@ def test_superadmin_gate_and_account_status_lifecycle(admin_context):
     assert client.get("/admin/dashboard",headers=c["admin_headers"]).status_code==403
     assert client.get("/admin/dashboard",headers=c["root_headers"]).status_code==200
 
+    # A non-superadmin cannot remove the final active superadmin, even if an
+    # operator accidentally grants the two relevant capabilities.
+    admin_role=conn.execute("SELECT id FROM roles WHERE code='admin'").fetchone()["id"]
+    elevated=conn.execute(
+        "SELECT id FROM permissions WHERE code IN ('superadmin.console.access','users.manage')"
+    ).fetchall()
+    for permission in elevated:
+        conn.execute("INSERT INTO role_permissions(role_id,permission_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                     (admin_role,permission["id"]))
+    conn.commit()
+    last_root=client.patch(f"/admin/users/{c['root']}/status",headers=c["admin_headers"],
+        json={"status":"suspended","reason":"last superadmin protection"})
+    assert last_root.status_code==409
+    assert conn.execute("SELECT status FROM users WHERE id=%s",(c["root"],)).fetchone()["status"]=="active"
+
     suspended=client.patch(f"/admin/users/{c['customer']}/status",headers=c["root_headers"],
         json={"status":"suspended","reason":"policy violation"})
     assert suspended.status_code==200
@@ -183,6 +198,12 @@ def test_reconciliation_notes_are_idempotent_append_only_and_do_not_change_payme
     assert conn.execute("SELECT status FROM payment_orders WHERE id=%s",(order,)).fetchone()["status"]=="pending"
     assert conn.execute("SELECT count(*) AS n FROM payment_reconciliation_notes WHERE idempotency_key=%s",
                         (key,)).fetchone()["n"]==1
+    conn.commit()
+    with pytest.raises(psycopg.errors.RaiseException):
+        conn.execute("UPDATE payment_reconciliation_notes SET note='tampered' WHERE idempotency_key=%s",(key,))
+    conn.rollback()
+    assert conn.execute("SELECT note FROM payment_reconciliation_notes WHERE idempotency_key=%s",
+                        (key,)).fetchone()["note"]==payload["note"]
     assert conn.execute("""SELECT count(*) AS n FROM admin_audit_logs
                            WHERE action='superadmin.payment.reconcile_note' AND target_id=%s""",
                         (str(order),)).fetchone()["n"]==1
@@ -206,6 +227,12 @@ def test_wallet_adjustment_is_exactly_idempotent_and_rejects_invalid_money(admin
     assert conn.execute("""SELECT count(*) AS n FROM admin_audit_logs
                            WHERE action='superadmin.wallet.adjust' AND target_id=%s""",
                         (str(c["customer"]),)).fetchone()["n"]==1
+    conn.commit()
+    with pytest.raises(psycopg.errors.RaiseException):
+        conn.execute("UPDATE wallet_ledger_entries SET description='tampered' WHERE idempotency_key=%s",(key,))
+    conn.rollback()
+    assert conn.execute("SELECT description FROM wallet_ledger_entries WHERE idempotency_key=%s",
+                        (key,)).fetchone()["description"]==payload["reason"]
 
     changed=client.post(url,headers=headers,json={**payload,"reason":"different justification"})
     assert changed.status_code==409
