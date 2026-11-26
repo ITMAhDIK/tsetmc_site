@@ -4716,6 +4716,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/ai_studio_code.html": "ai_studio_code.html",
                 "/ai_studio_code.css": "ai_studio_code.css",
                 "/ui-refresh.css": "ui-refresh.css",
+                "/analytics-client.js": "analytics-client.js",
             }
             if path in static_files:
                 self._serve_file(static_files[path])
