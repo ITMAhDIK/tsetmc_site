@@ -146,13 +146,27 @@ def test_real_postgres_authentication_session_hash_and_revocation(db, client):
     assert response.status_code == 401
 
 
-def test_rbac_support_internal_note_isolation_and_account_ownership(db, client):
+def test_rbac_support_internal_note_isolation_and_account_ownership(db, client, monkeypatch):
     customer, customer_token = _new_user(db, "phase9_customer")
     outsider, outsider_token = _new_user(db, "phase9_outsider")
     support, support_token = _new_user(db, "phase9_support")
     superadmin, superadmin_token = _new_user(db, "phase9_superadmin")
     _grant_role(db, support["id"], "support")
     _grant_role(db, superadmin["id"], "superadmin")
+
+    # A privileged role alone is not sufficient: enroll and verify MFA for
+    # this exact session before entering the superadmin API.
+    from cryptography.fernet import Fernet
+    from saas_core.auth.mfa import totp_code
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    setup = client.post("/auth/mfa/setup", headers=_auth(superadmin_token))
+    assert setup.status_code == 200, setup.text
+    confirmed = client.post(
+        "/auth/mfa/confirm",
+        headers=_auth(superadmin_token),
+        json={"code": totp_code(setup.json()["secret"])},
+    )
+    assert confirmed.status_code == 200, confirmed.text
 
     opened = client.post(
         "/support/tickets",
@@ -858,10 +872,12 @@ def test_phone_otp_delivery_creates_standard_account_and_bootstraps_only_configu
     superadmin_phone = "+989000000001"
     standard_phone = "+989000000002"
     monkeypatch.setenv("SAAS_SUPERADMIN_PHONE_E164", superadmin_phone)
+    monkeypatch.setenv("SAAS_TERMS_VERSION", "terms-test-v1")
+    monkeypatch.setenv("SAAS_PRIVACY_VERSION", "privacy-test-v1")
     monkeypatch.setattr(auth_repository, "new_otp", lambda: "135790")
 
-    auth_repository.request_phone_otp(db, superadmin_phone, "login")
-    auth_repository.request_phone_otp(db, standard_phone, "login")
+    auth_repository.request_phone_otp(db, superadmin_phone, "signup")
+    auth_repository.request_phone_otp(db, standard_phone, "signup")
 
     class RecordingSmsSender:
         def __init__(self):
@@ -877,10 +893,12 @@ def test_phone_otp_delivery_creates_standard_account_and_bootstraps_only_configu
     assert all("135790" in item[1] for item in sender.sent)
 
     superadmin_token, _ = auth_repository.consume_phone_otp(
-        db, superadmin_phone, "135790", "login"
+        db, superadmin_phone, "135790", "signup",
+        terms_version="terms-test-v1", privacy_version="privacy-test-v1",
     )
     standard_token, _ = auth_repository.consume_phone_otp(
-        db, standard_phone, "135790", "login"
+        db, standard_phone, "135790", "signup",
+        terms_version="terms-test-v1", privacy_version="privacy-test-v1",
     )
 
     superadmin_me = client.get("/auth/me", headers=_auth(superadmin_token))
@@ -911,12 +929,17 @@ def test_unconfigured_superadmin_phone_never_grants_elevated_role(db, monkeypatc
 
     monkeypatch.setenv("SAAS_OTP_HMAC_SECRET", "phase10-unconfigured-otp-secret-" + "x" * 32)
     monkeypatch.setenv("SAAS_OUTBOX_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("SAAS_TERMS_VERSION", "terms-test-v1")
+    monkeypatch.setenv("SAAS_PRIVACY_VERSION", "privacy-test-v1")
     monkeypatch.delenv("SAAS_SUPERADMIN_PHONE_E164", raising=False)
     monkeypatch.setattr(auth_repository, "new_otp", lambda: "246802")
     phone = "+989000000003"
 
-    auth_repository.request_phone_otp(db, phone, "login")
-    token, _ = auth_repository.consume_phone_otp(db, phone, "246802", "login")
+    auth_repository.request_phone_otp(db, phone, "signup")
+    token, _ = auth_repository.consume_phone_otp(
+        db, phone, "246802", "signup",
+        terms_version="terms-test-v1", privacy_version="privacy-test-v1",
+    )
     assert token
     with db.cursor() as cur:
         cur.execute(
