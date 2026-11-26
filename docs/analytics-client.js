@@ -6,7 +6,7 @@
   const MAX_BATCH = 50;
   const FLUSH_INTERVAL_MS = 12000;
   const ACTIVE_INTERVAL_MS = 15000;
-  const ALLOWED_PAGE = /^\/[A-Za-z0-9_./:-]{1,300}$/;
+  const ALLOWED_PAGE = /^\/[\p{L}\p{N}_./:-]{1,300}$/u;
   const state = {
     enabled: false,
     pagePath: null,
@@ -78,7 +78,7 @@
       }
     } catch (_) {
       // Keep the small in-memory batch for the next interval; never persist it
-      // in localStorage, cookies, or a third-party analytics service.
+      // Keep the in-memory batch only; never persist behavior in browser storage.
     } finally {
       state.flushing = false;
     }
