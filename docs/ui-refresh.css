@@ -781,3 +781,12 @@ body { font-size:14px; line-height:1.75; }
   .app-nav { scroll-behavior:auto; }
   .app-drawer-close { transition:none; }
 }
+
+/* Hard override for the drawer width after the original component rules. */
+.app-drawer-panel { width:min(460px,94vw); max-width:min(460px,94vw); }
+@media(max-width:680px) {
+  .app-drawer-panel { width:min(430px,94vw); max-width:94vw; }
+}
+@media(max-width:380px) {
+  .app-drawer-panel { width:100vw; max-width:100vw; }
+}
