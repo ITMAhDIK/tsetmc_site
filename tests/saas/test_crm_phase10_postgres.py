@@ -89,12 +89,13 @@ def crm_context(monkeypatch):
                ON CONFLICT DO NOTHING""",
             (admin["id"],),
         )
+        unique_phone = f"+989{int(uuid4().hex[:10], 16) % 10**10:010d}"
         setup.execute(
             """UPDATE users
                SET phone_e164=%s,phone_verified_at=now(),
                    email=%s,email_verified_at=now()
                WHERE id=%s""",
-            ("+989991234567", f"{admin_username}@example.test", customer["id"]),
+            (unique_phone, f"{admin_username}@example.test", customer["id"]),
         )
         admin_token, _ = create_session(setup, admin["id"])
         customer_token, _ = create_session(setup, customer["id"])
@@ -247,7 +248,7 @@ def test_crm_customer_interaction_followup_and_audit_lifecycle(crm_context):
         conn.rollback()
         audit_count = conn.execute(
             """SELECT COUNT(*)::integer AS total FROM admin_audit_logs
-               WHERE actor_user_id=%s AND action LIKE 'crm.%'""",
+               WHERE actor_user_id=%s AND action LIKE 'crm.%%'""",
             (admin["id"],),
         ).fetchone()["total"]
     assert audit_count >= 7
