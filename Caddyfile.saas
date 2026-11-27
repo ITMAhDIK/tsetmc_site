@@ -45,7 +45,14 @@
         reverse_proxy commerce-api:8000
     }
 
-    # Remaining account, support, admin and CRM APIs stay in SaaS.
+    # CRM APIs are routed to the isolated CRM service.
+    @crm path /api/v1/crm /api/v1/crm/*
+    handle @crm {
+        uri strip_prefix /api/v1
+        reverse_proxy crm-api:8000
+    }
+
+    # Remaining account, support and admin APIs stay in SaaS.
     handle_path /api/v1/* {
         reverse_proxy saas-api:8000
     }
