@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from saas_core.auth.api import current_user, get_conn, require_admin_mfa
+from saas_core.auth.api import current_user, get_conn, require_crm_mfa
 from saas_core.auth.authorization import AuthorizationDenied, require_permission
 from .service import (
     create_followup,
@@ -22,7 +22,7 @@ from .service import (
 router = APIRouter(
     prefix="/crm",
     tags=["crm"],
-    dependencies=[Depends(require_admin_mfa)],
+    dependencies=[Depends(require_crm_mfa)],
 )
 
 
