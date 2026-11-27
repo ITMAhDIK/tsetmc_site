@@ -2616,8 +2616,14 @@
       const [closing, setClosing] = useState(false);
       const drawerRef = useRef(null);
       const openerRef = useRef(null);
+      const returnFocusRef = useRef(false);
       useEffect(() => {
         if (open) {
+          if (!rendered) {
+            const active = document.activeElement;
+            openerRef.current = active instanceof HTMLElement ? active : null;
+          }
+          returnFocusRef.current = false;
           setRendered(true); setClosing(false); setView('home');
           return;
         }
@@ -2629,8 +2635,6 @@
       useEffect(() => {
         if (!rendered) return;
         const previousOverflow = document.body.style.overflow;
-        const previousActive = document.activeElement;
-        openerRef.current = previousActive instanceof HTMLElement ? previousActive : null;
         document.body.style.overflow = 'hidden';
         const focusFirst = () => {
           const target = drawerRef.current?.querySelector(
@@ -2662,9 +2666,10 @@
           window.cancelAnimationFrame(frame);
           document.removeEventListener('keydown', onKeyDown);
           document.body.style.overflow = previousOverflow;
-          if (open && openerRef.current?.isConnected) openerRef.current.focus();
+          if (returnFocusRef.current && openerRef.current?.isConnected) openerRef.current.focus();
         };
       }, [rendered, open, onClose]);
+      const requestClose = () => { returnFocusRef.current = true; onClose(); };
       if (!rendered) return null;
       const demo = Boolean(demoMenuRole);
       const user = authUser?.user || (authUser?.public_id ? authUser : null);
@@ -2683,7 +2688,7 @@
 
       return (
         <>
-          <button type="button" className={'app-drawer-backdrop' + (closing ? ' is-closing' : '')} onClick={onClose} aria-label="بستن منو با کلیک بیرون پنل" />
+          <button type="button" className={'app-drawer-backdrop' + (closing ? ' is-closing' : '')} onClick={requestClose} aria-label="بستن منو با کلیک بیرون پنل" />
           <aside ref={drawerRef} className={'app-drawer-panel' + (closing ? ' is-closing' : '')} role="dialog" aria-modal="true" aria-label="منوی حساب کاربری" aria-describedby="account-drawer-description" tabIndex={-1} dir="rtl">
             <header className="app-drawer-header">
               <div className="app-drawer-brand">
@@ -2692,7 +2697,7 @@
               {view !== 'home'
                 ? <button type="button" className="app-drawer-view-back" onClick={() => setView('home')} aria-label="بازگشت به منو" title="بازگشت به منو">→</button>
                 : <span className="app-drawer-header-spacer" aria-hidden="true" />}
-              <button type="button" className="app-drawer-close" onClick={onClose} aria-label="بستن منو" title="بستن منو">×</button>
+              <button type="button" className="app-drawer-close" onClick={requestClose} aria-label="بستن منو" title="بستن منو">×</button>
             </header>
             <div className="app-drawer-scroll">
               {view === 'home' && (
@@ -2715,7 +2720,7 @@
                     <span className="app-drawer-nav-icon">♙</span>
                     <span><strong>پروفایل</strong><small>اطلاعات حساب، نوع عضویت، کیف پول و دعوت دوستان</small></span><b>‹</b>
                   </button>
-                  <button type="button" className="app-drawer-nav-item app-drawer-nav-primary" onClick={() => { onNavigate('account'); onClose(); }}>
+                  <button type="button" className="app-drawer-nav-item app-drawer-nav-primary" onClick={() => { onNavigate('account'); requestClose(); }}>
                     <span className="app-drawer-nav-icon">✦</span>
                     <span><strong>خرید اشتراک ویژه</strong><small>یک‌ماهه ۸۹۹٬۰۰۰ · سه‌ماهه ۲٬۴۹۹٬۰۰۰ تومان</small></span><b>‹</b>
                   </button>
@@ -2860,7 +2865,7 @@
               )}
 
               <div className="app-drawer-menu-end">
-                {signedIn ? <button type="button" className="app-drawer-logout" onClick={onLogout}>{demo ? 'خروج از حساب آزمایشی' : 'خروج از حساب'} <span>↪</span></button>
+                {signedIn ? <button type="button" className="app-drawer-logout" onClick={() => { requestClose(); onLogout(); }}>{demo ? 'خروج از حساب آزمایشی' : 'خروج از حساب'} <span>↪</span></button>
                   : <a href="./saas/" className="app-drawer-footer-login">ورود به حساب کاربری</a>}
                 <small>اطلاعات مالی و دسترسی‌ها فقط پس از اتصال سرویس حساب نمایش داده می‌شوند.</small>
               </div>
