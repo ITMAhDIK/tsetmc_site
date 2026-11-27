@@ -13,8 +13,20 @@ user-owned state.
 | Static `docs/data` | Repository/deployment pipeline | Sector registry/category JSON and published sample workbooks | Git commit/deployment | Regenerated or replaced from approved source artifacts |
 | Identity PostgreSQL | Identity Service | Canonical users, credentials, sessions, roles, permissions, OTP, MFA and legal evidence | Identity Service only | Durable business records; migrations/backups required |
 | Commerce PostgreSQL | Commerce Service | Plans, orders, payment events, subscriptions, wallet ledger, withdrawals and referrals | Commerce Service only | Durable business records; migrations/backups required |
-| SaaS PostgreSQL | SaaS core | Non-secret user projections, account preferences, support, CRM and product composition state | SaaS core only | Durable business records; migrations/backups required |
+| SaaS PostgreSQL | SaaS Core | Non-secret Identity user projections, account preferences, support and remaining SaaS-owned product composition state; it is not the source of truth for Identity, Commerce, Analytics, CRM or Notification | SaaS Core only | Durable business records; migrations/backups required |
 | Analytics PostgreSQL | Product Analytics Service | Versioned consent, append-only consent history, minimized user/session events, rate-limit state and immutable analytics audit | Analytics API and retention worker only | Durable consent/audit evidence; raw events expire by policy; migrations/backups required |
+| CRM PostgreSQL | CRM Service | Customer projections, lifecycle stages, staff assignments, immutable interactions, follow-ups and CRM audit | CRM Service only | Durable business records; migrations/backups required |
+| Notification PostgreSQL | Notification Service | In-app inbox, channel preferences, idempotency keys, delivery attempts, retry/dead-letter state and notification audit | Notification API and worker only | Durable delivery and audit records; migrations/backups required |
+
+## Current deployment model
+
+The platform is an **incremental microservices architecture**, not a claim that every legacy capability has already been extracted. The Market production stack deploys separate Market Data, Ownership, Portfolio and Screener API containers (plus the compatibility Market API and refresh worker). These read-side services share the upstream read-only TSETMC SQLite source and the refresh-worker-owned Sidecar projection store; they do not each own a separate copy of market facts.
+
+The SaaS production stack deploys separate Identity, Commerce, Product Analytics, CRM and Notification APIs (and the Analytics retention and Notification delivery workers). Each business service has its own FastAPI image/process, migration lifecycle and dedicated PostgreSQL database. The remaining SaaS Core API retains only the routes and data domains not yet extracted. Caddy is the HTTP edge and routes versioned API prefixes to the owning service; internal service routes are not exposed publicly.
+
+Service-to-service identity is resolved through private Identity introspection using scoped service credentials. Cross-service records use stable identifiers and explicit API/projection contracts rather than cross-database foreign keys. CI validates the separate database boundaries and exercises Market + Identity + Commerce, CRM and Notification integration contracts against disposable databases.
+
+This is deliberately a **hybrid during migration**: Market domain APIs share a read-only source/projection data plane, and SaaS Core still exists. It is not yet a fully event-driven platform; business event publishers, production provider credentials and live traffic cutovers remain deployment work.
 
 ## Market Data Service boundary
 
@@ -35,8 +47,7 @@ ownership series, cross-company holder search and shareholder observation
 history. It reads the source holdings database and refresh-worker-built Sidecar
 projections through `mode=ro` / `query_only=ON`; the refresh worker remains the
 only Sidecar projection writer. The Sidecar directory is mounted with WAL
-coordination permissions only. Portfolio remains a separate capability, and
-legacy stock-detail composition stays on the compatibility Market API.
+coordination permissions only. Portfolio and Screener are also separate containerized API capabilities behind the Market Caddy edge. They reuse the market source/projection data plane rather than owning independent copies of market facts. Legacy stock-detail composition stays on the compatibility Market API.
 
 ## Sidecar classification
 
@@ -81,12 +92,14 @@ These are written by site endpoints and are not derived from the TSETMC database
 | Instrument reference data and daily prices | Market Data | Existing pipeline SQLite plus versioned, rebuildable Sidecar lookup; independent read-only API |
 | Holder observations and identity resolution | Ownership | Pipeline DB and refresh-worker-built Sidecar projections; independent read-only API process |
 | Portfolio reconstruction | Portfolio | Derived read model/cache; calculations from Ownership and Market contracts |
-| Screener and saved filters | Analytics | Stateless query engine; saved filters move to user-scoped SaaS persistence |
-| Watchlists | User Workspace / Account | User-scoped SaaS persistence |
+| Screener | Screener Service | Independent API process; read-only market source/projection contracts |
+| Saved filters and watchlists | User Workspace / Account | User-scoped SaaS Core persistence after an explicit ownership migration |
 | Identity, sessions, roles | Identity | Dedicated Identity PostgreSQL database |
 | Plans, payments, wallet | Commerce | Dedicated Commerce PostgreSQL database with transactional ledger and verified provider callbacks |
-| Tickets and FAQs | Support | SaaS PostgreSQL |
-| Product events | Product Analytics | Consent-controlled analytics store with retention |
+| Tickets and FAQs | Support / SaaS Core | SaaS PostgreSQL until Support is separately extracted |
+| Product events | Product Analytics | Dedicated Analytics PostgreSQL database with consent and retention |
+| Customer relationships | CRM | Dedicated CRM PostgreSQL database |
+| In-app, email and SMS delivery state | Notification | Dedicated Notification PostgreSQL database; verified contact remains Identity-owned |
 
 ## Migration safeguards
 
