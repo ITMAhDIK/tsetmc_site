@@ -1,6 +1,6 @@
 """Independent CRM API: customer projections, interactions and follow-ups."""
 from __future__ import annotations
-import hmac,os
+import hmac,os,json
 from contextlib import asynccontextmanager
 from datetime import datetime,timedelta,timezone
 from typing import Literal
@@ -24,7 +24,7 @@ def _permission(principal,code):
     if code not in principal.get("permissions",[]): raise HTTPException(403,detail="CRM permission required")
     _mfa(principal)
 def _audit(conn,actor,action,kind,target,metadata=None):
-    conn.execute("INSERT INTO crm_audit_log(actor_user_id,action,target_type,target_id,metadata) VALUES(%s,%s,%s,%s,%s)",(actor,action,kind,str(target),metadata or {}))
+    conn.execute("INSERT INTO crm_audit_log(actor_user_id,action,target_type,target_id,metadata) VALUES(%s,%s,%s,%s,%s::jsonb)",(actor,action,kind,str(target),json.dumps(metadata or {},separators=(",",":"))))
 class Projection(BaseModel):
     user_id:UUID; username:str=Field(min_length=1,max_length=80); display_name:str=Field(default="",max_length=160)
     account_status:Literal["active","suspended","pending","deleted"]; phone_verified:bool=False; email_verified:bool=False; created_at:datetime
