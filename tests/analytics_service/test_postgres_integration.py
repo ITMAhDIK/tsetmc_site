@@ -204,10 +204,13 @@ def test_consent_ingestion_idempotency_auditing_and_erasure(client, db):
         assert consent_rows == 2
         with conn.transaction():
             with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
-                conn.execute(
-                    "UPDATE analytics_consent_history SET product_analytics=TRUE WHERE user_id=%s",
-                    (user["id"],),
-                )
+                # The nested transaction is a savepoint. Let the database error
+                # roll back to it before pytest catches the expected exception.
+                with conn.transaction():
+                    conn.execute(
+                        "UPDATE analytics_consent_history SET product_analytics=TRUE WHERE user_id=%s",
+                        (user["id"],),
+                    )
 
 
 def test_aggregate_cohort_suppression_and_same_session_paths(client):
