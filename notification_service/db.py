@@ -37,7 +37,7 @@ async def lifespan_pool(app):
  lo,hi,timeout=_settings(); pool=ConnectionPool(dsn,min_size=lo,max_size=hi,timeout=timeout,kwargs={"row_factory":dict_row,"connect_timeout":5},open=False,name="tloomberg-notifications")
  try:
   pool.open(wait=True,timeout=5)
-  actual=pool.getconn().execute("SELECT current_database() AS name").fetchone()["name"]; pool.putconn(pool.getconn()) if False else None
+  with pool.connection() as conn: actual=conn.execute("SELECT current_database() AS name").fetchone()["name"]
   expected=os.getenv("NOTIFICATION_EXPECTED_DATABASE_NAME","").strip()
   if expected and actual!=expected: raise RuntimeError("Unexpected Notification database")
   _POOL=pool; yield
