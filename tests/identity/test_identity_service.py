@@ -35,6 +35,10 @@ def db(verify_identity_db):
 def client(monkeypatch):
     from identity_service.api import app,get_conn
     monkeypatch.setenv("IDENTITY_SERVICE_TOKEN","identity-test-service-token-"+"x"*24)
+    monkeypatch.setenv("IDENTITY_OTP_HMAC_SECRET","identity-test-otp-secret-"+"o"*24)
+    from cryptography.fernet import Fernet
+    monkeypatch.setenv("IDENTITY_OUTBOX_FERNET_KEY",Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("IDENTITY_ADMIN_MFA_FERNET_KEY",Fernet.generate_key().decode("ascii"))
     def override():
         with psycopg.connect(DSN,row_factory=dict_row) as conn: yield conn
     app.dependency_overrides[get_conn]=override
