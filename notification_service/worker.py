@@ -13,6 +13,7 @@ def main():
  dsn=os.getenv("NOTIFICATION_DATABASE_URL","").strip()
  if not dsn: raise RuntimeError("NOTIFICATION_DATABASE_URL required")
  if len(os.getenv("NOTIFICATION_IDENTITY_SERVICE_TOKEN","").strip())<32: raise RuntimeError("NOTIFICATION_IDENTITY_SERVICE_TOKEN required")
+ if len(os.getenv("NOTIFICATION_DESTINATION_HMAC_SECRET","").strip())<32: raise RuntimeError("NOTIFICATION_DESTINATION_HMAC_SECRET required")
  params=conninfo_to_dict(dsn)
  if os.getenv("APP_ENV","development").lower() in {"prod","production"} and params.get("sslmode","prefer").lower()!="verify-full":
   raise RuntimeError("Notification worker requires verified TLS")
