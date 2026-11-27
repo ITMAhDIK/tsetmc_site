@@ -8,9 +8,9 @@ from fastapi import Depends,HTTPException,Request as FastAPIRequest
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
 bearer=HTTPBearer(auto_error=False); COOKIE_NAME="tloomberg_session"
 def _call(path,body=None):
- base=os.getenv("IDENTITY_SERVICE_URL","").strip().rstrip("/"); token=os.getenv("IDENTITY_SERVICE_TOKEN","").strip()
+ base=os.getenv("IDENTITY_SERVICE_URL","").strip().rstrip("/"); token=os.getenv("NOTIFICATION_IDENTITY_SERVICE_TOKEN","").strip()
  if not base or len(token)<32: raise RuntimeError("Identity unavailable")
- req=Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers={"Content-Type":"application/json","X-Identity-Service-Token":token},method="POST" if body is not None else "GET")
+ req=Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers={"Content-Type":"application/json","X-Notification-Service-Token":token},method="POST" if body is not None else "GET")
  try:
   with urlopen(req,timeout=3) as response: raw=response.read(65537)
  except HTTPError as e:
