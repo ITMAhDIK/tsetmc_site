@@ -784,3 +784,188 @@ def test_market_http_adapter_health_cors_and_public_read_only_boundary(portfolio
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=5)
+
+
+def test_phase_9_cross_platform_end_to_end_smoke(
+    portfolio_api, monkeypatch
+):
+    """Run the Market HTTP API and real PostgreSQL-backed SaaS API together.
+
+    The Market service uses disposable SQLite source/Sidecar files while SaaS
+    uses the separately named PostgreSQL integration database. This exercises
+    the phase 0–8 runtime boundary in one test process without connecting to
+    any production data source or external provider.
+    """
+    import os
+    import threading
+    from http.server import ThreadingHTTPServer
+    from uuid import uuid4
+
+    import psycopg
+    from fastapi.testclient import TestClient
+    from psycopg.rows import dict_row
+
+    from cryptography.fernet import Fernet
+    from saas_core.auth.api import app as saas_app, get_conn
+    from saas_core.auth.mfa import totp_code
+    from saas_core.auth.repository import create_session, register_password_user
+
+    dsn = os.environ.get("SAAS_TEST_DATABASE_URL", "").strip()
+    expected_database = os.environ.get("SAAS_TEST_DATABASE_NAME", "").strip()
+    if not dsn or not expected_database:
+        pytest.skip(
+            "Phase 9 cross-platform verification requires the named disposable "
+            "SAAS_TEST_DATABASE_URL database"
+        )
+
+    monkeypatch.setenv("MARKET_PUBLIC_READ_ONLY", "true")
+    monkeypatch.setenv(
+        "MARKET_ALLOWED_ORIGINS", "https://itmahdik.github.io"
+    )
+    monkeypatch.setenv(
+        "SAAS_ADMIN_MFA_FERNET_KEY",
+        Fernet.generate_key().decode("ascii"),
+    )
+
+    # Provision one isolated test administrator in the disposable SaaS DB.
+    username = f"phase9_e2e_{uuid4().hex[:12]}"
+    with psycopg.connect(dsn, row_factory=dict_row) as setup_conn:
+        actual_database = setup_conn.execute(
+            "SELECT current_database() AS name"
+        ).fetchone()["name"]
+        assert actual_database == expected_database, (
+            "Refusing Phase 9 integration test against an unexpected database"
+        )
+        user = register_password_user(
+            setup_conn,
+            username,
+            "Phase9-cross-test-Password-2026",
+            display_name="Phase 9 Integration Test",
+        )
+        setup_conn.execute(
+            """INSERT INTO user_roles(user_id, role_id)
+               SELECT %s, id FROM roles WHERE code='superadmin'
+               ON CONFLICT DO NOTHING""",
+            (user["id"],),
+        )
+        token, _expires = create_session(setup_conn, user["id"])
+        setup_conn.commit()
+
+    def test_database_connection():
+        with psycopg.connect(dsn, row_factory=dict_row) as connection:
+            yield connection
+
+    previous_override = saas_app.dependency_overrides.get(get_conn)
+    saas_app.dependency_overrides[get_conn] = test_database_connection
+
+    handler = type(
+        "Phase9MarketHandler",
+        (server.Handler,),
+        {"api": portfolio_api},
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address
+
+    def market_request(method, path, body=None):
+        import http.client
+        import json
+
+        connection = http.client.HTTPConnection(host, port, timeout=5)
+        headers = {}
+        payload = None
+        if body is not None:
+            payload = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        try:
+            connection.request(method, path, body=payload, headers=headers)
+            response = connection.getresponse()
+            raw = response.read()
+            return response.status, raw
+        finally:
+            connection.close()
+
+    try:
+        # Phase 3–6 are served by the real Market HTTP adapter.
+        market_status, market_body = market_request(
+            "GET", "/api/v1/market/overview"
+        )
+        assert market_status == 200, market_body.decode("utf-8", "replace")
+        assert b'"total_companies": 1' in market_body
+
+        # The public Market deployment must not expose user state or legacy
+        # administrative writes, even while the SaaS admin API is active.
+        write_status, _ = market_request(
+            "POST",
+            "/api/v1/watchlists/default/symbols",
+            {"symbol": "فولاد"},
+        )
+        legacy_admin_status, _ = market_request(
+            "GET", "/api/v1/admin/overview"
+        )
+        assert write_status == 403
+        assert legacy_admin_status == 404
+
+        # Phase 7–8 are served by FastAPI against the independently named
+        # PostgreSQL database. The admin surface is unavailable until this
+        # exact session completes TOTP enrollment and confirmation.
+        auth_headers = {"Authorization": f"Bearer {token}"}
+        with TestClient(saas_app) as saas_client:
+            health = saas_client.get("/health")
+            assert health.status_code == 200
+            assert health.json()["service"] == "saas-api"
+
+            identity = saas_client.get("/auth/me", headers=auth_headers)
+            assert identity.status_code == 200
+            assert identity.json()["user"]["id"] == str(user["id"])
+
+            blocked_admin = saas_client.get(
+                "/admin/dashboard", headers=auth_headers
+            )
+            assert blocked_admin.status_code == 403
+
+            setup = saas_client.post(
+                "/auth/mfa/setup", headers=auth_headers
+            )
+            assert setup.status_code == 200, setup.text
+            confirmed = saas_client.post(
+                "/auth/mfa/confirm",
+                headers=auth_headers,
+                json={"code": totp_code(setup.json()["secret"])},
+            )
+            assert confirmed.status_code == 200, confirmed.text
+
+            allowed_admin = saas_client.get(
+                "/admin/dashboard", headers=auth_headers
+            )
+            assert allowed_admin.status_code == 200, allowed_admin.text
+
+        # SaaS activity must not replace, mutate or make the Market SQLite
+        # source writable. Re-query Market after the SaaS admin flow.
+        market_again_status, market_again_body = market_request(
+            "GET", "/api/v1/market/overview"
+        )
+        assert market_again_status == 200, market_again_body.decode(
+            "utf-8", "replace"
+        )
+        assert b'"total_companies": 1' in market_again_body
+
+        assert portfolio_api.db_path != portfolio_api.sidecar_path
+        live = portfolio_api.live()
+        try:
+            assert live.execute("PRAGMA query_only").fetchone()[0] == 1
+            databases = {
+                row[1] for row in live.execute("PRAGMA database_list")
+            }
+            assert {"main", "sidecar_data"} <= databases
+        finally:
+            live.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+        if previous_override is None:
+            saas_app.dependency_overrides.pop(get_conn, None)
+        else:
+            saas_app.dependency_overrides[get_conn] = previous_override
