@@ -134,9 +134,15 @@ class MarketDataRepository:
         if len(raw) == 8 and raw.isdigit():
             raw = f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
         try:
-            return date.fromisoformat(raw).isoformat()
+            parsed = date.fromisoformat(raw)
         except ValueError:
             raise ValueError(f"{field_name} must be a Gregorian YYYY-MM-DD date") from None
+        # The supported TSETMC trading history begins well after the 17th
+        # century. A year such as 1405 is usually a Jalali date mistakenly
+        # sent as ISO text; reject it rather than silently treating it as 1405 CE.
+        if parsed.year < 1700:
+            raise ValueError(f"{field_name} must be a Gregorian market date; Jalali dates are not accepted")
+        return parsed.isoformat()
 
     def search_instruments(self, *, q: str = "", market: str = "ALL",
                            limit: int = 8, offset: int = 0):
