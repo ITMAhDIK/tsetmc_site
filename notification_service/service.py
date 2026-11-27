@@ -43,7 +43,7 @@ def enqueue(conn,user_ids,template_key,payload,channels,idempotency_key,actor="s
   conn.execute("INSERT INTO notification_idempotency(idempotency_key,request_hash,notification_ids) VALUES(%s,%s,%s)",(idempotency_key,digest,ids))
  return {"notification_ids":ids,"duplicate":False}
 def inbox(conn,user_id,limit,offset):
- rows=conn.execute("""SELECT id,template_key,payload,category,created_at,read_at FROM notifications WHERE user_id=%s
+ rows=conn.execute("""SELECT id,template_key,payload,category,created_at,read_at FROM notifications WHERE user_id=%s AND in_app_visible=TRUE
  ORDER BY created_at DESC,id LIMIT %s OFFSET %s""",(user_id,limit,offset)).fetchall()
  return rows
 def claim(conn,limit=20):
