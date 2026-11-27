@@ -28,7 +28,8 @@ def phase8_schema():
                          "009_analytics_event_order.sql","010_sms_outbox_worker.sql",
                          "011_privileged_mfa_and_legal_acceptance.sql",
                          "012_bind_legal_versions_to_otp.sql",
-                         "013_immutable_legal_acceptance.sql"):
+                         "013_immutable_legal_acceptance.sql",
+                         "014_customer_relationship_management.sql"):
                 with open(os.path.join(root,"saas_core","schema",name),encoding="utf-8") as stream:
                     conn.execute(stream.read())
         yield schema
