@@ -42,3 +42,17 @@ def test_user_opt_out_suppresses_channel_delivery():
   assert conn.execute("SELECT count(*) FROM notification_deliveries WHERE notification_id=%s",(nid,)).fetchone()["count"]==0
   assert conn.execute("SELECT in_app_visible FROM notifications WHERE id=%s",(nid,)).fetchone()["in_app_visible"] is False
   conn.rollback()
+
+def test_missing_verified_contact_is_permanent_delivery_failure(monkeypatch):
+ from notification_service.service import enqueue,claim,deliver_one
+ import notification_service.service as service
+ user=uuid4(); key="integration-"+uuid4().hex
+ with psycopg.connect(DSN,row_factory=dict_row) as conn:
+  result=enqueue(conn,[user],"welcome",{},["email"],key)
+  job=claim(conn,10)[0]
+  monkeypatch.setattr(service,"verified_contact",lambda _user:{})
+  deliver_one(conn,job)
+  state=conn.execute("SELECT status,last_error_code FROM notification_deliveries WHERE id=%s",(job["id"],)).fetchone()
+  assert state["status"]=="dead"
+  assert state["last_error_code"]=="verified_email_unavailable"
+  conn.rollback()
