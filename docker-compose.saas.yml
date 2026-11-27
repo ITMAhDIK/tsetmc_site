@@ -16,5 +16,61 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  identity-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-identity-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_identity
+      POSTGRES_USER: tloomberg_identity
+      POSTGRES_PASSWORD: ${IDENTITY_POSTGRES_PASSWORD:?Set IDENTITY_POSTGRES_PASSWORD separately from the SaaS password}
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - tloomberg_identity_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_identity -d tloomberg_identity"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  identity-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.identity
+    env_file: .env.saas
+    command: ["python","scripts/manage_identity_migrations.py","--apply"]
+    environment:
+      IDENTITY_MIGRATION_DATABASE_URL: postgresql://tloomberg_identity:${IDENTITY_POSTGRES_PASSWORD:?Set IDENTITY_POSTGRES_PASSWORD}@identity-postgres:5432/tloomberg_identity
+      IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  identity-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.identity
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      IDENTITY_DATABASE_URL: postgresql://tloomberg_identity:${IDENTITY_POSTGRES_PASSWORD:?Set IDENTITY_POSTGRES_PASSWORD}@identity-postgres:5432/tloomberg_identity
+      IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
+      IDENTITY_COOKIE_SECURE: "false"
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:58001:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+
 volumes:
   tloomberg_saas_pgdata:
+  tloomberg_identity_pgdata:

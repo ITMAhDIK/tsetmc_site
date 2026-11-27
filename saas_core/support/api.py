@@ -15,9 +15,10 @@ from .service import (
 router=APIRouter(prefix="/support",tags=["support"])
 
 
-def _require(conn,user_id,permission):
+def _require(conn, principal, permission):
+    user_id = principal["id"]
     try:
-        require_permission(conn,user_id,permission)
+        require_permission(conn,user_id,permission,principal=principal)
     except AuthorizationDenied:
         raise HTTPException(status_code=403,detail="permission denied")
 
@@ -111,7 +112,7 @@ def staff_ticket_queue(status:str|None=None,assigned_to:UUID|None=None,
                        limit:int=Query(default=50,ge=1,le=100),
                        before_ticket_number:int|None=Query(default=None,ge=1),
                        user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"tickets.manage")
+    _require(conn, user,"tickets.manage")
     try:
         return {"tickets":list_staff_tickets(conn,status=status,assigned_to=assigned_to,
                                                limit=limit,before_ticket_number=before_ticket_number)}
@@ -121,7 +122,7 @@ def staff_ticket_queue(status:str|None=None,assigned_to:UUID|None=None,
 
 @router.get("/manage/tickets/{ticket_id}")
 def staff_ticket_detail(ticket_id:UUID,user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"tickets.manage")
+    _require(conn, user,"tickets.manage")
     ticket=get_ticket(conn,ticket_id=ticket_id)
     if not ticket:
         raise HTTPException(status_code=404,detail="ticket not found")
@@ -132,7 +133,7 @@ def staff_ticket_detail(ticket_id:UUID,user=Depends(current_user),conn=Depends(g
 @router.post("/manage/tickets/{ticket_id}/assign")
 def staff_assign_ticket(ticket_id:UUID,body:AssignTicketBody,
                         user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"tickets.manage")
+    _require(conn, user,"tickets.manage")
     try:
         return {"ticket":assign_ticket(conn,ticket_id=ticket_id,actor_user_id=user["id"],
                                          assigned_to=body.assigned_to)}
@@ -145,7 +146,7 @@ def staff_assign_ticket(ticket_id:UUID,body:AssignTicketBody,
 @router.patch("/manage/tickets/{ticket_id}/status")
 def staff_set_status(ticket_id:UUID,body:TicketStatusBody,
                      user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"tickets.manage")
+    _require(conn, user,"tickets.manage")
     try:
         return {"ticket":update_ticket_status(conn,ticket_id=ticket_id,
                                                actor_user_id=user["id"],status=body.status)}
@@ -157,7 +158,7 @@ def staff_set_status(ticket_id:UUID,body:TicketStatusBody,
 
 @router.post("/manage/tickets/{ticket_id}/messages",status_code=201)
 def staff_reply(ticket_id:UUID,body:MessageBody,user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"tickets.manage")
+    _require(conn, user,"tickets.manage")
     try:
         message=add_public_reply(conn,ticket_id=ticket_id,sender_user_id=user["id"],
                                  body=body.message,staff_reply=True)
@@ -170,7 +171,7 @@ def staff_reply(ticket_id:UUID,body:MessageBody,user=Depends(current_user),conn=
 
 @router.post("/manage/tickets/{ticket_id}/internal-notes",status_code=201)
 def staff_internal_note(ticket_id:UUID,body:MessageBody,user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"tickets.manage")
+    _require(conn, user,"tickets.manage")
     try:
         message=add_internal_note(conn,ticket_id=ticket_id,sender_user_id=user["id"],
                                   body=body.message)
@@ -183,13 +184,13 @@ def staff_internal_note(ticket_id:UUID,body:MessageBody,user=Depends(current_use
 
 @router.get("/manage/faq")
 def manage_faq(user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"faq.manage")
+    _require(conn, user,"faq.manage")
     return {"articles":list_faq(conn,published_only=False)}
 
 
 @router.post("/manage/faq",status_code=201)
 def add_faq(body:FAQCreateBody,user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"faq.manage")
+    _require(conn, user,"faq.manage")
     try:
         article=create_faq_article(conn,actor_user_id=user["id"],**body.model_dump())
         return {"article":article}
@@ -202,7 +203,7 @@ def add_faq(body:FAQCreateBody,user=Depends(current_user),conn=Depends(get_conn)
 @router.patch("/manage/faq/{article_id}")
 def patch_faq(article_id:UUID,body:FAQUpdateBody,
               user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"faq.manage")
+    _require(conn, user,"faq.manage")
     changes=body.model_dump(exclude_unset=True)
     try:
         article=update_faq_article(conn,actor_user_id=user["id"],

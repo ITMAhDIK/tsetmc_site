@@ -26,9 +26,10 @@ router = APIRouter(
 )
 
 
-def _require(conn, user_id: UUID, permission: str) -> None:
+def _require(conn, principal, permission: str) -> None:
+    user_id = principal["id"]
     try:
-        require_permission(conn, user_id, permission)
+        require_permission(conn, user_id, permission, principal=principal)
     except AuthorizationDenied as exc:
         raise HTTPException(status_code=403, detail="CRM permission required") from exc
 
@@ -68,7 +69,7 @@ def customers(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.read")
+    _require(conn, user, "crm.read")
     try:
         return list_customers(
             conn,
@@ -90,7 +91,7 @@ def customer_detail(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.read")
+    _require(conn, user, "crm.read")
     customer = get_customer(conn, actor_user_id=user["id"], customer_id=customer_id)
     if customer is None:
         raise HTTPException(status_code=404, detail="customer not found")
@@ -104,7 +105,7 @@ def customer_profile(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.manage")
+    _require(conn, user, "crm.manage")
     try:
         profile = update_customer_profile(
             conn,
@@ -128,7 +129,7 @@ def customer_interactions(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.read")
+    _require(conn, user, "crm.read")
     try:
         return list_interactions(
             conn,
@@ -150,7 +151,7 @@ def add_customer_interaction(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.manage")
+    _require(conn, user, "crm.manage")
     try:
         interaction = create_interaction(
             conn,
@@ -178,7 +179,7 @@ def followups(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.read")
+    _require(conn, user, "crm.read")
     try:
         return list_followups(
             conn,
@@ -199,7 +200,7 @@ def add_followup(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.manage")
+    _require(conn, user, "crm.manage")
     try:
         followup = create_followup(
             conn,
@@ -224,7 +225,7 @@ def set_followup_status(
     user=Depends(current_user),
     conn=Depends(get_conn),
 ):
-    _require(conn, user["id"], "crm.manage")
+    _require(conn, user, "crm.manage")
     try:
         followup = update_followup_status(
             conn,

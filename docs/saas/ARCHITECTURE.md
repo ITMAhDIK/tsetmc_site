@@ -3,14 +3,18 @@
 ## Three isolated data domains
 1. Market data: existing market pipeline/database, consumed through the
    existing read-only market service.
-2. SaaS core: dedicated PostgreSQL for users, auth identities, sessions, RBAC,
+2. Identity: a dedicated FastAPI/PostgreSQL service owning credentials,
+   password hashes, OTP challenges, sessions, MFA, roles, permissions and
+   immutable legal-acceptance evidence.
+3. SaaS core: dedicated PostgreSQL for same-UUID user projections, preferences,
    plans, subscriptions, payment records, wallet ledger, referrals, tickets,
-   preferences and admin audit.
-3. Product analytics: consent-controlled events with a strict data allow-list.
+   CRM and commercial/admin operations.
+4. Product analytics: consent-controlled events with a strict data allow-list.
 
 No direct database joins or cross-database foreign keys are permitted between
-market data and SaaS core. The application authorizes market API calls using
-the authenticated SaaS identity.
+Market, Identity and SaaS. Identity and SaaS communicate only through the
+private Identity HTTP contract. The application authorizes Market API calls
+using the authenticated Identity principal and SaaS subscription entitlements.
 
 ## Roles versus entitlements
 Roles: superadmin, admin, support, user. Subscription entitlements are separate:
@@ -22,9 +26,25 @@ Every protected API/export must enforce access server-side. UI blur is not
 security.
 
 ## Identity
-A user has immutable internal UUID plus public ID/username. Password, Google
-OAuth and phone OTP identities are linked through auth_identities. Linking
-requires proof of control of both identities. Purchases require verified phone.
+Identity is a separate deployable service and the authoritative owner of the
+immutable internal UUID, public ID/username, Argon2id password hashes, phone
+OTP challenges, opaque session hashes, RBAC, TOTP MFA and legal-acceptance
+evidence. The service has a dedicated PostgreSQL database and does not connect
+to the Market or SaaS databases. Its public browser routes are reverse-proxied
+by the same-origin Edge; private introspection and account-administration
+routes require a service credential plus an independently validated user
+session where applicable.
+
+SaaS retains a same-UUID projection of non-secret user fields so its existing
+payment, subscription, wallet, support and CRM foreign keys remain local.
+Password hashes and session tokens are never projected. SaaS asks Identity to
+introspect each presented browser session and uses returned role/permission
+claims for authorization; an Identity outage fails closed. SaaS continues to
+own subscriptions and paid feature entitlements. The current migration path
+preserves UUIDs, hashes, active sessions, MFA seeds, role assignments and
+legal evidence. Existing local auth routes remain only as an explicit
+development/rollback compatibility path when no Identity URL is configured.
+
 The active browser flows are Argon2id username/password and six-digit phone
 OTP. Google OAuth and cross-provider identity linking are not currently exposed
 as active browser flows. OTPs are HMAC-protected, short-lived, rate-limited and
@@ -99,3 +119,22 @@ updated or deleted. CRM staff MFA enrollment does not confer
 
 The staff CRM UI, reminders, prospect capture and outbound campaigns are
 deferred. No marketing message is sent by the Phase 10 backend.
+
+
+## Microservices extraction — Phase 1: Identity Service
+
+The first independent business service is Identity. It owns registration,
+login, phone verification, sessions, MFA and role/permission evaluation.
+SaaS calls its private introspection contract for each authenticated request
+and retains only a local non-secret user projection with the same UUID to
+preserve local operational foreign keys. Admin account suspension and role
+changes are sent to Identity and require server-side permission and recent
+TOTP verification. Deployment, migration and API details are documented in
+`docs/identity/PHASE_1_IDENTITY_SERVICE.md`.
+
+This is a deliberate strangler migration: Identity can be deployed and its
+database seeded before the Edge is switched. The copy utility defaults to
+dry-run, refuses identical databases and non-empty user targets, and reads
+the SaaS source in read-only mode. No live database has been migrated by this
+code change. The SaaS application remains a modular monolith for payments,
+wallet, support, analytics and CRM; those domains are not split by this phase.

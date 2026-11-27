@@ -97,3 +97,43 @@ Implemented on the architecture stabilization branch:
 - Dedicated PostgreSQL tests and a cross-platform test that runs Market HTTP and CRM APIs side by side with independent databases.
 
 Deferred: staff CRM browser workspace, task reminders, outbound messaging/provider campaigns, marketing consent/preferences, prospect/lead capture, exports, advanced segmentation and workflow automation. Phase 9 production deployment, legal/privacy and security gates remain applicable.
+
+
+---
+
+# Microservices extraction track
+
+This track is separate from the historical SaaS product phases above. It
+extracts one bounded business capability at a time from the existing SaaS
+modular monolith; it does not imply that all product modules are already
+microservices.
+
+## Phase 1 — Identity Service (implementation on architecture branch)
+
+- Added the independent `identity_service` FastAPI application and dedicated
+  PostgreSQL schema for users, credentials, phone challenges, sessions, roles,
+  permissions, TOTP MFA, legal-acceptance evidence, encrypted SMS outbox and
+  audit.
+- Added a private service-authenticated introspection contract. SaaS now
+  validates browser sessions and reads permission claims from Identity whenever
+  `IDENTITY_SERVICE_URL` is configured; service failures fail closed.
+- Preserved current SaaS foreign-key integrity through a same-UUID, non-secret
+  user projection. Password hashes are explicitly nulled in SaaS projections.
+  SaaS subscriptions and feature entitlements remain SaaS-owned.
+- Delegated account profile edits, session listing/revocation, account
+  suspension and staff-role changes to Identity. Administrative mutations are
+  permission-gated inside Identity and require recent session-bound TOTP MFA.
+- Added independent Identity migrations, a dry-run-first one-time SaaS-to-
+  Identity copy tool, isolated database test workflow, non-root Docker image,
+  production Compose services and Edge routing for `/api/v1/auth/*`.
+- No existing production database or live environment was migrated or switched.
+  Production cutover remains an operator-controlled step after a reviewed dry
+  run, backup, test login and deployment of separate database credentials.
+
+**Remaining hardening/release gates:** deploy separate managed Identity
+PostgreSQL and secrets, run and review the one-time copy against a controlled
+production snapshot, rehearse cutover and rollback in staging, configure
+service-token rotation/secret-manager delivery and network restrictions, run
+load/soak and independent security review. Google OAuth, password recovery,
+identity linking and email-verification browser flows are not added in this
+phase.

@@ -30,6 +30,10 @@ from .repository import (
     register_password_user, request_phone_otp, revoke_session, create_session,
 )
 from .service import AuthenticationError, ConfigurationError, normalize_phone
+from .identity_client import (
+    IdentityUnavailable, IdentityUnauthorized, identity_enabled,
+    introspect as identity_introspect, project_identity_user,
+)
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 COOKIE_NAME = "tloomberg_session"
@@ -107,6 +111,16 @@ def validate_production_configuration() -> None:
         raise ConfigurationError("SAAS_SUPERADMIN_PHONE_E164 must be a valid E.164 number") from exc
     if not fernet_key:
         raise ConfigurationError("SAAS_OUTBOX_FERNET_KEY is required in production")
+    identity_url = os.getenv("IDENTITY_SERVICE_URL", "").strip()
+    identity_token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    if not identity_url or len(identity_token) < 32:
+        raise ConfigurationError("IDENTITY_SERVICE_URL and a distinct IDENTITY_SERVICE_TOKEN are required in production")
+    identity_origin = urlsplit(identity_url)
+    if (identity_origin.scheme not in {"http", "https"} or not identity_origin.netloc
+            or identity_origin.path not in {"", "/"}
+            or identity_origin.username or identity_origin.password
+            or identity_origin.query or identity_origin.fragment):
+        raise ConfigurationError("IDENTITY_SERVICE_URL must be a valid private HTTP(S) service origin")
     metrics_token = os.getenv("SAAS_METRICS_TOKEN", "").strip()
     if len(metrics_token) < 32:
         raise ConfigurationError("SAAS_METRICS_TOKEN must contain at least 32 characters")
@@ -378,6 +392,18 @@ def current_user(
     if cookie_token and credentials is None and request.method.upper() not in _SAFE_REQUEST_METHODS:
         _enforce_cookie_csrf_origin(request)
     token = _token(request, credentials)
+    if identity_enabled():
+        try:
+            principal = identity_introspect(token or "")
+            principal = project_identity_user(conn, principal)
+            return principal
+        except IdentityUnauthorized:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required") from None
+        except IdentityUnavailable:
+            # Identity owns the session source of truth. Do not fall back to
+            # potentially stale local SaaS sessions when it is unavailable.
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail="Identity service is temporarily unavailable") from None
     user = authenticate_session(conn, token) if token else None
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required")
@@ -442,6 +468,12 @@ def ready(conn=Depends(get_conn)):
         missing_columns = cur.fetchone()["missing"]
     if missing or missing_columns:
         raise HTTPException(status_code=503, detail="SaaS database schema is not ready")
+    if identity_enabled():
+        from .identity_client import identity_health
+        try:
+            identity_health()
+        except IdentityUnavailable:
+            raise HTTPException(status_code=503, detail="Identity service is not ready") from None
     return {"status": "ready", "service": "saas-api"}
 
 
@@ -568,13 +600,13 @@ def _admin_mfa_cipher() -> Fernet:
         raise HTTPException(status_code=503, detail="privileged MFA encryption is not configured") from None
 
 
-def _require_privileged_account(conn, user_id):
+def _require_privileged_account(conn, user_id, principal=None):
     from .authorization import has_permission
-    # Superadmin console users and explicitly authorized CRM staff may enroll
-    # their own TOTP device. CRM permission does not grant Superadmin routes.
+    # Identity claims are authoritative when enabled; local role lookup is
+    # retained only for compatibility tests and local development.
     if not (
-        has_permission(conn, user_id, "superadmin.console.access")
-        or has_permission(conn, user_id, "crm.manage")
+        has_permission(conn, user_id, "superadmin.console.access", principal=principal)
+        or has_permission(conn, user_id, "crm.manage", principal=principal)
     ):
         raise HTTPException(status_code=403, detail="privileged account required")
 
@@ -583,6 +615,10 @@ def require_crm_mfa(user=Depends(current_user), conn=Depends(get_conn)):
     """Require an enrolled TOTP device and a recent verification for CRM staff."""
     if user.get("mfa_verified_at") is None:
         raise HTTPException(status_code=403, detail="recent MFA verification is required")
+    if identity_enabled():
+        if not user.get("mfa_enabled"):
+            raise HTTPException(status_code=403, detail="privileged MFA enrollment is required")
+        return user
     with conn.cursor() as cur:
         cur.execute(
             "SELECT enabled_at FROM user_admin_mfa WHERE user_id=%s",
@@ -598,6 +634,10 @@ def require_admin_mfa(user=Depends(current_user), conn=Depends(get_conn)):
     """Dependency applied to every privileged admin route."""
     if user.get("mfa_verified_at") is None:
         raise HTTPException(status_code=403, detail="recent MFA verification is required")
+    if identity_enabled():
+        if not user.get("mfa_enabled"):
+            raise HTTPException(status_code=403, detail="privileged MFA enrollment is required")
+        return user
     with conn.cursor() as cur:
         cur.execute(
             "SELECT enabled_at FROM user_admin_mfa WHERE user_id=%s",
@@ -611,7 +651,7 @@ def require_admin_mfa(user=Depends(current_user), conn=Depends(get_conn)):
 
 @app.get("/auth/mfa/status")
 def mfa_status(user=Depends(current_user), conn=Depends(get_conn)):
-    _require_privileged_account(conn, user["id"])
+    _require_privileged_account(conn, user["id"], principal=user)
     with conn.cursor() as cur:
         cur.execute("SELECT enabled_at FROM user_admin_mfa WHERE user_id=%s", (user["id"],))
         row = cur.fetchone()

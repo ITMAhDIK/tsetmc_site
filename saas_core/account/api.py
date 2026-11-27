@@ -9,6 +9,8 @@ from .service import (
     update_preferences, update_profile,
 )
 from ..auth.api import current_user, get_conn
+from ..auth.identity_client import identity_enabled, user_action, IdentityUnauthorized, IdentityUnavailable, IdentityRequestError
+from fastapi import Request
 
 router = APIRouter(prefix="/account", tags=["account"])
 
@@ -32,7 +34,21 @@ def profile(user=Depends(current_user), conn=Depends(get_conn)):
 def patch_profile(body: ProfileUpdate, user=Depends(current_user), conn=Depends(get_conn)):
     if "display_name" not in body.model_fields_set:
         raise HTTPException(status_code=422, detail="display_name must be provided")
-    row = update_profile(conn, user["id"], display_name=body.display_name)
+    if identity_enabled():
+        try:
+            result = user_action("/internal/users/me/profile", user_token=user.get("_identity_token", ""),
+                                 payload={"display_name": body.display_name}, method="PATCH")
+            from ..auth.identity_client import sync_target_projection
+            sync_target_projection(conn, result)
+            row = result.get("principal", {}).get("user")
+        except IdentityUnauthorized:
+            raise HTTPException(status_code=401, detail="Identity rejected the session") from None
+        except IdentityRequestError as exc:
+            raise HTTPException(status_code=exc.status_code, detail="Identity rejected the profile update") from None
+        except IdentityUnavailable:
+            raise HTTPException(status_code=503, detail="Identity service is temporarily unavailable") from None
+    else:
+        row = update_profile(conn, user["id"], display_name=body.display_name)
     if row is None:
         raise HTTPException(status_code=404, detail="account not found")
     return {"profile": row}
@@ -54,10 +70,26 @@ def patch_preferences(body: PreferencesUpdate, user=Depends(current_user), conn=
 
 @router.get("/sessions")
 def sessions(user=Depends(current_user), conn=Depends(get_conn)):
+    if identity_enabled():
+        try:
+            return user_action("/internal/sessions", user_token=user.get("_identity_token", ""), method="GET")
+        except IdentityUnauthorized:
+            raise HTTPException(status_code=401, detail="Identity rejected the session") from None
+        except IdentityUnavailable:
+            raise HTTPException(status_code=503, detail="Identity service is temporarily unavailable") from None
     return {"sessions": list_sessions(conn, user["id"], user["session_id"])}
 
 @router.delete("/sessions/{session_id}")
 def delete_session(session_id: UUID, user=Depends(current_user), conn=Depends(get_conn)):
+    if identity_enabled():
+        try:
+            return user_action(f"/internal/sessions/{session_id}", user_token=user.get("_identity_token", ""), method="DELETE")
+        except IdentityUnauthorized:
+            raise HTTPException(status_code=401, detail="Identity rejected the session") from None
+        except IdentityRequestError as exc:
+            raise HTTPException(status_code=exc.status_code, detail="Identity rejected the session revocation") from None
+        except IdentityUnavailable:
+            raise HTTPException(status_code=503, detail="Identity service is temporarily unavailable") from None
     try:
         revoked = revoke_one_session(conn, user["id"], session_id, user["session_id"])
     except ValueError as exc:
@@ -68,6 +100,13 @@ def delete_session(session_id: UUID, user=Depends(current_user), conn=Depends(ge
 
 @router.post("/sessions/revoke-others")
 def delete_other_sessions(user=Depends(current_user), conn=Depends(get_conn)):
+    if identity_enabled():
+        try:
+            return user_action("/internal/sessions/revoke-others", user_token=user.get("_identity_token", ""))
+        except IdentityUnauthorized:
+            raise HTTPException(status_code=401, detail="Identity rejected the session") from None
+        except IdentityUnavailable:
+            raise HTTPException(status_code=503, detail="Identity service is temporarily unavailable") from None
     count = revoke_other_sessions(conn, user["id"], user["session_id"])
     return {"revoked_count": count}
 
@@ -77,4 +116,4 @@ def subscriptions(user=Depends(current_user), conn=Depends(get_conn)):
 
 @router.get("/features")
 def features(user=Depends(current_user), conn=Depends(get_conn)):
-    return {"features": feature_access(conn, user["id"])}
+    return {"features": feature_access(conn, user["id"], principal=user)}

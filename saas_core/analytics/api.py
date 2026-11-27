@@ -16,9 +16,10 @@ router=APIRouter(prefix="/analytics",tags=["analytics"])
 CONSENT_VERSION=os.getenv("SAAS_ANALYTICS_CONSENT_VERSION","v1")[:24]
 
 
-def _require(conn,user_id,permission):
+def _require(conn, principal, permission):
+    user_id = principal["id"]
     try:
-        require_permission(conn,user_id,permission)
+        require_permission(conn,user_id,permission,principal=principal)
     except AuthorizationDenied:
         raise HTTPException(status_code=403,detail="permission denied")
 
@@ -96,7 +97,7 @@ def capture_events(body:EventBatch,user=Depends(current_user),conn=Depends(get_c
 @router.get("/admin/overview")
 def admin_overview(days:int=Query(default=30,ge=1,le=730),
                    user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.read")
+    _require(conn, user,"analytics.read")
     return {"days":days,"overview":overview(conn,days=days)}
 
 
@@ -104,7 +105,7 @@ def admin_overview(days:int=Query(default=30,ge=1,le=730),
 def admin_pages(days:int=Query(default=30,ge=1,le=730),
                 limit:int=Query(default=20,ge=1,le=100),
                 user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.read")
+    _require(conn, user,"analytics.read")
     return {"days":days,"pages":top_pages(conn,days=days,limit=limit)}
 
 
@@ -112,7 +113,7 @@ def admin_pages(days:int=Query(default=30,ge=1,le=730),
 def admin_heatmap(page_path:str=Query(min_length=1,max_length=300),
                   days:int=Query(default=30,ge=1,le=730),
                   user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.read")
+    _require(conn, user,"analytics.read")
     try:
         return {"page_path":normalize_page_path(page_path),"days":days,"cells":heatmap(conn,page_path=page_path,days=days)}
     except ValueError as exc:
@@ -123,7 +124,7 @@ def admin_heatmap(page_path:str=Query(min_length=1,max_length=300),
 def admin_funnel(steps:list[str]=Query(min_length=2,max_length=5),
                  days:int=Query(default=30,ge=1,le=730),
                  user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.read")
+    _require(conn, user,"analytics.read")
     try:
         return {"days":days,**funnel(conn,steps=steps,days=days)}
     except ValueError as exc:
@@ -133,14 +134,14 @@ def admin_funnel(steps:list[str]=Query(min_length=2,max_length=5),
 @router.get("/admin/retention")
 def admin_retention(days:int=Query(default=180,ge=1,le=730),
                     user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.read")
+    _require(conn, user,"analytics.read")
     return {"days":days,"cohorts":retention(conn,days=days)}
 
 
 @router.get("/admin/users/{user_id}/events")
 def admin_user_events(user_id:UUID,limit:int=Query(default=100,ge=1,le=200),
                       user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.users.read")
+    _require(conn, user,"analytics.users.read")
     return {"user_id":str(user_id),"events":user_event_history(conn,user_id=user_id,limit=limit)}
 
 
@@ -152,7 +153,7 @@ def admin_repeated_paths(
     limit:int=Query(default=50,ge=1,le=100),
     user=Depends(current_user),conn=Depends(get_conn),
 ):
-    _require(conn,user["id"],"analytics.read")
+    _require(conn, user,"analytics.read")
     return {
         "days":days,
         "max_steps":max_steps,
@@ -172,7 +173,7 @@ def admin_user_repeated_paths(
     limit:int=Query(default=50,ge=1,le=100),
     user=Depends(current_user),conn=Depends(get_conn),
 ):
-    _require(conn,user["id"],"analytics.users.read")
+    _require(conn, user,"analytics.users.read")
     return {
         "user_id":str(user_id),
         "days":days,
@@ -187,7 +188,7 @@ def admin_user_repeated_paths(
 
 @router.delete("/admin/retention/expired")
 def admin_purge_expired(user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"analytics.retention.manage")
+    _require(conn, user,"analytics.retention.manage")
     try:
         days=int(os.getenv("SAAS_ANALYTICS_RETENTION_DAYS",str(DEFAULT_RETENTION_DAYS)))
         deleted=purge_expired_events(conn,retention_days=days)

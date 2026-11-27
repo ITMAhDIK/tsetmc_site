@@ -109,7 +109,7 @@ def subscription_history(conn, user_id: UUID):
         )
         return cur.fetchall()
 
-def feature_access(conn, user_id: UUID):
+def feature_access(conn, user_id: UUID, principal: dict | None = None):
     from saas_core.auth.authorization import has_entitlement
     features = ("premium_analytics", "ownership_graphs", "investor_history")
-    return {feature: has_entitlement(conn, user_id, feature) for feature in features}
+    return {feature: has_entitlement(conn, user_id, feature, principal=principal) for feature in features}

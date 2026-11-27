@@ -17,14 +17,26 @@
     # first-party HttpOnly cookies and avoids dependence on third-party cookies.
     root * /srv/saas
 
-    # The app uses /api/v1 in the browser; FastAPI owns the unprefixed routes.
+    # Never expose internal service endpoints, even through the /api/v1 prefix.
+    @private path /api/v1/internal/* /internal/* /openapi.json /docs /redoc
+    handle @private {
+        respond 404
+    }
+
+    # Identity is a separate upstream and owns all browser authentication routes.
+    # Strip only the /api/v1 prefix so Identity receives /auth/* unchanged.
+    @identity path /api/v1/auth /api/v1/auth/*
+    handle @identity {
+        uri strip_prefix /api/v1
+        reverse_proxy identity-api:8000
+    }
+
+    # All other APIs remain in the SaaS application.
     handle_path /api/v1/* {
         reverse_proxy saas-api:8000
     }
 
-    # Never expose private metrics or FastAPI internals via the static site.
-    @private path /internal/* /openapi.json /docs /redoc
-    respond @private 404
+    # Private API paths are denied above; only named public API prefixes are proxied.
 
     try_files {path} {path}/ /index.html
     file_server

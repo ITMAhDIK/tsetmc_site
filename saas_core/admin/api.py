@@ -4,6 +4,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from saas_core.auth.api import current_user, get_conn, require_admin_mfa
 from saas_core.auth.authorization import AuthorizationDenied, require_permission
+from saas_core.auth.identity_client import (
+    identity_enabled, user_action, sync_target_projection, IdentityUnauthorized,
+    IdentityUnavailable, IdentityRequestError,
+)
 from .service import (
     add_payment_reconciliation_note, change_user_role, change_user_status,
     cancel_subscription, dashboard_summary, get_admin_wallet, get_user_detail,
@@ -15,10 +19,11 @@ from .service import (
 router=APIRouter(prefix="/admin",tags=["superadmin"],dependencies=[Depends(require_admin_mfa)])
 
 
-def _require(conn,user_id,permission):
+def _require(conn, principal, permission):
+    user_id = principal["id"]
     try:
-        require_permission(conn,user_id,"superadmin.console.access")
-        require_permission(conn,user_id,permission)
+        require_permission(conn, user_id, "superadmin.console.access", principal=principal)
+        require_permission(conn,user_id,permission,principal=principal)
     except AuthorizationDenied:
         raise HTTPException(status_code=403,detail="superadmin permission required")
 
@@ -60,7 +65,7 @@ class WithdrawalReviewBody(BaseModel):
 
 @router.get("/dashboard")
 def dashboard(user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"users.read")
+    _require(conn, user,"users.read")
     return {"summary":dashboard_summary(conn)}
 
 
@@ -69,7 +74,7 @@ def users(q:str|None=None,status:str|None=None,
           limit:int=Query(default=50,ge=1,le=100),
           offset:int=Query(default=0,ge=0,le=10_000),
           user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"users.read")
+    _require(conn, user,"users.read")
     try:
         return list_users(conn,query=q,status=status,limit=limit,offset=offset)
     except ValueError as exc:
@@ -78,7 +83,7 @@ def users(q:str|None=None,status:str|None=None,
 
 @router.get("/users/{user_id}")
 def user_detail(user_id:UUID,user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"users.read")
+    _require(conn, user,"users.read")
     row=get_user_detail(conn,user_id=user_id)
     if not row:
         raise HTTPException(status_code=404,detail="user not found")
@@ -87,7 +92,19 @@ def user_detail(user_id:UUID,user=Depends(current_user),conn=Depends(get_conn)):
 
 @router.patch("/users/{user_id}/status")
 def user_status(user_id:UUID,body:UserStatusBody,user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"users.manage")
+    _require(conn, user,"users.manage")
+    if identity_enabled():
+        try:
+            result = user_action(f"/internal/users/{user_id}/status", user_token=user.get("_identity_token", ""),
+                                 payload=body.model_dump())
+            sync_target_projection(conn, result)
+            return {"user": result.get("principal", {}).get("user")}
+        except IdentityUnauthorized:
+            raise HTTPException(status_code=401, detail="Identity rejected the acting session") from None
+        except IdentityRequestError as exc:
+            raise HTTPException(status_code=exc.status_code, detail="Identity rejected the status change") from None
+        except IdentityUnavailable:
+            raise HTTPException(status_code=503, detail="Identity service is temporarily unavailable") from None
     try:
         return {"user":change_user_status(conn,actor_id=user["id"],user_id=user_id,
                                              status=body.status,reason=body.reason)}
@@ -99,14 +116,26 @@ def user_status(user_id:UUID,body:UserStatusBody,user=Depends(current_user),conn
 
 @router.get("/roles")
 def roles(user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"roles.manage")
+    _require(conn, user,"roles.manage")
     return {"roles":list_roles(conn)}
 
 
 @router.put("/users/{user_id}/roles/{role_code}")
 def user_role(user_id:UUID,role_code:str,body:RoleBody,
               user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"roles.manage")
+    _require(conn, user,"roles.manage")
+    if identity_enabled():
+        try:
+            result = user_action(f"/internal/users/{user_id}/roles/{role_code}", user_token=user.get("_identity_token", ""),
+                                 payload=body.model_dump(), method="PUT")
+            sync_target_projection(conn, result)
+            return {"user_id": user_id, "role": role_code, "granted": body.grant}
+        except IdentityUnauthorized:
+            raise HTTPException(status_code=401, detail="Identity rejected the acting session") from None
+        except IdentityRequestError as exc:
+            raise HTTPException(status_code=exc.status_code, detail="Identity rejected the role change") from None
+        except IdentityUnavailable:
+            raise HTTPException(status_code=503, detail="Identity service is temporarily unavailable") from None
     try:
         return change_user_role(conn,actor_id=user["id"],user_id=user_id,
                                 role_code=role_code,grant=body.grant)
@@ -118,14 +147,14 @@ def user_role(user_id:UUID,role_code:str,body:RoleBody,
 
 @router.get("/plans")
 def plans(user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"subscriptions.manage")
+    _require(conn, user,"subscriptions.manage")
     return {"plans":list_plans(conn)}
 
 
 @router.patch("/plans/{plan_id}")
 def plan_update(plan_id:UUID,body:PlanUpdateBody,
                 user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"subscriptions.manage")
+    _require(conn, user,"subscriptions.manage")
     try:
         row=update_plan(conn,actor_id=user["id"],plan_id=plan_id,
                         changes=body.model_dump(exclude_unset=True,exclude_none=True))
@@ -140,7 +169,7 @@ def plan_update(plan_id:UUID,body:PlanUpdateBody,
 def subscriptions(status:str|None=None,limit:int=Query(default=50,ge=1,le=100),
                   offset:int=Query(default=0,ge=0,le=10_000),
                   user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"subscriptions.manage")
+    _require(conn, user,"subscriptions.manage")
     try:
         return {"subscriptions":list_subscriptions(conn,status=status,limit=limit,offset=offset)}
     except ValueError as exc:
@@ -150,7 +179,7 @@ def subscriptions(status:str|None=None,limit:int=Query(default=50,ge=1,le=100),
 @router.post("/subscriptions/{subscription_id}/cancel")
 def subscription_cancel(subscription_id:UUID,body:SubscriptionCancelBody,
                          user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"subscriptions.manage")
+    _require(conn, user,"subscriptions.manage")
     try:
         return {"subscription":cancel_subscription(conn,actor_id=user["id"],
                                                      subscription_id=subscription_id,reason=body.reason)}
@@ -164,7 +193,7 @@ def subscription_cancel(subscription_id:UUID,body:SubscriptionCancelBody,
 def payment_orders(status:str|None=None,limit:int=Query(default=50,ge=1,le=100),
                    offset:int=Query(default=0,ge=0,le=10_000),
                    user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"payments.read")
+    _require(conn, user,"payments.read")
     try:
         return {"orders":list_payment_orders(conn,status=status,limit=limit,offset=offset)}
     except ValueError as exc:
@@ -175,7 +204,7 @@ def payment_orders(status:str|None=None,limit:int=Query(default=50,ge=1,le=100),
 def payment_reconciliation(order_id:UUID,body:ReconciliationNoteBody,
                            idempotency_key:str=Header(alias="Idempotency-Key",min_length=8,max_length=120),
                            user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"payments.read")
+    _require(conn, user,"payments.read")
     try:
         return {"note":add_payment_reconciliation_note(
             conn,actor_id=user["id"],order_id=order_id,note=body.note,
@@ -189,13 +218,13 @@ def payment_reconciliation(order_id:UUID,body:ReconciliationNoteBody,
 @router.get("/payments/orders/{order_id}/reconciliation-notes")
 def payment_reconciliation_history(order_id:UUID,limit:int=Query(default=50,ge=1,le=100),
                                    user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"payments.read")
+    _require(conn, user,"payments.read")
     return {"notes":list_reconciliation_notes(conn,order_id=order_id,limit=limit)}
 
 
 @router.get("/users/{user_id}/wallet")
 def user_wallet(user_id:UUID,user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"wallet.read")
+    _require(conn, user,"wallet.read")
     row=get_user_detail(conn,user_id=user_id)
     if not row:
         raise HTTPException(status_code=404,detail="user not found")
@@ -206,7 +235,7 @@ def user_wallet(user_id:UUID,user=Depends(current_user),conn=Depends(get_conn)):
 def wallet_adjustment(user_id:UUID,body:WalletAdjustmentBody,
                       idempotency_key:str=Header(alias="Idempotency-Key",min_length=8,max_length=120),
                       user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"wallet.adjust")
+    _require(conn, user,"wallet.adjust")
     try:
         return {"entry":adjust_wallet(conn,actor_id=user["id"],user_id=user_id,
                                       bucket=body.bucket,amount_toman=body.amount_toman,
@@ -221,7 +250,7 @@ def wallet_adjustment(user_id:UUID,body:WalletAdjustmentBody,
 def withdrawals(status:str|None=None,limit:int=Query(default=50,ge=1,le=100),
                 offset:int=Query(default=0,ge=0,le=10_000),
                 user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"withdrawals.review")
+    _require(conn, user,"withdrawals.review")
     try:
         return {"withdrawals":list_withdrawals(conn,status=status,limit=limit,offset=offset)}
     except ValueError as exc:
@@ -231,7 +260,7 @@ def withdrawals(status:str|None=None,limit:int=Query(default=50,ge=1,le=100),
 @router.post("/withdrawals/{withdrawal_id}/review")
 def withdrawal_review(withdrawal_id:UUID,body:WithdrawalReviewBody,
                       user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"withdrawals.review")
+    _require(conn, user,"withdrawals.review")
     try:
         return {"withdrawal":review_withdrawal(conn,actor_id=user["id"],
                                                  withdrawal_id=withdrawal_id,
@@ -246,7 +275,7 @@ def withdrawal_review(withdrawal_id:UUID,body:WithdrawalReviewBody,
 def referrals(status:str|None=None,limit:int=Query(default=50,ge=1,le=100),
               offset:int=Query(default=0,ge=0,le=10_000),
               user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"users.read")
+    _require(conn, user,"users.read")
     try:
         return {"referrals":list_referrals(conn,status=status,limit=limit,offset=offset)}
     except ValueError as exc:
@@ -258,6 +287,6 @@ def audit_logs(actor_id:UUID|None=None,action:str|None=None,target_type:str|None
                limit:int=Query(default=50,ge=1,le=100),
                offset:int=Query(default=0,ge=0,le=10_000),
                user=Depends(current_user),conn=Depends(get_conn)):
-    _require(conn,user["id"],"audit.read")
+    _require(conn, user,"audit.read")
     return {"logs":list_audit_logs(conn,actor_id=actor_id,action=action,
                                    target_type=target_type,limit=limit,offset=offset)}

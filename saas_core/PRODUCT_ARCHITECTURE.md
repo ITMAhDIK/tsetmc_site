@@ -138,3 +138,15 @@ updated or deleted. CRM staff MFA enrollment does not confer
 
 The staff CRM UI, reminders, prospect capture and outbound campaigns are
 deferred. No marketing message is sent by the Phase 10 backend.
+
+
+## Microservices extraction — Identity Service, Phase 1
+
+The initial microservice boundary is now explicit: Identity owns authentication
+and authorization facts in a separate PostgreSQL database. The SaaS API calls
+Identity over its private service network for session introspection and
+permission claims. SaaS stores only a same-UUID, non-secret user projection to
+retain local payment, wallet, subscription, support and CRM foreign keys.
+SaaS remains the owner of product plans, subscriptions and commercial
+entitlements. See `docs/identity/PHASE_1_IDENTITY_SERVICE.md` for deployment,
+data migration, internal HTTP contracts and the production cutover sequence.
