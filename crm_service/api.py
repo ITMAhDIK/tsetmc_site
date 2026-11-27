@@ -63,7 +63,7 @@ def upsert_customer_projection(user_id:UUID,body:Projection,x_crm_projection_tok
       VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,display_name=EXCLUDED.display_name,account_status=EXCLUDED.account_status,phone_verified=EXCLUDED.phone_verified,email_verified=EXCLUDED.email_verified""",
       (body.user_id,body.username,body.display_name,body.account_status,body.phone_verified,body.email_verified,body.created_at))
     return {"status":"projected"}
-@app.get("/customers")
+@app.get("/crm/customers")
 def customers(q:str|None=Query(default=None,max_length=80),lifecycle_stage:str|None=None,assigned_to:UUID|None=None,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0,le=10000),principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.read")
     if lifecycle_stage and lifecycle_stage not in {"new","active","at_risk","churned"}: raise HTTPException(422,detail="invalid lifecycle stage")
@@ -79,14 +79,14 @@ def customers(q:str|None=Query(default=None,max_length=80),lifecycle_stage:str|N
     total=conn.execute("SELECT count(*)::bigint AS total FROM crm_customers"+clause,args).fetchone()["total"]
     _audit(conn,principal["id"],"crm.customers.list","customer_list","all",{"total":total})
     return {"customers":rows,"total":total,"limit":limit,"offset":offset}
-@app.get("/customers/{customer_id}")
+@app.get("/crm/customers/{customer_id}")
 def customer(customer_id:UUID,principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.read")
     row=conn.execute("SELECT * FROM crm_customers WHERE user_id=%s",(customer_id,)).fetchone()
     if not row: raise HTTPException(404,detail="customer not found")
     _audit(conn,principal["id"],"crm.customer.read","customer",customer_id)
     return {"customer":row}
-@app.patch("/customers/{customer_id}/profile")
+@app.patch("/crm/customers/{customer_id}/profile")
 def profile(customer_id:UUID,lifecycle_stage:Literal["new","active","at_risk","churned"],assigned_to:UUID|None=None,principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.manage")
     cur=conn.execute("UPDATE crm_customers SET lifecycle_stage=%s,assigned_to=%s WHERE user_id=%s RETURNING user_id,lifecycle_stage,assigned_to",(lifecycle_stage,assigned_to,customer_id))
@@ -94,13 +94,13 @@ def profile(customer_id:UUID,lifecycle_stage:Literal["new","active","at_risk","c
     if not row: raise HTTPException(404,detail="customer not found")
     _audit(conn,principal["id"],"crm.customer.profile.update","customer",customer_id,{"lifecycle_stage":lifecycle_stage,"assigned_to":str(assigned_to) if assigned_to else None})
     return {"profile":row}
-@app.get("/customers/{customer_id}/interactions")
+@app.get("/crm/customers/{customer_id}/interactions")
 def interactions(customer_id:UUID,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0,le=10000),principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.read")
     if not conn.execute("SELECT 1 FROM crm_customers WHERE user_id=%s",(customer_id,)).fetchone(): raise HTTPException(404,detail="customer not found")
     rows=conn.execute("SELECT id,customer_id,actor_user_id,channel,subject,summary,happened_at,created_at FROM crm_interactions WHERE customer_id=%s ORDER BY happened_at DESC,created_at DESC LIMIT %s OFFSET %s",(customer_id,limit,offset)).fetchall()
     return {"interactions":rows,"limit":limit,"offset":offset}
-@app.post("/customers/{customer_id}/interactions",status_code=201)
+@app.post("/crm/customers/{customer_id}/interactions",status_code=201)
 def add_interaction(customer_id:UUID,body:Interaction,principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.manage")
     if not conn.execute("SELECT 1 FROM crm_customers WHERE user_id=%s",(customer_id,)).fetchone(): raise HTTPException(404,detail="customer not found")
@@ -109,7 +109,7 @@ def add_interaction(customer_id:UUID,body:Interaction,principal=Depends(current_
     row=conn.execute("INSERT INTO crm_interactions(customer_id,actor_user_id,channel,subject,summary,happened_at) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",(customer_id,principal["id"],body.channel,body.subject.strip(),body.summary.strip(),happened)).fetchone()
     _audit(conn,principal["id"],"crm.interaction.create","interaction",row["id"])
     return {"interaction":row}
-@app.get("/followups")
+@app.get("/crm/followups")
 def followups(status:Literal["open","completed","cancelled"]|None="open",assigned_to:UUID|None=None,customer_id:UUID|None=None,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0,le=10000),principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.read")
     clauses=[]; args=[]
@@ -119,7 +119,7 @@ def followups(status:Literal["open","completed","cancelled"]|None="open",assigne
     clause=" WHERE "+" AND ".join(clauses) if clauses else ""
     rows=conn.execute("SELECT * FROM crm_followups"+clause+" ORDER BY due_at,created_at DESC LIMIT %s OFFSET %s",(*args,limit,offset)).fetchall()
     return {"followups":rows}
-@app.post("/followups",status_code=201)
+@app.post("/crm/followups",status_code=201)
 def create_followup(body:Followup,principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.manage")
     if body.due_at.tzinfo is None: raise HTTPException(422,detail="due_at must include timezone")
@@ -127,7 +127,7 @@ def create_followup(body:Followup,principal=Depends(current_user),conn=Depends(g
     row=conn.execute("INSERT INTO crm_followups(customer_id,assigned_to,created_by,title,details,due_at) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",(body.customer_id,body.assigned_to,principal["id"],body.title.strip(),body.details.strip(),body.due_at)).fetchone()
     _audit(conn,principal["id"],"crm.followup.create","followup",row["id"])
     return {"followup":row}
-@app.patch("/followups/{followup_id}/status")
+@app.patch("/crm/followups/{followup_id}/status")
 def update_followup(followup_id:UUID,body:FollowupStatus,principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.manage")
     row=conn.execute("""UPDATE crm_followups SET status=%s,completed_at=CASE WHEN %s='completed' THEN now() ELSE NULL END,updated_at=now() WHERE id=%s RETURNING *""",(body.status,body.status,followup_id)).fetchone()
