@@ -13,6 +13,12 @@
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
     }
 
+    # Shareholder snapshots, ownership series, cross-company search and history.
+    @ownership path /api/v1/stocks/*/shareholders /api/v1/stocks/*/ownership-series /api/v1/shareholders/search /api/v1/shareholders/observation-history
+    handle @ownership {
+        reverse_proxy ownership-api:8000
+    }
+
     # Instrument reference/search and daily prices are served by the
     # independent read-only Market Data microservice.
     @marketData path /api/v1/market/instruments /api/v1/market/instruments/* /api/v1/stocks/search /api/v1/stocks/*/prices

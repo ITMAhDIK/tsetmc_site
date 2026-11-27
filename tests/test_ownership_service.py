@@ -367,3 +367,118 @@ def test_extracted_service_keeps_source_database_read_only(ownership_api):
         ).fetchone()[0] == 1
     finally:
         live.close()
+
+
+
+@pytest.fixture
+def ownership_http_client(ownership_api, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from ownership_service.api import app, get_runtime
+    from ownership_service.runtime import ReadOnlyOwnershipApi
+
+    monkeypatch.setenv("APP_ENV", "development")
+    runtime = ReadOnlyOwnershipApi(
+        ownership_api.db_path,
+        ownership_api.sidecar_path,
+        site_dir="",
+        output_dir="",
+    )
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    try:
+        with TestClient(app) as client:
+            yield client, runtime
+    finally:
+        app.dependency_overrides.pop(get_runtime, None)
+
+
+def test_independent_ownership_http_service_health_and_readiness(
+    ownership_http_client,
+):
+    client, _runtime = ownership_http_client
+    assert client.get("/healthz").json() == {
+        "status": "ok", "service": "ownership"
+    }
+    ready = client.get("/readyz")
+    assert ready.status_code == 200, ready.text
+    assert ready.json() == {"status": "ready", "service": "ownership"}
+
+
+def test_independent_ownership_http_service_preserves_all_legacy_read_contracts(
+    ownership_http_client,
+):
+    client, _runtime = ownership_http_client
+
+    snapshot = client.get("/api/v1/stocks/فولاد/shareholders")
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["groups"][0]["group_key"] == "share_id:123"
+    assert snapshot.json()["resolved_ownership_percent_sum"] == 25.0
+
+    series = client.get(
+        "/api/v1/stocks/فولاد/ownership-series",
+        params={"id_scheme": "share_id", "shareholder_id": "123"},
+    )
+    assert series.status_code == 200, series.text
+    assert series.json()["company_series"] == [
+        {"time": "2026-11-18", "value": 25.0}
+    ]
+    assert series.json()["events"][0]["value_rial"] == 130000
+
+    search = client.get(
+        "/api/v1/shareholders/search", params={"q": "share_id:123"}
+    )
+    assert search.status_code == 200, search.text
+    assert search.json()["rows"][0]["group_id"] == "share_id:123"
+
+    history = client.get(
+        "/api/v1/shareholders/observation-history",
+        params={
+            "symbol": "فولاد",
+            "id_scheme": "share_id",
+            "shareholder_id": "123",
+        },
+    )
+    assert history.status_code == 200, history.text
+    assert history.json()["history"] == [
+        {"time": "2026-11-18", "value": 25.0}
+    ]
+
+
+def test_independent_ownership_service_uses_read_only_source_and_sidecar(
+    ownership_http_client,
+):
+    _client, runtime = ownership_http_client
+    sidecar = runtime.sidecar()
+    live = runtime.live()
+    try:
+        assert sidecar.execute("PRAGMA query_only").fetchone()[0] == 1
+        assert live.execute("PRAGMA query_only").fetchone()[0] == 1
+        with pytest.raises(sqlite3.OperationalError):
+            sidecar.execute(
+                "UPDATE site_meta SET value='changed' WHERE key='last_refresh'"
+            )
+        with pytest.raises(sqlite3.OperationalError):
+            live.execute("UPDATE shareholder_holdings SET shares=0")
+        with pytest.raises(sqlite3.OperationalError):
+            live.execute(
+                "UPDATE sidecar_data.site_meta SET value='changed' "
+                "WHERE key='last_refresh'"
+            )
+    finally:
+        sidecar.close()
+        live.close()
+
+
+def test_independent_ownership_service_fails_closed_when_projection_is_not_ready(
+    ownership_http_client, ownership_api,
+):
+    client, _runtime = ownership_http_client
+    sidecar = ownership_api.sidecar()
+    try:
+        sidecar.execute("DELETE FROM site_meta WHERE key='last_refresh'")
+        sidecar.commit()
+    finally:
+        sidecar.close()
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["detail"]

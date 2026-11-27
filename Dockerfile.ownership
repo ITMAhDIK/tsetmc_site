@@ -1,0 +1,31 @@
+# Independent read-only Ownership API. The refresh worker remains Sidecar writer.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN groupadd --system --gid 10001 market \
+    && useradd --system --uid 10001 --gid market --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin ownership \
+    && mkdir -p /tmp/ownership
+
+COPY requirements-ownership.txt /app/requirements-ownership.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements-ownership.txt
+
+# The extracted domain code is wired through the compatibility composition root.
+COPY server.py sector_affinity.py /app/
+COPY site_api /app/site_api
+COPY ownership_service /app/ownership_service
+
+USER 10001:10001
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/readyz', timeout=4).read()"
+
+CMD ["uvicorn", "ownership_service.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

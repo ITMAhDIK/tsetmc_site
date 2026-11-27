@@ -196,3 +196,25 @@ Market Data image, deploy with existing market source/Sidecar mounts, verify
 `/readyz` and representative symbol/price parity, then allow Caddy to route
 the selected read paths. No live source database mutation or traffic cutover
 is performed by this code change.
+
+
+## Phase 4 — Ownership Service
+
+Implemented on `refactor/architecture-stabilization-phase0`:
+- Independent FastAPI Ownership process and non-root Docker image.
+- Preserved four read contracts for symbol shareholder snapshots, identity-resolved
+  ownership/change series, cross-company shareholder search and holder observation
+  history.
+- Reused the established Ownership domain logic and pipeline identity evidence;
+  no duplicate identity algorithm or dashboard response-contract rewrite.
+- Read-only source and Sidecar SQLite connections. Sidecar rows remain owned by
+  the refresh worker; the API mounts its directory only for SQLite WAL
+  coordination and uses `mode=ro` plus `query_only=ON`.
+- Readiness checks enforce the completed refresh, current Sidecar version,
+  ownership resolver schema and required source/projection tables.
+- Added Caddy routing, production Compose service, optional compatibility
+  dispatcher proxy and focused API/deployment/security tests.
+
+No production Sidecar rebuild, source-data change or traffic cutover was
+performed. An immutable image publish, representative parity check and
+operator-controlled rollout remain before production activation.

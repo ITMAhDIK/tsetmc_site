@@ -1,49 +1,73 @@
-# Phase 4 — Ownership Service extraction
+# Phase 4 — Ownership Service microservice
 
 Branch: `refactor/architecture-stabilization-phase0`
 
 ## Delivered
 
-Ownership read operations were moved into
-`site_api.ownership_service.OwnershipService`:
+The existing `site_api.ownership_service.OwnershipService` is now served by
+an independently deployable FastAPI application at
+`ownership_service.api:app`. The service exposes the existing read contracts:
 
-- Single-symbol shareholder snapshot and same-date identity resolution
-- Identity-resolved ownership percentage/share time series
-- Shareholder change events and their value fallback to the latest valid close
-- Cross-company shareholder search and person-level identity grouping
-- Per-shareholder observation history
+- `GET /api/v1/stocks/{symbol}/shareholders`
+- `GET /api/v1/stocks/{symbol}/ownership-series`
+- `GET /api/v1/shareholders/search`
+- `GET /api/v1/shareholders/observation-history`
+- `GET /healthz` and `GET /readyz`
 
-The date-row identity resolver is now a module-level function in the Ownership
-Service package. `SiteApi._resolve_date_rows` remains as a compatibility adapter
-for pre-existing internal callers and regression tests.
+Existing query parameters and response payloads are preserved, so the current
+dashboard does not need a simultaneous contract migration. Caddy can route
+these endpoints to the separate process; the legacy Market API handlers remain
+available for deployments that have not enabled the new routing.
 
-## Shared identity boundary
+## Domain behavior retained
 
-The batched majority-twin map remains in `SiteApi` because both the ownership
-search path and later portfolio operations use it. The Ownership Service receives
-it via dependency injection; it does not duplicate or reinterpret the identity
-proof rules.
+- Same-date ownership percentages use the number of issued shares on the
+  observation date. Missing denominators remain unavailable.
+- Identity grouping uses only the pipeline's verified/inferred source links and
+  the established provable-majority-twin rule. Names remain a consistency
+  check, not proof of identity.
+- Ambiguous and unresolved holders remain visible and are not silently merged.
+- Shareholder change events retain their current event classification and
+  latest-valid-close-on-or-before-date valuation behavior.
+- Cross-company search and observation history retain existing filtering,
+  sorting and pagination behavior.
 
-The service also receives its Sidecar/live connection factories, readiness
-check, symbol resolver, company-daily lookup, date converters and price helper
-through constructor injection. Source holdings are still read-only.
+No duplicate identity resolver or second calculation implementation was added.
 
-## Validation improvement found by integration tests
+## Storage and process isolation
 
-The cross-phase integration suite exposed that the arithmetic Jalali converter
-accepted out-of-range month/day values and rolled them into another month.
-`jalali_to_gregorian_date` now validates month lengths and Esfand against the
-existing 33-year leap rule before conversion. Tests cover invalid months, invalid
-day ranges, a non-leap Esfand 30 and a valid leap-year Esfand 30.
+The Ownership process opens both the TSETMC source SQLite database and the
+shared Sidecar using SQLite `mode=ro` and `PRAGMA query_only=ON`. It does not
+run the refresh worker, create schemas, update Sidecar rows or write to the
+collector database. The Sidecar directory is mounted with OS-level write
+permissions only for SQLite WAL lock/shared-memory coordination; the database
+connections themselves remain read-only. The refresh worker remains the sole
+writer of Sidecar projection rows.
 
-## Verification
+Readiness verifies the completed refresh marker, the current Sidecar layout,
+the ownership resolver schema and the tables required by Ownership queries.
+Incomplete or unavailable stores fail closed with HTTP 503. The service runs
+as UID/GID 10001 to match the shared Sidecar volume and has no Identity,
+Commerce, wallet or SaaS database connection.
 
-`tests/test_ownership_service.py` exercises the actual `SiteApi` composition
-root using disposable SQLite files. It covers shareholder snapshots, raw versus
-resolved totals, series percentages, event valuation, cross-company identity
-groups, observation history, readiness errors and versioned dispatcher routing.
-Existing representative-selection tests continue through the compatibility
-adapter.
+## Deployment and verification
 
-This is an internal modular-monolith service boundary, not an independently
-deployed network microservice.
+Added a dedicated non-root Docker image, dependency manifest, production
+Compose service, Caddy path routing, environment example and an optional
+legacy-dispatcher HTTP adapter. The four Ownership read paths route to
+`ownership-api:8000`; instrument metadata and daily prices stay on Market
+Data, and unrelated legacy routes stay on Market API.
+
+Tests cover the standalone HTTP contract, shareholder snapshot and event
+valuation parity, cross-company identity grouping, query parameter forwarding,
+Persian URL encoding, read-only source and Sidecar connections, readiness,
+fail-closed service outages, Caddy routing, Compose isolation and image user.
+The prior Ownership regression suite remains in the full project test suite.
+
+## Cutover status
+
+The service and production routing configuration are implemented. No
+production deployment, Sidecar rebuild, source-data change or live traffic
+cutover has been executed. Publish an immutable Ownership image, verify
+`/readyz` and representative response parity, then perform an
+operator-controlled rollout.

@@ -28,10 +28,14 @@ It shares the Market API's unprivileged file UID for WAL coordination, while
 the refresh worker remains the only process that writes projection rows.
 
 The Market Data API does not read shareholder identities, subscriptions,
-wallet balances, Identity records or Commerce tables. Ownership and Portfolio
-remain separate capabilities. Legacy stock-detail responses can continue to
-compose instrument metadata with Ownership read models through the compatibility
-API until those boundaries are extracted.
+wallet balances, Identity records or Commerce tables. The independent Ownership
+API owns the HTTP read contract for shareholder snapshots, identity-resolved
+ownership series, cross-company holder search and shareholder observation
+history. It reads the source holdings database and refresh-worker-built Sidecar
+projections through `mode=ro` / `query_only=ON`; the refresh worker remains the
+only Sidecar projection writer. The Sidecar directory is mounted with WAL
+coordination permissions only. Portfolio remains a separate capability, and
+legacy stock-detail composition stays on the compatibility Market API.
 
 ## Sidecar classification
 
@@ -74,7 +78,7 @@ These are written by site endpoints and are not derived from the TSETMC database
 | Capability | Target owner | Target persistence |
 |---|---|---|
 | Instrument reference data and daily prices | Market Data | Existing pipeline SQLite plus versioned, rebuildable Sidecar lookup; independent read-only API |
-| Holder observations and identity resolution | Ownership | Pipeline DB read-only + owned derived read model |
+| Holder observations and identity resolution | Ownership | Pipeline DB and refresh-worker-built Sidecar projections; independent read-only API process |
 | Portfolio reconstruction | Portfolio | Derived read model/cache; calculations from Ownership and Market contracts |
 | Screener and saved filters | Analytics | Stateless query engine; saved filters move to user-scoped SaaS persistence |
 | Watchlists | User Workspace / Account | User-scoped SaaS persistence |

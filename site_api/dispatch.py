@@ -10,6 +10,7 @@ import os
 
 from .errors import ApiError
 from .market_data_client import proxy_market_data_request
+from .ownership_client import proxy_ownership_request
 
 
 def _public_read_only() -> bool:
@@ -68,6 +69,25 @@ def dispatch_api(api, method, path, params, body):
     )
     if is_market_data_route:
         proxied = proxy_market_data_request(path, params)
+        if proxied is not None:
+            return proxied
+
+    is_ownership_route = (
+        method == "GET"
+        and (
+            rest in (
+                ["shareholders", "search"],
+                ["shareholders", "observation-history"],
+            )
+            or (
+                len(rest) == 3
+                and rest[0] == "stocks"
+                and rest[2] in {"shareholders", "ownership-series"}
+            )
+        )
+    )
+    if is_ownership_route:
+        proxied = proxy_ownership_request(path, params)
         if proxied is not None:
             return proxied
     if method == "GET" and rest == ["market", "overview"]:
