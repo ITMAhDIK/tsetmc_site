@@ -85,4 +85,15 @@ Phase 9A–D on feat/tloomberg-saas-production-readiness-phase9 now includes:
 - A bounded, read-only HTTPS staging probe for /health and /ready with public-DNS checks and explicit non-production operator approval.
 
 **Not production-complete.** PR #17 remains Draft and unmerged. Phases 1–8 remain separate unmerged Draft dependencies. Existing production DB baseline adoption, complete route-level RBAC/object-isolation matrix, official payment/SMS/bank sandbox tests, edge/IP/device/distributed rate limiting and WAF, independent penetration review, encrypted off-host backup retention/RPO/RTO and a real disaster-recovery drill, production monitoring/on-call and incident exercise, executed staging load/soak/failure tests, actual host/DNS/TLS deployment and rollback, and jurisdiction-specific legal/privacy review remain required before public production. No migration has been applied to a live/market DB; no production deployment or live-host load test was attempted.
-CRM is explicitly deferred.
+
+## Phase 10 — Internal CRM foundation (backend delivered; staff UI deferred)
+
+Implemented on the architecture stabilization branch:
+- Dedicated CRM schema on SaaS PostgreSQL, keyed only by stable `users.id`.
+- Customer directory/search, lifecycle stages, staff assignment, append-only interaction timeline and due-dated follow-up tasks.
+- Separate `crm.read` / `crm.manage` permissions granted to admin and superadmin only. CRM routes require session-bound TOTP MFA. CRM staff MFA enrollment does not grant access to the Superadmin console.
+- No raw phone/email replication, Market DB dependency, automated marketing, SMS/email campaigns or lead capture for non-registered prospects.
+- Audit records for CRM reads and writes, append-only interaction history, exact role-permission and customer-isolation integration tests.
+- Dedicated PostgreSQL tests and a cross-platform test that runs Market HTTP and CRM APIs side by side with independent databases.
+
+Deferred: staff CRM browser workspace, task reminders, outbound messaging/provider campaigns, marketing consent/preferences, prospect/lead capture, exports, advanced segmentation and workflow automation. Phase 9 production deployment, legal/privacy and security gates remain applicable.
