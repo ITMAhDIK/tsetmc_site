@@ -1,0 +1,111 @@
+name: Notification Service
+on:
+  push:
+    branches:
+      - refactor/architecture-stabilization-phase0
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "notification_service/**"
+      - "identity_service/api.py"
+      - "scripts/manage_notification_migrations.py"
+      - "Dockerfile.notification"
+      - "docker-compose.saas*.yml"
+      - "Caddyfile.saas"
+      - "tests/notification_service/**"
+jobs:
+  notification:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tloomberg_notifications_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tloomberg_notifications_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      NOTIFICATION_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_notifications_test
+      NOTIFICATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_notifications_test
+      NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime and test dependencies
+        run: python -m pip install -r requirements-saas.txt
+      - name: Apply and verify isolated Notification schema
+        run: |
+          python scripts/manage_notification_migrations.py --apply
+          python scripts/manage_notification_migrations.py --check
+      - name: Run Notification unit, API, and PostgreSQL integration tests
+        run: python -m pytest -q tests/notification_service
+      - name: Validate local and production Compose
+        env:
+          SAAS_API_IMAGE: tloomberg-saas-api:ci
+          SAAS_EDGE_IMAGE: tloomberg-saas-edge:ci
+          IDENTITY_API_IMAGE: tloomberg-identity:ci
+          COMMERCE_API_IMAGE: tloomberg-commerce:ci
+          ANALYTICS_API_IMAGE: tloomberg-analytics:ci
+          CRM_API_IMAGE: tloomberg-crm:ci
+          NOTIFICATION_API_IMAGE: tloomberg-notification:ci
+          SAAS_DOMAIN: saas.example.com
+          SAAS_TRUSTED_HOSTS: saas.example.com
+          SAAS_ALLOWED_ORIGINS: https://saas.example.com
+          SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas
+          IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
+          COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
+          ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics
+          CRM_EXPECTED_DATABASE_NAME: tloomberg_crm
+          NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
+          NOTIFICATION_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@notification-db.internal:5432/tloomberg_notifications?sslmode=verify-full
+          NOTIFICATION_DATABASE_URL: postgresql://runtime:placeholder@notification-db.internal:5432/tloomberg_notifications?sslmode=verify-full
+          NOTIFICATION_APP_DATABASE_ROLE: notification_runtime
+          NOTIFICATION_INGEST_TOKEN: ci-placeholder-notification-ingest-token-123456789
+          IDENTITY_SERVICE_TOKEN: ci-placeholder-identity-service-token-123456789
+          IDENTITY_SERVICE_URL: http://identity-api:8000
+          NOTIFICATION_DB_POOL_MIN: "1"
+          NOTIFICATION_DB_POOL_MAX: "8"
+          CRM_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@crm-db.internal:5432/tloomberg_crm?sslmode=verify-full
+          CRM_DATABASE_URL: postgresql://runtime:placeholder@crm-db.internal:5432/tloomberg_crm?sslmode=verify-full
+          CRM_APP_DATABASE_ROLE: crm_runtime
+          CRM_PROJECTION_TOKEN: ci-placeholder-crm-projection-token-123456789
+          ANALYTICS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
+          ANALYTICS_DATABASE_URL: postgresql://runtime:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
+          ANALYTICS_APP_DATABASE_ROLE: analytics_runtime
+          COMMERCE_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
+          COMMERCE_DATABASE_URL: postgresql://runtime:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
+          COMMERCE_APP_DATABASE_ROLE: commerce_runtime
+          COMMERCE_SERVICE_TOKEN: ci-placeholder-commerce-service-token-123456789
+          IDENTITY_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@identity-db.internal:5432/tloomberg_identity?sslmode=verify-full
+          IDENTITY_DATABASE_URL: postgresql://runtime:placeholder@identity-db.internal:5432/tloomberg_identity?sslmode=verify-full
+          IDENTITY_APP_DATABASE_ROLE: identity_runtime
+          IDENTITY_OTP_HMAC_SECRET: ci-placeholder-identity-otp-hmac-secret-123456789
+          IDENTITY_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          IDENTITY_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+          SAAS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_DATABASE_URL: postgresql://runtime:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_APP_DATABASE_ROLE: saas_runtime
+          SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
+          SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          SAAS_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+          SAAS_METRICS_TOKEN: ci-placeholder-metrics-token-with-more-than-32-chars
+          SAAS_METRICS_TOKEN_FILE: /tmp/saas_metrics_token
+          PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+          MARKET_API_IMAGE: tloomberg-market-api:ci
+          MARKET_DATA_API_IMAGE: tloomberg-market-data:ci
+          OWNERSHIP_API_IMAGE: tloomberg-ownership:ci
+          PORTFOLIO_API_IMAGE: tloomberg-portfolio:ci
+          SCREENER_API_IMAGE: tloomberg-screener:ci
+        run: |
+          cp .env.saas.example .env.saas
+          docker compose --env-file .env.saas -f docker-compose.saas.yml config --quiet
+          docker compose -f docker-compose.saas.production.yml config --quiet
