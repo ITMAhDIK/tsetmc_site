@@ -12,6 +12,7 @@ def main():
  signal.signal(signal.SIGTERM,_stop); signal.signal(signal.SIGINT,_stop)
  dsn=os.getenv("NOTIFICATION_DATABASE_URL","").strip()
  if not dsn: raise RuntimeError("NOTIFICATION_DATABASE_URL required")
+ if len(os.getenv("NOTIFICATION_IDENTITY_SERVICE_TOKEN","").strip())<32: raise RuntimeError("NOTIFICATION_IDENTITY_SERVICE_TOKEN required")
  p=conninfo_to_dict(dsn)
  if os.getenv("APP_ENV","development").lower() in {"prod","production"} and p.get("sslmode","prefer").lower()!="verify-full": raise RuntimeError("Notification worker requires verified TLS")
  with psycopg.connect(dsn,connect_timeout=5,autocommit=True) as conn:
