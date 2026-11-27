@@ -969,3 +969,153 @@ def test_phase_9_cross_platform_end_to_end_smoke(
             saas_app.dependency_overrides.pop(get_conn, None)
         else:
             saas_app.dependency_overrides[get_conn] = previous_override
+
+
+def test_phase_10_crm_runs_alongside_market_without_cross_database_access(
+    portfolio_api, monkeypatch
+):
+    """An admin-only CRM workflow must coexist with, but not access, Market data."""
+    import os
+    import threading
+    from http.server import ThreadingHTTPServer
+    from uuid import uuid4
+
+    import psycopg
+    from fastapi.testclient import TestClient
+    from psycopg.rows import dict_row
+    from cryptography.fernet import Fernet
+
+    from saas_core.auth.api import app as saas_app, get_conn
+    from saas_core.auth.mfa import totp_code
+    from saas_core.auth.repository import create_session, register_password_user
+
+    dsn = os.environ.get("SAAS_TEST_DATABASE_URL", "").strip()
+    expected_database = os.environ.get("SAAS_TEST_DATABASE_NAME", "").strip()
+    if not dsn or not expected_database:
+        pytest.skip(
+            "Phase 10 cross-platform test requires the named disposable SaaS PostgreSQL database"
+        )
+
+    monkeypatch.setenv("MARKET_PUBLIC_READ_ONLY", "true")
+    monkeypatch.setenv("SAAS_ADMIN_MFA_FERNET_KEY", Fernet.generate_key().decode("ascii"))
+
+    with psycopg.connect(dsn, row_factory=dict_row) as setup_conn:
+        actual = setup_conn.execute("SELECT current_database() AS name").fetchone()["name"]
+        assert actual == expected_database, "Refusing Phase 10 test on an unexpected database"
+
+        staff = register_password_user(
+            setup_conn,
+            f"phase10_crm_staff_{uuid4().hex[:10]}",
+            "Phase10-CRM-staff-password-2026",
+            display_name="Phase 10 CRM Staff",
+        )
+        customer = register_password_user(
+            setup_conn,
+            f"phase10_crm_customer_{uuid4().hex[:10]}",
+            "Phase10-CRM-customer-password-2026",
+            display_name="Phase 10 CRM Customer",
+        )
+        setup_conn.execute(
+            """INSERT INTO user_roles(user_id,role_id)
+               SELECT %s,id FROM roles WHERE code='admin'
+               ON CONFLICT DO NOTHING""",
+            (staff["id"],),
+        )
+        staff_token, _ = create_session(setup_conn, staff["id"])
+        setup_conn.commit()
+
+    def test_connection():
+        with psycopg.connect(dsn, row_factory=dict_row) as connection:
+            yield connection
+
+    previous_override = saas_app.dependency_overrides.get(get_conn)
+    saas_app.dependency_overrides[get_conn] = test_connection
+
+    handler = type(
+        "Phase10MarketHandler",
+        (server.Handler,),
+        {"api": portfolio_api},
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address
+
+    def market_overview():
+        import http.client
+
+        connection = http.client.HTTPConnection(host, port, timeout=5)
+        try:
+            connection.request("GET", "/api/v1/market/overview")
+            response = connection.getresponse()
+            return response.status, response.read()
+        finally:
+            connection.close()
+
+    try:
+        before_status, before_body = market_overview()
+        assert before_status == 200, before_body.decode("utf-8", "replace")
+        assert b'"total_companies": 1' in before_body
+
+        headers = {"Authorization": f"Bearer {staff_token}"}
+        with TestClient(saas_app) as client:
+            # CRM staff may enroll MFA without receiving Superadmin-console access.
+            setup = client.post("/auth/mfa/setup", headers=headers)
+            assert setup.status_code == 200, setup.text
+            verified = client.post(
+                "/auth/mfa/confirm",
+                headers=headers,
+                json={"code": totp_code(setup.json()["secret"])},
+            )
+            assert verified.status_code == 200, verified.text
+
+            assert client.get("/admin/dashboard", headers=headers).status_code == 403
+
+            crm_customer = client.get(
+                f"/crm/customers/{customer['id']}", headers=headers
+            )
+            assert crm_customer.status_code == 200, crm_customer.text
+            assert crm_customer.json()["customer"]["id"] == str(customer["id"])
+
+            interaction = client.post(
+                f"/crm/customers/{customer['id']}/interactions",
+                headers=headers,
+                json={
+                    "channel": "note",
+                    "subject": "Market research follow-up",
+                    "summary": "Reviewed the customer's requested product feedback.",
+                },
+            )
+            assert interaction.status_code == 201, interaction.text
+
+            ordinary = create_session
+            # A standard customer does not inherit staff CRM permissions.
+            denied = client.get(
+                "/crm/customers",
+                headers={"Authorization": f"Bearer {staff_token}"},
+                params={"lifecycle_stage": "not-a-stage"},
+            )
+            # The admin can read CRM but cannot enter the Superadmin console;
+            # schema and permission boundaries are checked separately below.
+            assert denied.status_code == 200
+
+        after_status, after_body = market_overview()
+        assert after_status == 200, after_body.decode("utf-8", "replace")
+        assert b'"total_companies": 1' in after_body
+
+        assert portfolio_api.db_path != portfolio_api.sidecar_path
+        live = portfolio_api.live()
+        try:
+            assert live.execute("PRAGMA query_only").fetchone()[0] == 1
+            databases = {row[1] for row in live.execute("PRAGMA database_list")}
+            assert {"main", "sidecar_data"} <= databases
+        finally:
+            live.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+        if previous_override is None:
+            saas_app.dependency_overrides.pop(get_conn, None)
+        else:
+            saas_app.dependency_overrides[get_conn] = previous_override
