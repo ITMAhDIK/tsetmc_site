@@ -48,5 +48,11 @@ jobs:
         run: python scripts/manage_saas_migrations.py --apply
       - name: Verify migration history is current
         run: python scripts/manage_saas_migrations.py --check
+      - name: Run focused Phase 9 readiness and cross-platform integration tests
+        run: |
+          python -m pytest -q \
+            tests/saas/test_phase9_load_probe.py \
+            tests/saas/test_phase9_security_baseline.py \
+            tests/test_portfolio_service.py::test_phase_9_cross_platform_end_to_end_smoke
       - name: Run complete test suite (including PostgreSQL integration tests)
         run: python -m pytest -q
