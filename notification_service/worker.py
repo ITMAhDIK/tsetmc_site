@@ -22,6 +22,9 @@ def main():
  while not STOP:
   try:
    with psycopg.connect(dsn,connect_timeout=5,autocommit=True) as conn:
+    expected=os.getenv("NOTIFICATION_EXPECTED_DATABASE_NAME","").strip()
+    actual=conn.execute("SELECT current_database()").fetchone()[0]
+    if expected and actual!=expected: raise RuntimeError("Unexpected Notification worker database")
     while not STOP:
      count=run_worker_once(conn,batch)
      if not count: time.sleep(idle)
