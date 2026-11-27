@@ -5,7 +5,9 @@
 The existing market-data database and the SaaS account database remain independent.
 
 - **Market database:** instruments, prices, shareholders, ownership snapshots and TSETMC-derived information.
-- **SaaS PostgreSQL database:** users, identities, preferences, roles, subscriptions, payment orders, wallet ledger, referrals, support tickets, consent and product analytics.
+- **Identity PostgreSQL database:** accounts, credentials, sessions, role and permission facts, MFA and legal acceptance.
+- **Commerce PostgreSQL database:** plans, subscription orders and entitlements, payment attempts/events/refunds, wallet ledger, bank-account verification state, withdrawals and referral rewards.
+- **SaaS PostgreSQL database:** non-secret user projections, preferences, support tickets, CRM, consent, product analytics and staff audit data.
 
 There are no cross-database foreign keys or shared tables. The browser receives neither database credential. The SaaS API authenticates visitors, checks customer entitlements and may call market-data services for authorized responses.
 
@@ -20,7 +22,7 @@ Each account has an internal UUID primary key, a public random ID and an optiona
 
 Linking a new identity requires re-authentication of that identity. Purchasing a subscription always requires a verified phone number, including users who originally signed in through Google. A phone typed into checkout is not verified until an OTP challenge completes.
 
-The browser receives only an opaque HttpOnly, Secure, SameSite session cookie. Session tokens are hashed at rest. Roles and entitlements are read from the SaaS server, never from a browser cookie or user-supplied field.
+The browser receives only an opaque HttpOnly, Secure, SameSite session cookie. Identity hashes session tokens at rest and is the source of truth for roles/permissions. SaaS and Commerce independently validate the opaque session through Identity's private introspection endpoint; commercial entitlements are read from Commerce. No role, payment state or entitlement is accepted from a browser cookie or user-supplied field.
 
 ## 3. Roles and customer plans are separate concepts
 
@@ -73,7 +75,7 @@ After qualification, create exactly one 100,000 Toman gift ledger credit, one re
 
 ## 8. Support
 
-All signed-in customers can create tickets, view their own ticket history and reply. Support staff can access tickets within their permissions. Internal notes are staff-only. FAQ articles are stored and published independently. Private ticket bodies are never copied into product analytics.
+All signed-in customers can create tickets, view their own ticket history and reply. Support staff can access tickets within their permissions. Internal notes are staff-only. FAQ articles are stored and published independently. Private ticket bodies are never copied into product analytics. Payment, subscription, wallet and referral persistence is owned by the separate Commerce service.
 
 ## 9. Product analytics: eligible clicks, scroll and dwell intervals
 
@@ -150,3 +152,10 @@ retain local payment, wallet, subscription, support and CRM foreign keys.
 SaaS remains the owner of product plans, subscriptions and commercial
 entitlements. See `docs/identity/PHASE_1_IDENTITY_SERVICE.md` for deployment,
 data migration, internal HTTP contracts and the production cutover sequence.
+
+
+## Microservices extraction — Subscription & Payment Service, Phase 2
+
+Commerce is independently deployed with its own PostgreSQL database. It owns plans, orders, payment attempts/events, subscription activation, refund request records, wallet ledger, withdrawal reservations, bank-account verification state and referrals/rewards. Commerce authenticates each browser session through Identity's private introspection API; it does not read Identity tables. The SaaS API no longer mounts payment or wallet routers and obtains subscription history/paid entitlements through the private Commerce API. The Edge routes public plans, subscription, payment and wallet paths to Commerce, while private internal endpoints remain inaccessible from Caddy.
+
+The current SnapPay/DigiPay adapters intentionally return `PaymentNotConfigured`; no official merchant integration pack or sandbox evidence was available. Bank verification, payout execution, live top-ups and refund execution also remain disabled. Migration of existing SaaS commercial rows is a separate dry-run-first script and has not been run against production. See `docs/commerce/PHASE_2_COMMERCE_SERVICE.md` for service contracts, migration/cutover and production gates.

@@ -43,7 +43,7 @@ jobs:
       - name: Scan SaaS backend
         run: bandit --recursive saas_core identity_service scripts --severity-level high --confidence-level high
       - name: Validate operational shell scripts
-        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh
+        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh scripts/commerce_db_backup.sh scripts/commerce_db_restore_verify.sh scripts/commerce_offsite_backup.sh
       - name: Compile Python service and operations tools
         run: python -m compileall -q server.py site_api saas_core identity_service scripts
       - name: Build the non-root SaaS API image
@@ -140,6 +140,10 @@ jobs:
       SAAS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_saas_backup_test
       SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas_backup_test
       SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
+      COMMERCE_BACKUP_DATABASE_URL: postgresql://commerce_backup@127.0.0.1:5432/tloomberg_commerce_backup_test
+      COMMERCE_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_commerce_backup_test
+      COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce_backup_test
+      COMMERCE_EXPECTED_DB_NAME: tloomberg_commerce_backup_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Set up Python for the migration runner
@@ -152,11 +156,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes age
-      - name: Generate ephemeral age identity for the backup drill
+      - name: Generate independent ephemeral SaaS and Commerce age identities
         run: |
           age-keygen -o "$RUNNER_TEMP/saas-backup-age-identity.txt"
           echo "SAAS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/saas-backup-age-identity.txt")" >> "$GITHUB_ENV"
           echo "SAAS_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/saas-backup-age-identity.txt" >> "$GITHUB_ENV"
+          age-keygen -o "$RUNNER_TEMP/commerce-backup-age-identity.txt"
+          echo "COMMERCE_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/commerce-backup-age-identity.txt")" >> "$GITHUB_ENV"
+          echo "COMMERCE_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/commerce-backup-age-identity.txt" >> "$GITHUB_ENV"
       - name: Install PostgreSQL 16 client wrappers matching the server
         run: |
           mkdir -p "$RUNNER_TEMP/postgres16-bin"
@@ -177,6 +184,15 @@ jobs:
         run: |
           python scripts/manage_saas_migrations.py --apply
           python scripts/manage_saas_migrations.py --check
+      - name: Create disposable Commerce backup database and migrate it
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres", autocommit=True) as conn:
+              conn.execute("CREATE DATABASE tloomberg_commerce_backup_test")
+          PY
+          python scripts/manage_commerce_migrations.py --apply
+          python scripts/manage_commerce_migrations.py --check
       - name: Create dedicated read-only backup role
         run: |
           psql "$SAAS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE saas_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_saas_backup_test TO saas_backup; GRANT USAGE ON SCHEMA public TO saas_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO saas_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO saas_backup;"
@@ -198,6 +214,56 @@ jobs:
         run: |
           export SAAS_BACKUP_DIR="$RUNNER_TEMP/saas-backups"
           bash scripts/saas_db_backup.sh
+      - name: Create dedicated read-only Commerce backup role
+        run: |
+          psql "$COMMERCE_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE commerce_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_commerce_backup_test TO commerce_backup; GRANT USAGE ON SCHEMA public TO commerce_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO commerce_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO commerce_backup;"
+          grants="$(psql "$COMMERCE_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1             -c "SELECT has_table_privilege('commerce_backup','public.users','SELECT') AND NOT has_table_privilege('commerce_backup','public.users','INSERT') AND NOT has_table_privilege('commerce_backup','public.users','UPDATE') AND NOT has_table_privilege('commerce_backup','public.users','DELETE') AND NOT has_schema_privilege('commerce_backup','public','CREATE')")"
+          test "$grants" = "t"
+      - name: Reject unverified TLS for remote Commerce backup connections
+        env:
+          COMMERCE_BACKUP_DATABASE_URL: postgresql://commerce_backup@db.example.invalid:5432/tloomberg_commerce_backup_test
+          COMMERCE_EXPECTED_DB_NAME: tloomberg_commerce_backup_test
+          COMMERCE_BACKUP_DIR: ${{ runner.temp }}/commerce-backup-tls-negative
+        run: |
+          if bash scripts/commerce_db_backup.sh >"$RUNNER_TEMP/commerce-backup-tls-negative.log" 2>&1; then
+            echo "Commerce backup script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/commerce-backup-tls-negative.log"
+      - name: Create independent encrypted Commerce backup
+        run: |
+          export COMMERCE_BACKUP_DIR="$RUNNER_TEMP/commerce-backups"
+          bash scripts/commerce_db_backup.sh
+      - name: Reject unverified TLS for Commerce restore targets
+        env:
+          COMMERCE_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_commerce_restore_verify
+          COMMERCE_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_commerce_restore_verify
+          COMMERCE_PRODUCTION_DB_NAME: tloomberg_commerce_backup_test
+          COMMERCE_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/commerce-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/commerce-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          if COMMERCE_BACKUP_FILE="$dump_file" bash scripts/commerce_db_restore_verify.sh >"$RUNNER_TEMP/commerce-restore-tls-negative.log" 2>&1; then
+            echo "Commerce restore script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/commerce-restore-tls-negative.log"
+      - name: Restore Commerce backup into an isolated database
+        run: |
+          createdb --host=127.0.0.1 --username=postgres tloomberg_commerce_restore_verify
+          dump_file="$(find "$RUNNER_TEMP/commerce-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          COMMERCE_BACKUP_FILE="$dump_file" \
+          COMMERCE_RESTORE_VERIFY_DATABASE_URL="postgresql://postgres@127.0.0.1:5432/tloomberg_commerce_restore_verify" \
+          COMMERCE_RESTORE_VERIFY_EXPECTED_DB_NAME="tloomberg_commerce_restore_verify" \
+          COMMERCE_PRODUCTION_DB_NAME="tloomberg_commerce_backup_test" \
+          COMMERCE_BACKUP_AGE_IDENTITY="$RUNNER_TEMP/commerce-backup-age-identity.txt" \
+          bash scripts/commerce_db_restore_verify.sh
+      - name: Verify restored Commerce schema boundary
+        run: |
+          psql "postgresql://postgres@127.0.0.1:5432/tloomberg_commerce_restore_verify" \
+            -X -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.users'), to_regclass('public.payment_orders'), to_regclass('public.wallet_ledger_entries'), to_regclass('public.commerce_schema_migrations')"
       - name: Verify remote restore targets reject unverified TLS
         env:
           SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_saas_restore_verify

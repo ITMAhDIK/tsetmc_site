@@ -32,3 +32,12 @@
 
 ## Validation status
 Pure wallet-policy tests are included. PostgreSQL integration, concurrency, bank verification, top-up sandbox and abuse-control tests have not been run. Keep this API private and this PR Draft.
+
+
+## Microservices extraction status — Phase 2
+
+Wallet, withdrawal and referral persistence/policies now belong to the independent
+Commerce service and its own PostgreSQL database. The descriptions above are the
+original SaaS foundation; see `docs/commerce/PHASE_2_COMMERCE_SERVICE.md` for the
+current service boundary and migration requirements. Bank verification, payout
+execution and live wallet top-ups remain deliberately unavailable.

@@ -43,3 +43,13 @@ Focused unit tests cover amount validation, verified-amount matching, failed
 verification rejection, and the fail-closed gateway behavior. PostgreSQL
 integration tests, concurrent idempotency tests, provider sandbox tests and
 end-to-end callback tests have not been run.
+
+
+## Microservices extraction status — Phase 2
+
+The payment domain and its API/repository have been moved to the independently deployable
+`commerce_service` and the Commerce PostgreSQL schema. This file records the original
+SaaS implementation slice; new service ownership, deployment and data-migration rules
+are documented in `docs/commerce/PHASE_2_COMMERCE_SERVICE.md`. No live gateway adapter
+is enabled: both named providers still fail closed pending official merchant contracts
+and sandbox verification.

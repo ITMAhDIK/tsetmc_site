@@ -71,6 +71,67 @@ services:
       timeout: 4s
       retries: 3
 
+  commerce-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-commerce-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_commerce
+      POSTGRES_USER: tloomberg_commerce
+      POSTGRES_PASSWORD: ${COMMERCE_POSTGRES_PASSWORD:?Set COMMERCE_POSTGRES_PASSWORD separately from SaaS and Identity passwords}
+    ports:
+      - "127.0.0.1:55434:5432"
+    volumes:
+      - tloomberg_commerce_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_commerce -d tloomberg_commerce"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  commerce-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.commerce
+    env_file: .env.saas
+    command: ["python","scripts/manage_commerce_migrations.py","--apply"]
+    environment:
+      COMMERCE_MIGRATION_DATABASE_URL: postgresql://tloomberg_commerce:${COMMERCE_POSTGRES_PASSWORD:?Set COMMERCE_POSTGRES_PASSWORD}@commerce-postgres:5432/tloomberg_commerce
+      COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
+    depends_on:
+      commerce-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  commerce-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.commerce
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      COMMERCE_DATABASE_URL: postgresql://tloomberg_commerce:${COMMERCE_POSTGRES_PASSWORD:?Set COMMERCE_POSTGRES_PASSWORD}@commerce-postgres:5432/tloomberg_commerce
+      COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
+      COMMERCE_SERVICE_TOKEN: ${COMMERCE_SERVICE_TOKEN:?Set a distinct Commerce private service token}
+      COMMERCE_TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      COMMERCE_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:5500
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set the Identity private service token}
+    depends_on:
+      commerce-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:58002:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+
 volumes:
   tloomberg_saas_pgdata:
   tloomberg_identity_pgdata:
+  tloomberg_commerce_pgdata:

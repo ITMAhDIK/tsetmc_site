@@ -31,7 +31,14 @@
         reverse_proxy identity-api:8000
     }
 
-    # All other APIs remain in the SaaS application.
+    # Commercial APIs are served by the independent Subscription & Payment service.
+    @commerce path /api/v1/payments /api/v1/payments/* /api/v1/wallet /api/v1/wallet/* /api/v1/plans /api/v1/subscriptions
+    handle @commerce {
+        uri strip_prefix /api/v1
+        reverse_proxy commerce-api:8000
+    }
+
+    # Remaining account, support, analytics, admin and CRM APIs stay in SaaS.
     handle_path /api/v1/* {
         reverse_proxy saas-api:8000
     }

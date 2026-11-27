@@ -121,6 +121,18 @@ def validate_production_configuration() -> None:
             or identity_origin.username or identity_origin.password
             or identity_origin.query or identity_origin.fragment):
         raise ConfigurationError("IDENTITY_SERVICE_URL must be a valid private HTTP(S) service origin")
+    commerce_url = os.getenv("COMMERCE_SERVICE_URL", "").strip()
+    commerce_token = os.getenv("COMMERCE_SERVICE_TOKEN", "").strip()
+    if not commerce_url or len(commerce_token) < 32:
+        raise ConfigurationError("COMMERCE_SERVICE_URL and a distinct COMMERCE_SERVICE_TOKEN are required in production")
+    commerce_origin = urlsplit(commerce_url)
+    if (commerce_origin.scheme not in {"http", "https"} or not commerce_origin.netloc
+            or commerce_origin.path not in {"", "/"}
+            or commerce_origin.username or commerce_origin.password
+            or commerce_origin.query or commerce_origin.fragment):
+        raise ConfigurationError("COMMERCE_SERVICE_URL must be a valid private HTTP(S) service origin")
+    if hmac.compare_digest(commerce_token, identity_token):
+        raise ConfigurationError("Identity and Commerce service tokens must be different")
     metrics_token = os.getenv("SAAS_METRICS_TOKEN", "").strip()
     if len(metrics_token) < 32:
         raise ConfigurationError("SAAS_METRICS_TOKEN must contain at least 32 characters")
@@ -776,16 +788,14 @@ def logout(
 
 
 from saas_core.account.api import router as account_router
-from saas_core.payments.api import router as payments_router
-from saas_core.wallet.api import router as wallet_router
 from saas_core.support.api import router as support_router
 from saas_core.analytics.api import router as analytics_router
 from saas_core.admin.api import router as admin_router
 from saas_core.crm.api import router as crm_router
 
+# Payment and Wallet APIs are now served by the independent Commerce service.
+# The SaaS app keeps account, support, analytics, admin and CRM only.
 app.include_router(account_router)
-app.include_router(payments_router)
-app.include_router(wallet_router)
 app.include_router(support_router)
 app.include_router(analytics_router)
 app.include_router(admin_router)

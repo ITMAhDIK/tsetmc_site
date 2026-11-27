@@ -36,6 +36,10 @@ jobs:
       IDENTITY_TEST_DATABASE_NAME: tloomberg_identity_test
       IDENTITY_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_identity_test
       IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity_test
+      COMMERCE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_commerce_test
+      COMMERCE_TEST_DATABASE_NAME: tloomberg_commerce_test
+      COMMERCE_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_commerce_test
+      COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -63,6 +67,19 @@ jobs:
         run: |
           python scripts/manage_identity_migrations.py --apply
           python scripts/manage_identity_migrations.py --check
+      - name: Create separate disposable Commerce database
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres", autocommit=True) as conn:
+              conn.execute("CREATE DATABASE tloomberg_commerce_test")
+          PY
+      - name: Apply and verify independent Commerce migrations
+        run: |
+          python scripts/manage_commerce_migrations.py --apply
+          python scripts/manage_commerce_migrations.py --check
+      - name: Run Commerce service PostgreSQL/API tests
+        run: python -m pytest -q tests/commerce
       - name: Run Identity service PostgreSQL/API tests
         run: python -m pytest -q tests/identity/test_identity_service.py
       - name: Run focused Phase 9 readiness and cross-platform integration tests

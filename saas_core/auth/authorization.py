@@ -1,4 +1,4 @@
-"""Authorization adapter: Identity owns permission facts; SaaS owns subscriptions."""
+"""Authorization adapter: Identity owns permissions; Commerce owns subscriptions."""
 from __future__ import annotations
 from uuid import UUID
 
@@ -38,6 +38,11 @@ def has_entitlement(conn, user_id: UUID, entitlement: str, principal: dict | Non
             is_superadmin = bool(cur.fetchone()["allowed"])
     if is_superadmin:
         return True
+    # Once configured, Commerce is the only entitlement source of truth.
+    # Network failures propagate so API handlers can return 503 (fail closed).
+    from .commerce_client import commerce_enabled, get_entitlements
+    if commerce_enabled():
+        return bool(get_entitlements(user_id).get(entitlement, False))
     with conn.cursor() as cur:
         cur.execute("""SELECT EXISTS(
             SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id

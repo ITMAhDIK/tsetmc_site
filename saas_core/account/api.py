@@ -112,8 +112,24 @@ def delete_other_sessions(user=Depends(current_user), conn=Depends(get_conn)):
 
 @router.get("/subscriptions")
 def subscriptions(user=Depends(current_user), conn=Depends(get_conn)):
+    from ..auth.commerce_client import commerce_enabled, subscription_history as commerce_subscriptions, CommerceUnavailable
+    if commerce_enabled():
+        try:
+            return {"subscriptions": commerce_subscriptions(user["id"])}
+        except CommerceUnavailable:
+            raise HTTPException(status_code=503, detail="Subscription service is temporarily unavailable") from None
     return {"subscriptions": subscription_history(conn, user["id"])}
 
 @router.get("/features")
 def features(user=Depends(current_user), conn=Depends(get_conn)):
+    from ..auth.commerce_client import commerce_enabled, get_entitlements, CommerceUnavailable
+    if commerce_enabled():
+        if "superadmin" in user.get("roles", []):
+            return {"features": {
+                "premium_analytics": True, "ownership_graphs": True, "investor_history": True
+            }}
+        try:
+            return {"features": get_entitlements(user["id"])}
+        except CommerceUnavailable:
+            raise HTTPException(status_code=503, detail="Subscription service is temporarily unavailable") from None
     return {"features": feature_access(conn, user["id"], principal=user)}
