@@ -173,6 +173,7 @@ jobs:
           IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
           IDENTITY_APP_DATABASE_ROLE: identity_runtime
           IDENTITY_SERVICE_TOKEN: ci-placeholder-identity-service-token-123456789
+          NOTIFICATION_IDENTITY_SERVICE_TOKEN: ci-placeholder-notification-identity-contact-token-123456789
           IDENTITY_OTP_HMAC_SECRET: ci-placeholder-identity-otp-hmac-secret-123456789
           IDENTITY_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           IDENTITY_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
