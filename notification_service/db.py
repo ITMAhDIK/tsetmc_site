@@ -21,7 +21,7 @@ def validate_production_configuration():
  if params.get("sslmode","prefer").lower()!="verify-full": raise RuntimeError("Notification database requires sslmode=verify-full")
  names=[os.getenv(x,"").strip() for x in ("SAAS_EXPECTED_DATABASE_NAME","IDENTITY_EXPECTED_DATABASE_NAME","COMMERCE_EXPECTED_DATABASE_NAME","ANALYTICS_EXPECTED_DATABASE_NAME","CRM_EXPECTED_DATABASE_NAME")]
  if expected in names: raise RuntimeError("Notification must use its own dedicated database")
- for env in ("NOTIFICATION_INGEST_TOKEN","NOTIFICATION_IDENTITY_SERVICE_TOKEN"):
+ for env in ("NOTIFICATION_INGEST_TOKEN","IDENTITY_SERVICE_TOKEN"):
   if len(os.getenv(env,"").strip())<32: raise RuntimeError(f"{env} must contain at least 32 characters")
  if not os.getenv("IDENTITY_SERVICE_URL","").strip(): raise RuntimeError("Identity service URL is required")
  hosts=[x.strip() for x in os.getenv("NOTIFICATION_TRUSTED_HOSTS","").split(",") if x.strip()]
