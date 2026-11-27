@@ -273,6 +273,7 @@ jobs:
           COMMERCE_RESTORE_VERIFY_EXPECTED_DB_NAME="tloomberg_commerce_restore_verify" \
           COMMERCE_PRODUCTION_DB_NAME="tloomberg_commerce_backup_test" \
           COMMERCE_BACKUP_AGE_IDENTITY="$RUNNER_TEMP/commerce-backup-age-identity.txt" \
+          TMPDIR="$RUNNER_TEMP" \
           bash scripts/commerce_db_restore_verify.sh
       - name: Verify restored Commerce schema boundary
         run: |
