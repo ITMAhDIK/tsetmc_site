@@ -177,6 +177,7 @@ services:
       CRM_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:5500
       IDENTITY_SERVICE_URL: http://identity-api:8000
       IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set Identity private service token}
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
     depends_on:
       crm-migrate:
         condition: service_completed_successfully
@@ -343,7 +344,7 @@ services:
       NOTIFICATION_DATABASE_URL: postgresql://tloomberg_notifications:${NOTIFICATION_POSTGRES_PASSWORD:?Set Notification password}@notification-postgres:5432/tloomberg_notifications
       NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
       IDENTITY_SERVICE_URL: http://identity-api:8000
-      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set Identity private service token}
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
       NOTIFICATION_SMTP_HOST: ${NOTIFICATION_SMTP_HOST:-}
       NOTIFICATION_SMTP_PORT: ${NOTIFICATION_SMTP_PORT:-587}
       NOTIFICATION_SMTP_USER: ${NOTIFICATION_SMTP_USER:-}
