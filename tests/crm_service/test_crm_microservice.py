@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[2]
 def test_crm_is_an_independent_fastapi_service():
     from crm_service.api import app
     paths=set(app.openapi()["paths"])
-    assert {"/health","/ready","/customers","/customers/{customer_id}","/customers/{customer_id}/interactions","/followups"} <= paths
+    assert {"/health","/ready","/crm/customers","/crm/customers/{customer_id}","/crm/customers/{customer_id}/interactions","/crm/followups"} <= paths
 
 def test_crm_schema_is_independent_and_interactions_are_immutable():
     sql=(ROOT/"crm_service/schema/001_crm_core.sql").read_text()
@@ -48,4 +48,18 @@ def test_migration_import_is_dry_run_first_and_source_read_only():
     source=(ROOT/"scripts/migrate_legacy_crm.py").read_text()
     assert "required=True" in source
     assert "SET TRANSACTION READ ONLY" in source
+    assert "ON CONFLICT(id) DO NOTHING" in source
+
+def test_caddy_and_compose_route_crm_to_its_own_service():
+    caddy=(ROOT/"Caddyfile.saas").read_text()
+    compose=(ROOT/"docker-compose.saas.production.yml").read_text()
+    assert "@crm path /api/v1/crm /api/v1/crm/*" in caddy
+    assert "reverse_proxy crm-api:8000" in caddy
+    assert "  crm-api:" in compose and "CRM_DATABASE_URL:" in compose
+    assert "CRM_EXPECTED_DATABASE_NAME:" in compose
+
+def test_crm_migration_preserves_customer_uuid_and_uses_read_only_source():
+    source=(ROOT/"scripts/migrate_legacy_crm.py").read_text()
+    assert "SET TRANSACTION READ ONLY" in source
+    assert "user_id" in source and "customer_id" in source
     assert "ON CONFLICT(id) DO NOTHING" in source
