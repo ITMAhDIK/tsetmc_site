@@ -2614,6 +2614,8 @@
 
       const [rendered, setRendered] = useState(open);
       const [closing, setClosing] = useState(false);
+      const drawerRef = useRef(null);
+      const openerRef = useRef(null);
       useEffect(() => {
         if (open) {
           setRendered(true); setClosing(false); setView('home');
@@ -2627,9 +2629,42 @@
       useEffect(() => {
         if (!rendered) return;
         const previousOverflow = document.body.style.overflow;
+        const previousActive = document.activeElement;
+        openerRef.current = previousActive instanceof HTMLElement ? previousActive : null;
         document.body.style.overflow = 'hidden';
-        return () => { document.body.style.overflow = previousOverflow; };
-      }, [rendered]);
+        const focusFirst = () => {
+          const target = drawerRef.current?.querySelector(
+            'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          );
+          target?.focus();
+        };
+        const frame = window.requestAnimationFrame(focusFirst);
+        const onKeyDown = event => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            onClose();
+            return;
+          }
+          if (event.key !== 'Tab' || !drawerRef.current) return;
+          const focusable = [...drawerRef.current.querySelectorAll(
+            'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )].filter(node => node.getClientRects().length > 0);
+          if (!focusable.length) { event.preventDefault(); drawerRef.current.focus(); return; }
+          const first = focusable[0], last = focusable[focusable.length - 1];
+          if (event.shiftKey && (document.activeElement === first || !drawerRef.current.contains(document.activeElement))) {
+            event.preventDefault(); last.focus();
+          } else if (!event.shiftKey && (document.activeElement === last || !drawerRef.current.contains(document.activeElement))) {
+            event.preventDefault(); first.focus();
+          }
+        };
+        document.addEventListener('keydown', onKeyDown);
+        return () => {
+          window.cancelAnimationFrame(frame);
+          document.removeEventListener('keydown', onKeyDown);
+          document.body.style.overflow = previousOverflow;
+          if (open && openerRef.current?.isConnected) openerRef.current.focus();
+        };
+      }, [rendered, open, onClose]);
       if (!rendered) return null;
       const demo = Boolean(demoMenuRole);
       const user = authUser?.user || (authUser?.public_id ? authUser : null);
@@ -2649,14 +2684,15 @@
       return (
         <>
           <button type="button" className={'app-drawer-backdrop' + (closing ? ' is-closing' : '')} onClick={onClose} aria-label="بستن منو با کلیک بیرون پنل" />
-          <aside className={'app-drawer-panel' + (closing ? ' is-closing' : '')} role="dialog" aria-modal="true" aria-label="منوی حساب کاربری" dir="rtl">
+          <aside ref={drawerRef} className={'app-drawer-panel' + (closing ? ' is-closing' : '')} role="dialog" aria-modal="true" aria-label="منوی حساب کاربری" aria-describedby="account-drawer-description" tabIndex={-1} dir="rtl">
             <header className="app-drawer-header">
               <div className="app-drawer-brand">
-                <span><small>فضای کاربری</small><strong>تلومبرگ</strong></span>
+                <span><small id="account-drawer-description">فضای کاربری و تنظیمات</small><strong>تلومبرگ</strong></span>
               </div>
               {view !== 'home'
                 ? <button type="button" className="app-drawer-view-back" onClick={() => setView('home')} aria-label="بازگشت به منو" title="بازگشت به منو">→</button>
                 : <span className="app-drawer-header-spacer" aria-hidden="true" />}
+              <button type="button" className="app-drawer-close" onClick={onClose} aria-label="بستن منو" title="بستن منو">×</button>
             </header>
             <div className="app-drawer-scroll">
               {view === 'home' && (
