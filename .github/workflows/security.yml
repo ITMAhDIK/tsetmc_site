@@ -40,6 +40,8 @@ jobs:
         run: pip-audit --requirement requirements-screener.txt
       - name: Audit CRM runtime dependencies
         run: pip-audit --requirement requirements-saas-runtime.txt
+      - name: Audit Notification runtime dependencies
+        run: pip-audit --requirement requirements-saas-runtime.txt
 
   static-analysis:
     name: High-severity Python security analysis
@@ -52,11 +54,11 @@ jobs:
       - name: Install static analyzer
         run: python -m pip install --upgrade pip bandit
       - name: Scan SaaS backend
-        run: bandit --recursive saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service crm_service scripts --severity-level high --confidence-level high
+        run: bandit --recursive saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service crm_service notification_service scripts --severity-level high --confidence-level high
       - name: Validate operational shell scripts
         run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh scripts/commerce_db_backup.sh scripts/commerce_db_restore_verify.sh scripts/commerce_offsite_backup.sh scripts/analytics_db_backup.sh scripts/analytics_db_restore_verify.sh scripts/analytics_offsite_backup.sh
       - name: Compile Python service and operations tools
-        run: python -m compileall -q server.py site_api saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service crm_service scripts
+        run: python -m compileall -q server.py site_api saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service crm_service notification_service scripts
       - name: Build the non-root SaaS API image
         run: |
           docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
@@ -116,12 +118,20 @@ jobs:
           image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-crm:ci)"
           test "$image_user" = "10009:10009"
           docker run --rm tloomberg-crm:ci python -c "import crm_service.api; print('CRM runtime imports ok')"
+      - name: Build the non-root Notification Service image
+        run: |
+          docker build --file Dockerfile.notification --tag tloomberg-notification:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-notification:ci)"
+          test "$image_user" = "10010:10010"
+          docker run --rm tloomberg-notification:ci python -c "import notification_service.api; import notification_service.worker; print('Notification runtime imports ok')"
       - name: Build the same-origin SaaS edge image
         run: |
           docker build --file Dockerfile.saas-edge --tag tloomberg-saas-edge:ci .
           docker run --rm tloomberg-saas-edge:ci sh -c 'test -s /srv/saas/index.html && test -s /srv/saas/admin.html && test -s /srv/saas/terms.html && test -s /srv/saas/privacy.html'
           docker run --rm tloomberg-saas-edge:ci grep -F 'reverse_proxy analytics-api:8000' /etc/caddy/Caddyfile
           docker run --rm tloomberg-saas-edge:ci grep -F 'reverse_proxy crm-api:8000' /etc/caddy/Caddyfile
+          docker run --rm tloomberg-saas-edge:ci grep -F 'reverse_proxy notification-api:8000' /etc/caddy/Caddyfile
+          docker run --rm tloomberg-saas-edge:ci grep -F '/api/v1/notifications/internal/*' /etc/caddy/Caddyfile
           docker run --rm -e SAAS_DOMAIN=saas.example.com tloomberg-saas-edge:ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Validate production Compose configurations
         env:
@@ -131,6 +141,7 @@ jobs:
           COMMERCE_API_IMAGE: tloomberg-commerce:ci
           ANALYTICS_API_IMAGE: tloomberg-analytics:ci
           CRM_API_IMAGE: tloomberg-crm:ci
+          NOTIFICATION_API_IMAGE: tloomberg-notification:ci
           ANALYTICS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
           ANALYTICS_DATABASE_URL: postgresql://runtime:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
           ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics
@@ -142,6 +153,13 @@ jobs:
           CRM_PROJECTION_TOKEN: ci-placeholder-crm-projection-token-123456789
           CRM_DB_POOL_MIN: "1"
           CRM_DB_POOL_MAX: "8"
+          NOTIFICATION_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@notification-db.internal:5432/tloomberg_notifications?sslmode=verify-full
+          NOTIFICATION_DATABASE_URL: postgresql://runtime:placeholder@notification-db.internal:5432/tloomberg_notifications?sslmode=verify-full
+          NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
+          NOTIFICATION_APP_DATABASE_ROLE: notification_runtime
+          NOTIFICATION_INGEST_TOKEN: ci-placeholder-notification-ingest-token-123456789
+          NOTIFICATION_DB_POOL_MIN: "1"
+          NOTIFICATION_DB_POOL_MAX: "8"
           ANALYTICS_EVENTS_PER_MINUTE: "600"
           COMMERCE_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
           COMMERCE_DATABASE_URL: postgresql://runtime:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
@@ -165,6 +183,10 @@ jobs:
           SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas
           SAAS_APP_DATABASE_ROLE: saas_runtime
           SAAS_DOMAIN: saas.example.com
+          SAAS_SUPERADMIN_PHONE_E164: "+989121234567"
+          SMS_PROVIDER: kavenegar
+          SMS_API_KEY: ci-placeholder-sms-api-key
+          SMS_SENDER: "10000000000"
           SAAS_TRUSTED_HOSTS: saas.example.com
           SAAS_ALLOWED_ORIGINS: https://saas.example.com
           SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
