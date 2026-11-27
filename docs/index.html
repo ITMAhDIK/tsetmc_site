@@ -2611,6 +2611,8 @@
     function AccountMenuDrawer({ open, onClose, demoMenuRole, authUser, dateMode, setDateMode, currency, setCurrency, theme, setTheme, onNavigate, onLogout }) {
       const [view, setView] = useState('home');
       const [supportExpanded, setSupportExpanded] = useState(true);
+      const closeRef = useRef(onClose);
+      closeRef.current = onClose;
 
       const [rendered, setRendered] = useState(open);
       const [closing, setClosing] = useState(false);
@@ -2646,7 +2648,7 @@
         const onKeyDown = event => {
           if (event.key === 'Escape') {
             event.preventDefault();
-            onClose();
+            requestClose();
             return;
           }
           if (event.key !== 'Tab' || !drawerRef.current) return;
@@ -2668,8 +2670,8 @@
           document.body.style.overflow = previousOverflow;
           if (returnFocusRef.current && openerRef.current?.isConnected) openerRef.current.focus();
         };
-      }, [rendered, open, onClose]);
-      const requestClose = () => { returnFocusRef.current = true; onClose(); };
+      }, [rendered, open]);
+      const requestClose = () => { returnFocusRef.current = true; closeRef.current(); };
       if (!rendered) return null;
       const demo = Boolean(demoMenuRole);
       const user = authUser?.user || (authUser?.public_id ? authUser : null);
