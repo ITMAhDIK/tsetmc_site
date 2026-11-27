@@ -120,3 +120,102 @@ def test_session_listing_and_revocation_are_scoped_to_owner(client,db):
     assert client.delete("/internal/sessions/"+str(other_session),headers=h).status_code==404
     assert client.post("/internal/sessions/revoke-others",headers=h).status_code==200
 
+
+
+def test_phone_otp_login_queues_encrypted_delivery_and_is_single_use(client,db,monkeypatch):
+    from cryptography.fernet import Fernet
+    phone="+989121234789"
+    user_id=db.execute(
+        """INSERT INTO users(public_id,phone_e164,phone_verified_at)
+           VALUES (%s,%s,now()) RETURNING id""",
+        ("usr_"+uuid4().hex[:24],phone),
+    ).fetchone()["id"]
+    db.execute(
+        """INSERT INTO user_roles(user_id,role_id)
+           SELECT %s,id FROM roles WHERE code='user'""",(user_id,)
+    )
+    db.execute(
+        """INSERT INTO auth_identities(user_id,provider,provider_subject)
+           VALUES (%s,'phone_otp',%s)""",(user_id,phone)
+    )
+    db.commit()
+
+    requested=client.post("/auth/phone/request",json={"phone":phone,"purpose":"login"})
+    assert requested.status_code==200,requested.text
+    challenge=db.execute(
+        """SELECT otp_hash FROM phone_verifications
+           WHERE phone_e164=%s AND purpose='login' ORDER BY created_at DESC LIMIT 1""",
+        (phone,),
+    ).fetchone()
+    outbox=db.execute(
+        """SELECT destination_token,payload FROM notification_outbox
+           WHERE channel='sms' AND template_code='phone_otp'
+           ORDER BY created_at DESC LIMIT 1"""
+    ).fetchone()
+    cipher=Fernet(__import__("os").environ["IDENTITY_OUTBOX_FERNET_KEY"].encode("ascii"))
+    destination=cipher.decrypt(outbox["destination_token"].encode("ascii")).decode("utf-8")
+    encrypted=outbox["payload"]["encrypted_payload"]
+    otp_payload=__import__("json").loads(cipher.decrypt(encrypted.encode("ascii")).decode("utf-8"))
+    assert destination==phone
+    assert otp_payload["purpose"]=="login"
+    assert otp_payload["otp"].isdigit() and len(otp_payload["otp"])==6
+    assert len(challenge["otp_hash"]) == 64
+    assert challenge["otp_hash"] != otp_payload["otp"]
+
+    verified=client.post("/auth/phone/verify",json={
+        "phone":phone,"purpose":"login","otp":otp_payload["otp"]
+    })
+    assert verified.status_code==200,verified.text
+    assert verified.json()["authenticated"] is True
+    assert "tloomberg_session" in verified.cookies
+
+    replay=client.post("/auth/phone/verify",json={
+        "phone":phone,"purpose":"login","otp":otp_payload["otp"]
+    })
+    assert replay.status_code==401
+
+
+def test_privileged_identity_mutations_require_recent_session_mfa(client,db):
+    actor_id,actor_token=create_user(db,"identity_superadmin_without_mfa")
+    target_id,_target_token=create_user(db,"identity_target_for_admin")
+    db.execute(
+        """INSERT INTO user_roles(user_id,role_id)
+           SELECT %s,id FROM roles WHERE code='superadmin'""",(actor_id,)
+    )
+    db.commit()
+    headers={
+        "X-Identity-Service-Token":"identity-test-service-token-"+"x"*24,
+        "X-Identity-User-Token":actor_token,
+    }
+    response=client.post(
+        f"/internal/users/{target_id}/status",
+        headers=headers,
+        json={"status":"suspended","reason":"security review"},
+    )
+    assert response.status_code==403,response.text
+    assert db.execute("SELECT status FROM users WHERE id=%s",(target_id,)).fetchone()["status"]=="active"
+
+
+def test_password_registration_persists_immutable_legal_acceptance_and_starts_session(client,db,monkeypatch):
+    monkeypatch.setenv("IDENTITY_TERMS_VERSION","terms-2026-01")
+    monkeypatch.setenv("IDENTITY_PRIVACY_VERSION","privacy-2026-01")
+    response=client.post("/auth/register",json={
+        "username":"identity_new_account",
+        "password":"identity-registration-password-2026",
+        "display_name":"Identity New Account",
+        "terms_accepted":True,
+        "terms_version":"terms-2026-01",
+        "privacy_version":"privacy-2026-01",
+    })
+    assert response.status_code==201,response.text
+    user_id=response.json()["user"]["id"]
+    assert "tloomberg_session" in response.cookies
+    user=db.execute("SELECT password_hash FROM users WHERE id=%s",(user_id,)).fetchone()
+    assert user and user["password_hash"] != "identity-registration-password-2026"
+    acceptance=db.execute(
+        """SELECT terms_version,privacy_version FROM legal_acceptances WHERE user_id=%s""",
+        (user_id,),
+    ).fetchone()
+    assert acceptance=={"terms_version":"terms-2026-01","privacy_version":"privacy-2026-01"}
+    with pytest.raises(psycopg.errors.RaiseException):
+        db.execute("UPDATE legal_acceptances SET terms_version='tampered' WHERE user_id=%s",(user_id,))

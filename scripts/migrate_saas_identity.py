@@ -12,6 +12,7 @@ from psycopg import connect, sql
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from cryptography.fernet import Fernet
 
 TABLES=("users","auth_identities","email_verifications","sessions","user_admin_mfa",
         "legal_acceptances","admin_audit_logs")
