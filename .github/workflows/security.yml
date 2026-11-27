@@ -57,6 +57,12 @@ jobs:
           image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-identity:ci)"
           test "$image_user" = "10002:10002"
           docker run --rm tloomberg-identity:ci python -c "import identity_service.api; print('identity runtime imports ok')"
+      - name: Build the non-root Commerce Service image
+        run: |
+          docker build --file Dockerfile.commerce --tag tloomberg-commerce:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-commerce:ci)"
+          test "$image_user" = "10003:10003"
+          docker run --rm tloomberg-commerce:ci python -c "import commerce_service.api; print('Commerce runtime imports ok')"
       - name: Build the non-root Market API image
         run: |
           docker build --file Dockerfile.market --tag tloomberg-market-api:ci .
@@ -73,6 +79,14 @@ jobs:
           SAAS_API_IMAGE: tloomberg-saas-api:ci
           SAAS_EDGE_IMAGE: tloomberg-saas-edge:ci
           IDENTITY_API_IMAGE: tloomberg-identity:ci
+          COMMERCE_API_IMAGE: tloomberg-commerce:ci
+          COMMERCE_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
+          COMMERCE_DATABASE_URL: postgresql://runtime:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
+          COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
+          COMMERCE_APP_DATABASE_ROLE: commerce_runtime
+          COMMERCE_SERVICE_TOKEN: ci-placeholder-commerce-service-token-123456789
+          COMMERCE_DB_POOL_MIN: "1"
+          COMMERCE_DB_POOL_MAX: "8"
           IDENTITY_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@identity-db.internal:5432/tloomberg_identity?sslmode=verify-full
           IDENTITY_DATABASE_URL: postgresql://runtime:placeholder@identity-db.internal:5432/tloomberg_identity?sslmode=verify-full
           IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
