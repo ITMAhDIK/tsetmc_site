@@ -1,6 +1,6 @@
 """Idempotent notification enqueue, inbox, and leased delivery queue."""
 from __future__ import annotations
-import hashlib,json,os,re,uuid,html
+import hashlib,hmac,json,os,re,uuid,html
 from uuid import UUID
 from fastapi import HTTPException
 from notification_service.identity import verified_contact
@@ -13,7 +13,11 @@ TEMPLATES={
  "subscription_expiry":("Subscription reminder","Your subscription is approaching its expiry date.","Your subscription is approaching its expiry date.", "transactional"),
  "product_update":("Product update","There is an update in your Tloomberg account.","There is an update in your Tloomberg account.", "product"),
 }
-def _hash(value): return hashlib.sha256(value.encode()).hexdigest()
+def _request_hash(value): return hashlib.sha256(value.encode()).hexdigest()
+def _destination_hash(value):
+ secret=os.getenv("NOTIFICATION_DESTINATION_HMAC_SECRET","").strip()
+ if len(secret)<32: raise DeliveryError("destination_hash_key_unavailable",False)
+ return hmac.new(secret.encode(),value.encode(),hashlib.sha256).hexdigest()
 def _audit(conn,actor,action,nid=None,meta=None):
  conn.execute("INSERT INTO notification_audit_log(actor,action,notification_id,metadata) VALUES(%s,%s,%s,%s::jsonb)",(actor,action,nid,json.dumps(meta or {})))
 def enqueue(conn,user_ids,template_key,payload,channels,idempotency_key,actor="service"):
@@ -22,7 +26,7 @@ def enqueue(conn,user_ids,template_key,payload,channels,idempotency_key,actor="s
  if not re.fullmatch(r"[A-Za-z0-9._:-]{8,160}",idempotency_key or ""): raise HTTPException(422,detail="invalid idempotency key")
  if not channels or not set(channels)<= {"email","sms","in_app"}: raise HTTPException(422,detail="invalid channels")
  canonical=json.dumps({"users":[str(x) for x in user_ids],"template":template_key,"payload":payload,"channels":sorted(set(channels))},sort_keys=True,separators=(",",":"))
- digest=_hash(canonical)
+ digest=_request_hash(canonical)
  with conn.transaction():
   conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",(idempotency_key,))
   conn.execute("DELETE FROM notification_idempotency WHERE expires_at<now()")
@@ -73,7 +77,7 @@ def deliver_one(conn,job):
   if row["channel"]=="email":
    dest=contact.get("email") if contact.get("email_verified") else None
    if not dest: raise DeliveryError("verified_email_unavailable",False)
-   msg=send_email(dest,title,body,html); dh=_hash(dest)
+   msg=send_email(dest,title,body,html); dh=_destination_hash(dest)
   else:
    dest=contact.get("phone_e164") if contact.get("phone_verified") else None
    if not dest: raise DeliveryError("verified_phone_unavailable",False)
