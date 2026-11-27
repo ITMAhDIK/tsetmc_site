@@ -87,6 +87,28 @@ def _fetch_source(source):
     return result
 
 
+
+def _backfill_payment_order_durations(rows):
+    """Project the legacy plan term into the new immutable order snapshot.
+
+    The monolith did not persist duration on each order. During the one-time
+    cutover, the only available source is the legacy plan catalogue. This
+    cannot reconstruct historical plan edits that were never versioned.
+    """
+    duration_by_plan = {
+        plan["id"]: int(plan["duration_days"])
+        for plan in rows.get("plans", [])
+        if plan.get("duration_days") is not None
+    }
+    for order in rows.get("payment_orders", []):
+        duration = duration_by_plan.get(order.get("plan_id"))
+        if duration is None or duration <= 0:
+            raise RuntimeError(
+                f"cannot determine a positive plan duration for legacy order {order.get('id')}"
+            )
+        order["plan_duration_days"] = duration
+
+
 def _counts(rows):
     return {name: len(values) for name, values in rows.items()}
 
@@ -113,6 +135,7 @@ def run(*, apply: bool) -> int:
         target.commit()
         rows = _fetch_source(source)
         source.commit()
+        _backfill_payment_order_durations(rows)
 
         target.execute("SELECT pg_advisory_xact_lock(20261127,3)")
         existing = {}
@@ -150,8 +173,16 @@ def run(*, apply: bool) -> int:
         for table, values in rows.items():
             if not values:
                 continue
-            columns = ("id,status,phone_e164,phone_verified_at,created_at,updated_at"
-                       if table == "users" else ",".join(SOURCE_TABLES[table]))
+            if table == "users":
+                columns = "id,status,phone_e164,phone_verified_at,created_at,updated_at"
+            elif table == "payment_orders":
+                order_columns = (
+                    "id","user_id","plan_id","amount_toman","plan_duration_days",
+                    *SOURCE_TABLES[table][4:],
+                )
+                columns = ",".join(order_columns)
+            else:
+                columns = ",".join(SOURCE_TABLES[table])
             names = [part.strip() for part in columns.split(",")]
             placeholders = ",".join(["%s"] * len(names))
             statement = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"

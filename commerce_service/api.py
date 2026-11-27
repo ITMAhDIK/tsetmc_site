@@ -108,6 +108,7 @@ def ready(conn=Depends(get_conn)):
         row = conn.execute(
             """SELECT to_regclass('public.payment_orders') IS NOT NULL AS orders,
                       to_regclass('public.wallet_ledger_entries') IS NOT NULL AS ledger,
+                      to_regclass('public.wallet_order_payments') IS NOT NULL AS wallet_payments,
                       to_regclass('public.subscriptions') IS NOT NULL AS subscriptions"""
         ).fetchone()
         if not all(row.values()):

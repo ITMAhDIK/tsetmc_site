@@ -1,20 +1,23 @@
 # Tloomberg SaaS Architecture — Foundation v1
 
-## Three isolated data domains
+## Five isolated data domains
 1. Market data: existing market pipeline/database, consumed through the
    existing read-only market service.
 2. Identity: a dedicated FastAPI/PostgreSQL service owning credentials,
    password hashes, OTP challenges, sessions, MFA, roles, permissions and
    immutable legal-acceptance evidence.
-3. SaaS core: dedicated PostgreSQL for same-UUID user projections, preferences,
-   plans, subscriptions, payment records, wallet ledger, referrals, tickets,
-   CRM and commercial/admin operations.
-4. Product analytics: consent-controlled events with a strict data allow-list.
+3. SaaS core: dedicated PostgreSQL for same-UUID user projections, account
+   preferences, support, CRM and product-facing API composition.
+4. Commerce: independent FastAPI/PostgreSQL service owning plans, orders,
+   payments, subscriptions, wallet ledger, withdrawals and referrals.
+5. Product analytics: consent-controlled events with a strict data allow-list.
 
 No direct database joins or cross-database foreign keys are permitted between
-Market, Identity and SaaS. Identity and SaaS communicate only through the
-private Identity HTTP contract. The application authorizes Market API calls
-using the authenticated Identity principal and SaaS subscription entitlements.
+Market, Identity, SaaS and Commerce. Identity and SaaS/Commerce communicate
+only through private HTTP contracts. SaaS reads subscription and entitlement
+state from Commerce rather than a local commercial copy. The application
+authorizes Market API calls using the authenticated Identity principal and
+Commerce subscription entitlements.
 
 ## Roles versus entitlements
 Roles: superadmin, admin, support, user. Subscription entitlements are separate:
@@ -35,12 +38,12 @@ by the same-origin Edge; private introspection and account-administration
 routes require a service credential plus an independently validated user
 session where applicable.
 
-SaaS retains a same-UUID projection of non-secret user fields so its existing
-payment, subscription, wallet, support and CRM foreign keys remain local.
-Password hashes and session tokens are never projected. SaaS asks Identity to
-introspect each presented browser session and uses returned role/permission
-claims for authorization; an Identity outage fails closed. SaaS continues to
-own subscriptions and paid feature entitlements. The current migration path
+SaaS retains a same-UUID projection of non-secret user fields so its local
+operational foreign keys remain intact. Password hashes and session tokens
+are never projected. SaaS and Commerce ask Identity to introspect presented
+browser sessions and use returned role/permission claims for authorization;
+an Identity outage fails closed. Commerce owns subscriptions and paid feature
+entitlements. The current migration path
 preserves UUIDs, hashes, active sessions, MFA seeds, role assignments and
 legal evidence. Existing local auth routes remain only as an explicit
 development/rollback compatibility path when no Identity URL is configured.
@@ -138,3 +141,25 @@ dry-run, refuses identical databases and non-empty user targets, and reads
 the SaaS source in read-only mode. No live database has been migrated by this
 code change. The SaaS application remains a modular monolith for payments,
 wallet, support, analytics and CRM; those domains are not split by this phase.
+
+
+## Commerce — Microservices Phase 2
+
+Commerce is an independently deployed FastAPI service with a dedicated
+PostgreSQL database. It is the sole owner of plan pricing, subscription
+orders, payment attempts/events, active subscriptions, wallet cash/gift
+balances, withdrawal reservations and referral rewards. Browser sessions are
+validated by Identity; Commerce keeps only a same-UUID non-secret user
+projection and does not query Identity tables. SaaS calls Commerce over a
+private service-token contract for subscription history and feature
+entitlements. The same-origin Edge routes the public plan, subscription,
+payment and wallet API paths to Commerce; private internal routes are not
+exposed through the Edge.
+
+The wallet supports full subscription checkout with gift-first spending and
+then unreserved cash. Ledger debits, an append-only allocation record, the
+order-paid transition, subscription activation and first-purchase referral
+reward commit atomically. Orders snapshot both server price and plan duration.
+No cross-database joins or foreign keys are used. Provider checkout/refund,
+bank-account verification, payout and production data cutover remain gated
+until official provider contracts, credentials and operational approvals exist.

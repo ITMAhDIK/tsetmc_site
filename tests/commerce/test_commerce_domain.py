@@ -40,3 +40,13 @@ def test_wallet_withdrawal_cannot_use_gift_credit_or_reserved_cash():
     validate_withdrawal(balances, 300000)
     with pytest.raises(ValueError):
         validate_withdrawal(balances, 300001)
+
+
+
+def test_wallet_purchase_cannot_spend_cash_reserved_for_withdrawal():
+    balances = WalletBalances(cash_toman=500000, gift_toman=0, reserved_cash_toman=200000)
+    remaining = spend_buckets(balances, 200000)
+    assert remaining.cash_toman == 300000
+    assert remaining.reserved_cash_toman == 200000
+    with pytest.raises(ValueError, match="insufficient spendable wallet balance"):
+        spend_buckets(balances, 300001)

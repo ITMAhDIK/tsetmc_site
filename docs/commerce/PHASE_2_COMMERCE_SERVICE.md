@@ -29,6 +29,7 @@ Public browser-facing routes are exposed through the existing same-origin Caddy 
 | `GET /api/v1/subscriptions` | Commerce | Current user's subscription history |
 | `POST /api/v1/payments/orders` | Commerce | Idempotent order creation using a server-side plan price |
 | `POST /api/v1/payments/orders/{id}/checkout` | Commerce | Begin an official hosted checkout adapter |
+| `POST /api/v1/payments/orders/{id}/wallet-pay` | Commerce | Pay an order atomically from gift balance first, then unreserved cash |
 | `GET /api/v1/payments/orders/{id}` | Commerce | Read the caller's own order |
 | `POST /api/v1/payments/providers/{provider}/return` | Commerce | Provider callback and server-side verification |
 | `GET /api/v1/wallet` | Commerce | Cash, gift, total, reserved and withdrawable balances |
@@ -49,13 +50,13 @@ These require the dedicated Commerce service token and are not routed through th
 
 - Amounts are integer Toman; the client cannot set the order amount or currency.
 - Order creation requires an active account and an Identity-verified phone.
-- Idempotency keys are bound to the same user and plan; reuse for different input is rejected.
+- Idempotency keys are bound to the same user and plan; reuse for different input is rejected. The ordered duration is snapshotted with the server-priced order so later catalogue edits cannot change an existing purchase.
 - An order can have only one active checkout attempt.
 - Subscription activation occurs only after a provider adapter returns a server-verified success, exact amount and provider event identity.
 - Replayed provider events are accepted only when order, event type and payload digest all match; a conflicting replay is rejected.
 - Payment settlement and subscription creation share one transaction; the unique payment-order link prevents duplicate subscriptions.
 - Renewals begin at the later of now or the latest active subscription end, preserving the remaining paid time.
-- Wallet balances are derived from append-only ledger rows. Cash and gift buckets stay distinct; gift is spent first and is never withdrawable.
+- Wallet balances are derived from append-only ledger rows. Cash and gift buckets stay distinct; wallet-funded subscription checkout spends gift first, then cash not reserved by pending/approved withdrawals. Both ledger debits, append-only payment allocation record and subscription activation commit in one transaction. Gift is never withdrawable.
 - Pending/approved withdrawals reserve cash; withdrawal idempotency is enforced; only verified bank-account records are eligible.
 - Referral rewards are gift credits created only from the first qualifying paid subscription settlement and protected by a unique reward/ledger key.
 - Corrections to a ledger are compensating entries; updates/deletes are rejected by a database trigger.
@@ -72,7 +73,7 @@ These require the dedicated Commerce service token and are not routed through th
 - `scripts/migrate_saas_commerce.py`: source-read-only, dry-run-first migration of the existing SaaS-owned commercial history into an empty Commerce database.
 - `scripts/commerce_db_backup.sh`, `scripts/commerce_db_restore_verify.sh` and `scripts/commerce_offsite_backup.sh`: separate age-encrypted Commerce backup, empty-target restore verification and immutable off-host upload workflows. The CI security workflow runs an isolated Commerce backup/restore drill with an independent ephemeral age key. It name-checks both databases, permits only the known empty target seed catalogue, preserves user/plan/order UUIDs, verifies row counts and wallet bucket totals, and never writes to the source.
 
-The data migration script is not automatically run by Compose. Take source and target backups, pause relevant writes, run `--dry-run`, reconcile its inventory, and only then apply it in a maintenance window. Do not remove the legacy SaaS data until post-migration parity and application-level checks have been independently signed off.
+The data migration script is not automatically run by Compose. Take source and target backups, pause relevant writes, run `--dry-run`, reconcile its inventory, and only then apply it in a maintenance window. The legacy SaaS schema did not snapshot plan duration per order; the cutover adapter therefore populates the new immutable order-duration field from the source plan catalogue's current duration. Historical edits to plan duration cannot be reconstructed from the legacy rows and must be reviewed as a cutover limitation. Do not remove the legacy SaaS data until post-migration parity and application-level checks have been independently signed off.
 
 ## External integrations intentionally fail closed
 
@@ -82,7 +83,7 @@ Similarly, bank-account onboarding/verification is not wired to an approved prov
 
 ## Verification and production gates
 
-The CI workflow creates a dedicated disposable PostgreSQL database named by `COMMERCE_TEST_DATABASE_NAME`, applies only Commerce migrations, checks their checksum ledger, and runs `tests/commerce`. The service tests cover Identity-backed session resolution, server-side plan pricing, order idempotency, verified-phone gating, CSRF origin checks for cookie writes, fail-closed Identity outage, private token authorization, subscription entitlements, caller-scoped wallet views and database-enforced ledger immutability. Pure tests cover payment amount validation, provider fail-closed behavior and cash/gift policy.
+The CI workflow creates a dedicated disposable PostgreSQL database named by `COMMERCE_TEST_DATABASE_NAME`, applies only Commerce migrations, checks their checksum ledger, and runs `tests/commerce`. The service tests cover Identity-backed session resolution, server-side plan pricing, order idempotency, verified-phone gating, CSRF origin checks for cookie writes, fail-closed Identity outage, private token authorization, subscription entitlements, caller-scoped wallet views, gift-first wallet checkout, withdrawal-reservation protection, checkout race rejection, exact wallet-payment replay gift-first wallet checkout, withdrawal-reservation protection, checkout race rejection, exact wallet-payment replay and database-enforced ledger/payment-allocation immutability. Pure tests cover payment amount validation, provider fail-closed behavior and cash/gift policy.
 
 A successful CI suite is not production readiness. Before public traffic is switched:
 

@@ -1,8 +1,11 @@
+import pytest
+
 from commerce_service.payments.domain import PaymentNotConfigured
 from commerce_service.payments.gateways import get_gateway
 from scripts.manage_commerce_migrations import (
     MigrationError, _validate_history, load_migrations, validate_connection_tls,
 )
+from scripts.migrate_saas_commerce import _backfill_payment_order_durations
 
 
 def test_commerce_migrations_are_ordered_and_unique():
@@ -53,3 +56,23 @@ def test_payment_provider_adapters_remain_disabled_until_official_contract():
         pass
     else:
         raise AssertionError("provider adapter must fail closed without merchant contract")
+
+
+
+def test_legacy_commerce_cutover_snapshots_plan_duration_from_source_catalogue():
+    plan_id = "plan-monthly"
+    rows = {
+        "plans": [{"id": plan_id, "duration_days": 30}],
+        "payment_orders": [{"id": "order-1", "plan_id": plan_id}],
+    }
+    _backfill_payment_order_durations(rows)
+    assert rows["payment_orders"][0]["plan_duration_days"] == 30
+
+
+def test_legacy_commerce_cutover_rejects_orders_without_a_source_plan_term():
+    rows = {
+        "plans": [{"id": "plan-monthly", "duration_days": 0}],
+        "payment_orders": [{"id": "order-1", "plan_id": "plan-monthly"}],
+    }
+    with pytest.raises(RuntimeError, match="positive plan duration"):
+        _backfill_payment_order_durations(rows)

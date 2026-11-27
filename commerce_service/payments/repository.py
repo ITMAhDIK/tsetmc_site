@@ -30,17 +30,17 @@ def create_subscription_order(conn, *, user_id: UUID, plan_code: str, idempotenc
                 raise LookupError("active subscription plan not found")
             cur.execute(
                 """INSERT INTO payment_orders
-                   (user_id,plan_id,amount_toman,status,idempotency_key,phone_e164,expires_at)
-                   VALUES (%s,%s,%s,'created',%s,%s,%s)
+                   (user_id,plan_id,amount_toman,plan_duration_days,status,idempotency_key,phone_e164,expires_at)
+                   VALUES (%s,%s,%s,%s,'created',%s,%s,%s)
                    ON CONFLICT (idempotency_key) DO NOTHING
-                   RETURNING id,user_id,plan_id,amount_toman,status,created_at,expires_at""",
-                (user_id, plan["id"], plan["price_toman"], idempotency_key,
+                   RETURNING id,user_id,plan_id,amount_toman,plan_duration_days,status,created_at,expires_at""",
+                (user_id, plan["id"], plan["price_toman"], plan["duration_days"], idempotency_key,
                  user["phone_e164"], datetime.now(timezone.utc) + ORDER_TTL),
             )
             order = cur.fetchone()
             if order is None:
                 cur.execute(
-                    """SELECT id,user_id,plan_id,amount_toman,status,created_at,expires_at
+                    """SELECT id,user_id,plan_id,amount_toman,plan_duration_days,status,created_at,expires_at
                        FROM payment_orders WHERE idempotency_key=%s""", (idempotency_key,)
                 )
                 order = cur.fetchone()
@@ -48,7 +48,7 @@ def create_subscription_order(conn, *, user_id: UUID, plan_code: str, idempotenc
                     raise ValueError("idempotency key was already used for a different order")
             order["plan_code"] = plan["code"]
             order["plan_title"] = plan["title"]
-            order["duration_days"] = plan["duration_days"]
+            order["duration_days"] = order["plan_duration_days"]
             return order
 
 def get_order_for_user(conn, *, order_id: UUID, user_id: UUID):
@@ -133,11 +133,10 @@ def settle_verified_payment(conn, *, order_id: UUID, attempt_id: UUID, provider:
     with conn.transaction():
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT o.id,o.user_id,o.plan_id,o.amount_toman,o.status,
-                          p.duration_days,a.provider,a.provider_order_id,a.amount_toman AS attempt_amount_toman,
+                """SELECT o.id,o.user_id,o.plan_id,o.amount_toman,o.plan_duration_days AS duration_days,o.status,
+                          a.provider,a.provider_order_id,a.amount_toman AS attempt_amount_toman,
                           a.status AS attempt_status
                    FROM payment_orders o
-                   JOIN plans p ON p.id=o.plan_id
                    JOIN payment_attempts a ON a.order_id=o.id
                    WHERE o.id=%s AND a.id=%s FOR UPDATE OF o,a""",
                 (order_id,attempt_id),
@@ -248,3 +247,166 @@ def find_attempt_by_provider_order(conn, *, provider: str, provider_order_id: st
             (provider,provider_order_id),
         )
         return cur.fetchone()
+
+
+
+def pay_order_with_wallet(conn, *, order_id: UUID, user_id: UUID, idempotency_key: str):
+    """Atomically debit gift then available cash and activate the paid subscription.
+
+    An order with any unreconciled gateway attempt cannot be wallet-paid. The
+    order row and wallet account are locked so concurrent gateway callbacks,
+    wallet payments and withdrawals cannot spend or settle the same funds twice.
+    """
+    if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 120:
+        raise ValueError("a valid wallet payment idempotency key is required")
+
+    from commerce_service.wallet.wallet_repository import (
+        _lock_wallet, get_wallet_balances, post_ledger_entry,
+    )
+    from commerce_service.wallet.referrals import qualify_and_reward_referral
+
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT o.id,o.user_id,o.plan_id,o.amount_toman,o.plan_duration_days AS duration_days,
+                          o.status,o.expires_at
+                   FROM payment_orders o
+                   WHERE o.id=%s AND o.user_id=%s
+                   FOR UPDATE OF o""",
+                (order_id, user_id),
+            )
+            order = cur.fetchone()
+            if not order:
+                raise LookupError("order not found")
+
+            cur.execute(
+                """SELECT id,order_id,user_id,amount_toman,gift_debit_toman,
+                          cash_debit_toman,idempotency_key
+                   FROM wallet_order_payments
+                   WHERE idempotency_key=%s
+                   FOR UPDATE""",
+                (idempotency_key,),
+            )
+            by_key = cur.fetchone()
+            if by_key:
+                if by_key["order_id"] != order_id or by_key["user_id"] != user_id:
+                    raise ValueError("idempotency key was already used for a different wallet payment")
+                return {
+                    "order_id": order_id,
+                    "status": "paid",
+                    "amount_toman": by_key["amount_toman"],
+                    "gift_debit_toman": by_key["gift_debit_toman"],
+                    "cash_debit_toman": by_key["cash_debit_toman"],
+                    "already_processed": True,
+                }
+
+            cur.execute(
+                "SELECT id FROM wallet_order_payments WHERE order_id=%s FOR UPDATE",
+                (order_id,),
+            )
+            if cur.fetchone():
+                raise ValueError("order has already been paid from the wallet")
+            if order["status"] != "created":
+                raise ValueError("only an unstarted order can be paid from the wallet")
+            if order["expires_at"] and order["expires_at"] <= datetime.now(timezone.utc):
+                raise ValueError("order has expired")
+
+            # Even a failed initiation can have an unknown provider outcome
+            # (for example, a network timeout after the provider accepted it).
+            # Do not switch payment methods until that attempt is reconciled.
+            cur.execute(
+                """SELECT id FROM payment_attempts
+                   WHERE order_id=%s
+                   LIMIT 1 FOR UPDATE""",
+                (order_id,),
+            )
+            if cur.fetchone():
+                raise ValueError("order has a prior payment attempt that must be reconciled")
+
+            cur.execute(
+                """SELECT status,phone_e164,phone_verified_at
+                   FROM users WHERE id=%s FOR UPDATE""",
+                (user_id,),
+            )
+            user = cur.fetchone()
+            if not user or user["status"] != "active":
+                raise PermissionError("active account is required")
+            if not user["phone_e164"] or not user["phone_verified_at"]:
+                raise PermissionError("verified phone is required before purchase")
+
+            _lock_wallet(conn, user_id)
+            balances = get_wallet_balances(conn, user_id)
+            spendable_cash = balances.withdrawable_toman
+            spendable_total = balances.gift_toman + spendable_cash
+            amount = order["amount_toman"]
+            if amount > spendable_total:
+                raise ValueError("insufficient spendable wallet balance")
+
+            gift_debit = min(balances.gift_toman, amount)
+            cash_debit = amount - gift_debit
+            gift_entry = None
+            cash_entry = None
+            if gift_debit:
+                gift_entry = post_ledger_entry(
+                    conn, user_id=user_id, bucket="gift",
+                    entry_type="purchase_debit", amount_toman=-gift_debit,
+                    idempotency_key=f"wallet-order:{order_id}:gift",
+                    reference_type="payment_order", reference_id=order_id,
+                    description="Subscription paid from gift wallet balance",
+                )
+            if cash_debit:
+                cash_entry = post_ledger_entry(
+                    conn, user_id=user_id, bucket="cash",
+                    entry_type="purchase_debit", amount_toman=-cash_debit,
+                    idempotency_key=f"wallet-order:{order_id}:cash",
+                    reference_type="payment_order", reference_id=order_id,
+                    description="Subscription paid from cash wallet balance",
+                )
+
+            cur.execute(
+                """INSERT INTO wallet_order_payments
+                   (order_id,user_id,amount_toman,gift_debit_toman,cash_debit_toman,
+                    gift_ledger_entry_id,cash_ledger_entry_id,idempotency_key)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                   RETURNING id""",
+                (
+                    order_id, user_id, amount, gift_debit, cash_debit,
+                    gift_entry["id"] if gift_entry else None,
+                    cash_entry["id"] if cash_entry else None,
+                    idempotency_key,
+                ),
+            )
+            cur.execute(
+                """UPDATE payment_orders SET status='paid',paid_at=now(),updated_at=now()
+                   WHERE id=%s AND status='created'""",
+                (order_id,),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("order changed while wallet payment was being processed")
+
+            cur.execute(
+                """WITH next_start AS (
+                       SELECT GREATEST(now(),COALESCE(MAX(ends_at),now())) AS starts_at
+                       FROM subscriptions
+                       WHERE user_id=%s AND status='active' AND ends_at>now()
+                   )
+                   INSERT INTO subscriptions
+                       (user_id,plan_id,status,starts_at,ends_at,payment_order_id)
+                   SELECT %s,%s,'active',next_start.starts_at,
+                          next_start.starts_at+(%s*interval '1 day'),%s
+                   FROM next_start
+                   ON CONFLICT (payment_order_id) WHERE payment_order_id IS NOT NULL
+                   DO NOTHING""",
+                (user_id,user_id,order["plan_id"],order["duration_days"],order_id),
+            )
+            qualify_and_reward_referral(
+                conn, referred_user_id=user_id, payment_order_id=order_id,
+            )
+            return {
+                "order_id": order_id,
+                "status": "paid",
+                "amount_toman": amount,
+                "gift_debit_toman": gift_debit,
+                "cash_debit_toman": cash_debit,
+                "already_processed": False,
+            }

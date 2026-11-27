@@ -119,7 +119,7 @@ microservices.
   `IDENTITY_SERVICE_URL` is configured; service failures fail closed.
 - Preserved current SaaS foreign-key integrity through a same-UUID, non-secret
   user projection. Password hashes are explicitly nulled in SaaS projections.
-  SaaS subscriptions and feature entitlements remain SaaS-owned.
+  Commerce owns subscriptions and feature entitlements after Microservices Phase 2.
 - Delegated account profile edits, session listing/revocation, account
   suspension and staff-role changes to Identity. Administrative mutations are
   permission-gated inside Identity and require recent session-bound TOTP MFA.
@@ -137,3 +137,34 @@ service-token rotation/secret-manager delivery and network restrictions, run
 load/soak and independent security review. Google OAuth, password recovery,
 identity linking and email-verification browser flows are not added in this
 phase.
+
+
+## Phase 2 — Subscription & Payment Service
+
+Implemented on the architecture stabilization branch:
+- Independent Commerce FastAPI application, PostgreSQL schema, migration runner,
+  runtime database role, Docker image, Compose units and Edge routing.
+- Commerce owns plan catalogue/prices, orders, payment attempts/events,
+  subscriptions, cash/gift wallet ledger, withdrawal reservations and
+  referral rewards. Identity remains the authority for sessions, user status
+  and verified phone; SaaS consumes Commerce subscription history and
+  entitlements through a private service-token contract.
+- Idempotent server-priced orders snapshot both amount and duration; later
+  catalogue changes cannot alter an existing purchase. Provider settlement
+  is server-verified and atomically activates subscriptions. Provider adapters
+  remain disabled until official merchant integration packs are supplied.
+- Gift-first wallet checkout debits available gift then unreserved cash,
+  records an immutable allocation, and activates the subscription in the same
+  database transaction. Duplicate requests replay safely; conflicting keys,
+  insufficient balances, pending withdrawals and in-flight gateway attempts
+  are rejected.
+- Independent migration checksums, CI database provisioning, Commerce service
+  tests, backup/restore tooling and production configuration validation.
+
+**Remaining production work:** merchant sandbox integration and settlement
+reconciliation, wallet top-up flow, bank-account onboarding/verification,
+admin withdrawal review and payout, refund execution, production managed
+database and secrets, controlled source-data migration rehearsal, independent
+backup retention/restore rehearsal, service-token rotation, load/soak tests
+and reviewed production traffic cutover. No live payments, payouts, database
+migration or production cutover are performed by this code change.

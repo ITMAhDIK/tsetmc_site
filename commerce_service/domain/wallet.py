@@ -38,8 +38,13 @@ def spend_buckets(balances: WalletBalances, amount_toman: int) -> WalletBalances
         raise TypeError("spend amount must be integer Toman")
     if amount_toman <= 0:
         raise ValueError("spend amount must be positive")
-    if amount_toman > balances.total_toman:
-        raise ValueError("insufficient wallet balance")
+    # Cash reserved by an active withdrawal is not spendable for purchases.
+    if amount_toman > balances.gift_toman + balances.withdrawable_toman:
+        raise ValueError("insufficient spendable wallet balance")
     gift_spent = min(balances.gift_toman, amount_toman)
     cash_spent = amount_toman - gift_spent
-    return WalletBalances(balances.cash_toman - cash_spent, balances.gift_toman - gift_spent)
+    return WalletBalances(
+        balances.cash_toman - cash_spent,
+        balances.gift_toman - gift_spent,
+        balances.reserved_cash_toman,
+    )

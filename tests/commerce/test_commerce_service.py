@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -31,7 +31,7 @@ def verify_commerce_database():
             """SELECT count(*) AS n FROM unnest(%s::text[]) t(name)
                WHERE to_regclass('public.'||t.name) IS NULL""",
             (["users", "plans", "payment_orders", "subscriptions",
-              "wallet_ledger_entries", "withdrawal_requests", "referrals"],),
+              "wallet_ledger_entries", "withdrawal_requests", "referrals", "wallet_order_payments"],),
         ).fetchone()["n"]
         if missing:
             pytest.fail("Commerce migrations are incomplete")
@@ -42,6 +42,17 @@ def db(verify_commerce_database):
     with psycopg.connect(DSN, row_factory=dict_row) as conn:
         conn.execute(
             """TRUNCATE TABLE users CASCADE"""
+        )
+        conn.execute(
+            """UPDATE plans
+               SET duration_days=CASE code
+                   WHEN 'premium_monthly' THEN 30
+                   WHEN 'premium_quarterly' THEN 90
+                   ELSE duration_days END,
+                   price_toman=CASE code
+                   WHEN 'premium_monthly' THEN 899000
+                   WHEN 'premium_quarterly' THEN 2499000
+                   ELSE price_toman END"""
         )
         conn.commit()
         yield conn
@@ -214,3 +225,119 @@ def test_wallet_ledger_is_database_enforced_append_only(client, db):
     db.commit()
     with pytest.raises(psycopg.errors.RaiseException):
         db.execute("UPDATE wallet_ledger_entries SET amount_toman=7000 WHERE id=%s", (row["id"],))
+
+
+
+def test_wallet_pays_subscription_gift_first_and_is_idempotent(client, db):
+    client.get("/wallet", headers=auth_headers())
+    from commerce_service.wallet.wallet_repository import post_ledger_entry
+    post_ledger_entry(
+        db, user_id=USER_ID, bucket="cash", entry_type="topup",
+        amount_toman=850000, idempotency_key="wallet-pay-seed-cash-001",
+    )
+    post_ledger_entry(
+        db, user_id=USER_ID, bucket="gift", entry_type="referral_reward",
+        amount_toman=100000, idempotency_key="wallet-pay-seed-gift-001",
+    )
+    db.commit()
+
+    created = client.post(
+        "/payments/orders",
+        headers={**auth_headers(), "Idempotency-Key": "wallet-pay-order-001"},
+        json={"plan_code": "premium_monthly"},
+    )
+    assert created.status_code == 201, created.text
+    order_id = created.json()["order"]["id"]
+    # Catalogue edits after order creation must not mutate the purchased term.
+    db.execute("UPDATE plans SET duration_days=120 WHERE code='premium_monthly'")
+    db.commit()
+
+    headers = {**auth_headers(), "Idempotency-Key": "wallet-pay-once-001"}
+    paid = client.post(f"/payments/orders/{order_id}/wallet-pay", headers=headers)
+    assert paid.status_code == 200, paid.text
+    payment = paid.json()["payment"]
+    assert payment["status"] == "paid"
+    assert payment["amount_toman"] == 899000
+    assert payment["gift_debit_toman"] == 100000
+    assert payment["cash_debit_toman"] == 799000
+    assert payment["already_processed"] is False
+
+    replay = client.post(f"/payments/orders/{order_id}/wallet-pay", headers=headers)
+    assert replay.status_code == 200
+    assert replay.json()["payment"]["already_processed"] is True
+    changed_key = client.post(
+        f"/payments/orders/{order_id}/wallet-pay",
+        headers={**auth_headers(), "Idempotency-Key": "wallet-pay-second-key"},
+    )
+    assert changed_key.status_code == 409
+
+    wallet = client.get("/wallet", headers=auth_headers()).json()
+    assert wallet["gift_toman"] == 0
+    assert wallet["cash_toman"] == 51000
+    subscription = db.execute(
+        "SELECT status FROM subscriptions WHERE payment_order_id=%s", (order_id,)
+    ).fetchone()
+    assert subscription["status"] == "active"
+    duration_days = db.execute(
+        """SELECT EXTRACT(EPOCH FROM (ends_at-starts_at))/86400 AS days
+           FROM subscriptions WHERE payment_order_id=%s""", (order_id,)
+    ).fetchone()["days"]
+    assert duration_days == 30
+    with pytest.raises(psycopg.errors.RaiseException):
+        db.execute(
+            "UPDATE wallet_order_payments SET amount_toman=1 WHERE order_id=%s",
+            (order_id,),
+        )
+
+
+def test_wallet_payment_cannot_spend_cash_reserved_for_withdrawal(client, db):
+    client.get("/wallet", headers=auth_headers())
+    from commerce_service.wallet.wallet_repository import post_ledger_entry
+    post_ledger_entry(
+        db, user_id=USER_ID, bucket="cash", entry_type="topup",
+        amount_toman=899000, idempotency_key="wallet-reserve-seed-cash-001",
+    )
+    db.execute(
+        """INSERT INTO withdrawal_requests
+           (user_id,amount_toman,status,bank_account_token,idempotency_key)
+           VALUES (%s,200000,'requested','vault-reference:test','wallet-reserve-001')""",
+        (USER_ID,),
+    )
+    db.commit()
+    created = client.post(
+        "/payments/orders",
+        headers={**auth_headers(), "Idempotency-Key": "wallet-reserve-order-001"},
+        json={"plan_code": "premium_monthly"},
+    )
+    order_id = created.json()["order"]["id"]
+    response = client.post(
+        f"/payments/orders/{order_id}/wallet-pay",
+        headers={**auth_headers(), "Idempotency-Key": "wallet-reserve-pay-001"},
+    )
+    assert response.status_code == 409
+    assert client.get("/wallet", headers=auth_headers()).json()["cash_toman"] == 899000
+    assert db.execute(
+        "SELECT status FROM payment_orders WHERE id=%s", (order_id,)
+    ).fetchone()["status"] == "created"
+
+
+def test_wallet_payment_rejects_order_with_inflight_gateway_attempt(client, db):
+    client.get("/wallet", headers=auth_headers())
+    created = client.post(
+        "/payments/orders",
+        headers={**auth_headers(), "Idempotency-Key": "wallet-race-order-001"},
+        json={"plan_code": "premium_monthly"},
+    )
+    order_id = created.json()["order"]["id"]
+    from commerce_service.payments.repository import create_payment_attempt, mark_attempt_failed
+    attempt = create_payment_attempt(db, order_id=UUID(order_id), provider="snappay")
+    mark_attempt_failed(
+        db, attempt_id=attempt["id"], failure_code="TimeoutError",
+        failure_message="provider outcome is unknown",
+    )
+    db.commit()
+    response = client.post(
+        f"/payments/orders/{order_id}/wallet-pay",
+        headers={**auth_headers(), "Idempotency-Key": "wallet-race-pay-001"},
+    )
+    assert response.status_code == 409

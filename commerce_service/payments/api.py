@@ -13,7 +13,7 @@ from .gateways import get_gateway
 from .repository import (
     attach_provider_checkout, create_payment_attempt, create_subscription_order,
     find_attempt_by_provider_order, get_order_for_user, mark_attempt_failed,
-    settle_verified_payment,
+    settle_verified_payment, pay_order_with_wallet,
 )
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -135,3 +135,26 @@ async def provider_return(provider: str, request: Request, conn=Depends(get_conn
         raise HTTPException(status_code=400, detail="payment verification failed") from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/orders/{order_id}/wallet-pay")
+def wallet_pay(
+    order_id: UUID,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=120),
+    user=Depends(current_user),
+    conn=Depends(get_conn),
+):
+    """Pay the complete subscription order from the wallet, gift bucket first."""
+    try:
+        return {
+            "payment": pay_order_with_wallet(
+                conn, order_id=order_id, user_id=user["id"],
+                idempotency_key=idempotency_key,
+            )
+        }
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
