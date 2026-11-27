@@ -1,0 +1,734 @@
+services:
+  identity-migrate:
+    image: ${IDENTITY_API_IMAGE:?Set an immutable Identity API image reference}
+    command:
+      - python
+      - scripts/manage_identity_migrations.py
+      - --apply
+      - --grant-role
+      - ${IDENTITY_APP_DATABASE_ROLE:?Set the pre-created low-privilege Identity runtime role}
+    environment:
+      APP_ENV: production
+      IDENTITY_MIGRATION_DATABASE_URL: ${IDENTITY_MIGRATION_DATABASE_URL:?Set the dedicated Identity migration-owner connection}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set the dedicated Identity database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  identity-api:
+    image: ${IDENTITY_API_IMAGE:?Set an immutable Identity API image reference}
+    command:
+      - uvicorn
+      - identity_service.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${IDENTITY_WEB_WORKERS:-2}
+    environment:
+      APP_ENV: production
+      IDENTITY_DATABASE_URL: ${IDENTITY_DATABASE_URL:?Set a separate low-privilege Identity database URL}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set the dedicated Identity database name}
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set a distinct private service token}
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
+      IDENTITY_OTP_HMAC_SECRET: ${IDENTITY_OTP_HMAC_SECRET:?Set an independent OTP HMAC secret}
+      IDENTITY_OUTBOX_FERNET_KEY: ${IDENTITY_OUTBOX_FERNET_KEY:?Set an independent Identity outbox key}
+      IDENTITY_ADMIN_MFA_FERNET_KEY: ${IDENTITY_ADMIN_MFA_FERNET_KEY:?Set a separate Identity MFA key}
+      IDENTITY_COOKIE_SECURE: "true"
+      IDENTITY_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      IDENTITY_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS origins}
+      IDENTITY_TERMS_VERSION: ${SAAS_TERMS_VERSION:-}
+      IDENTITY_PRIVACY_VERSION: ${SAAS_PRIVACY_VERSION:-}
+      IDENTITY_SUPERADMIN_PHONE_E164: ${SAAS_SUPERADMIN_PHONE_E164:?Set the verified bootstrap administrator phone}
+      IDENTITY_DB_POOL_MIN: ${IDENTITY_DB_POOL_MIN:-1}
+      IDENTITY_DB_POOL_MAX: ${IDENTITY_DB_POOL_MAX:-8}
+      IDENTITY_DB_POOL_TIMEOUT_SECONDS: ${IDENTITY_DB_POOL_TIMEOUT_SECONDS:-5}
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 150
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.30
+
+
+  commerce-migrate:
+    image: ${COMMERCE_API_IMAGE:?Set an immutable Commerce API image reference}
+    command:
+      - python
+      - scripts/manage_commerce_migrations.py
+      - --apply
+      - --grant-role
+      - ${COMMERCE_APP_DATABASE_ROLE:?Set the pre-created low-privilege Commerce runtime role}
+    environment:
+      APP_ENV: production
+      COMMERCE_MIGRATION_DATABASE_URL: ${COMMERCE_MIGRATION_DATABASE_URL:?Set the dedicated Commerce migration-owner connection}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set the dedicated Commerce database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  commerce-api:
+    image: ${COMMERCE_API_IMAGE:?Set an immutable Commerce API image reference}
+    command:
+      - uvicorn
+      - commerce_service.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${COMMERCE_WEB_WORKERS:-2}
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - 172.31.240.10
+    environment:
+      APP_ENV: production
+      COMMERCE_DATABASE_URL: ${COMMERCE_DATABASE_URL:?Set the separate low-privilege Commerce runtime database URL}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set the dedicated Commerce database name}
+      COMMERCE_SERVICE_TOKEN: ${COMMERCE_SERVICE_TOKEN:?Set the private SaaS-to-Commerce service token}
+      COMMERCE_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      COMMERCE_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS origins}
+      COMMERCE_DB_POOL_MIN: ${COMMERCE_DB_POOL_MIN:-1}
+      COMMERCE_DB_POOL_MAX: ${COMMERCE_DB_POOL_MAX:-8}
+      COMMERCE_DB_POOL_TIMEOUT_SECONDS: ${COMMERCE_DB_POOL_TIMEOUT_SECONDS:-5}
+      COMMERCE_PAYMENT_CALLBACK_URL: ${COMMERCE_PAYMENT_CALLBACK_URL:-}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set the Identity private service token}
+    depends_on:
+      commerce-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 150
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.40
+
+  analytics-migrate:
+    image: ${ANALYTICS_API_IMAGE:?Set an immutable Analytics API image reference}
+    command:
+      - python
+      - scripts/manage_analytics_migrations.py
+      - --apply
+      - --grant-role
+      - ${ANALYTICS_APP_DATABASE_ROLE:?Set the pre-created low-privilege Analytics runtime role}
+    environment:
+      APP_ENV: production
+      ANALYTICS_MIGRATION_DATABASE_URL: ${ANALYTICS_MIGRATION_DATABASE_URL:?Set the dedicated Analytics migration-owner connection}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set the dedicated Analytics database name}
+      ANALYTICS_IMPORT_SOURCE_DATABASE_URL: ${ANALYTICS_IMPORT_SOURCE_DATABASE_URL:-}
+      ANALYTICS_IMPORT_SOURCE_DATABASE_NAME: ${ANALYTICS_IMPORT_SOURCE_DATABASE_NAME:-}
+      ANALYTICS_IMPORT_TARGET_DATABASE_URL: ${ANALYTICS_IMPORT_TARGET_DATABASE_URL:-}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  analytics-api:
+    image: ${ANALYTICS_API_IMAGE:?Set an immutable Analytics API image reference}
+    command:
+      - uvicorn
+      - analytics_service.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${ANALYTICS_WEB_WORKERS:-2}
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - 172.31.240.10
+    environment:
+      APP_ENV: production
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:?Set the separate low-privilege Analytics database URL}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set the dedicated Analytics database name}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the distinct SaaS database name}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set the distinct Identity database name}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set the distinct Commerce database name}
+      ANALYTICS_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      ANALYTICS_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS origins}
+      ANALYTICS_DB_POOL_MIN: ${ANALYTICS_DB_POOL_MIN:-1}
+      ANALYTICS_DB_POOL_MAX: ${ANALYTICS_DB_POOL_MAX:-8}
+      ANALYTICS_DB_POOL_TIMEOUT_SECONDS: ${ANALYTICS_DB_POOL_TIMEOUT_SECONDS:-5}
+      ANALYTICS_EVENTS_PER_MINUTE: ${ANALYTICS_EVENTS_PER_MINUTE:-600}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set the Identity private service token}
+      SAAS_ANALYTICS_CONSENT_VERSION: ${SAAS_ANALYTICS_CONSENT_VERSION:-v1}
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+    depends_on:
+      analytics-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 150
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.50
+
+  analytics-retention-worker:
+    image: ${ANALYTICS_API_IMAGE:?Set an immutable Analytics API image reference}
+    command:
+      - python
+      - -m
+      - analytics_service.retention_worker
+    environment:
+      APP_ENV: production
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:?Set the separate low-privilege Analytics database URL}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set the dedicated Analytics database name}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the distinct SaaS database name}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set the distinct Identity database name}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set the distinct Commerce database name}
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+      ANALYTICS_RETENTION_POLL_SECONDS: ${ANALYTICS_RETENTION_POLL_SECONDS:-3600}
+    depends_on:
+      analytics-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+  saas-migrate:
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
+    command:
+      - python
+      - scripts/manage_saas_migrations.py
+      - --apply
+      - --grant-role
+      - ${SAAS_APP_DATABASE_ROLE:?Set SAAS_APP_DATABASE_ROLE to the pre-created low-privilege runtime role}
+    environment:
+      APP_ENV: production
+      SAAS_MIGRATION_DATABASE_URL: ${SAAS_MIGRATION_DATABASE_URL:?Set a dedicated migration-owner connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  saas-api:
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
+        && find "$PROMETHEUS_MULTIPROC_DIR" -mindepth 1 -maxdepth 1 -type f -delete
+        && exec uvicorn saas_core.auth.api:app --host 0.0.0.0 --port 8000
+        --workers ${SAAS_WEB_WORKERS:-2} --proxy-headers --forwarded-allow-ips 172.31.240.10
+    environment:
+      APP_ENV: production
+      SAAS_DATABASE_URL: ${SAAS_DATABASE_URL:?Set the separate low-privilege runtime database connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+      SAAS_COOKIE_SECURE: "true"
+      SAAS_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public API hostnames}
+      SAAS_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS browser origins}
+      SAAS_OTP_HMAC_SECRET: ${SAAS_OTP_HMAC_SECRET:?Set a dedicated random OTP HMAC secret}
+      SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set a dedicated Fernet key}
+      SAAS_ADMIN_MFA_FERNET_KEY: ${SAAS_ADMIN_MFA_FERNET_KEY:?Set a distinct Fernet key for privileged MFA secrets}
+      SAAS_METRICS_TOKEN: ${SAAS_METRICS_TOKEN:?Set a private bearer token for Prometheus scraping}
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+      SAAS_TERMS_VERSION: ${SAAS_TERMS_VERSION:-}
+      SAAS_PRIVACY_VERSION: ${SAAS_PRIVACY_VERSION:-}
+      SAAS_SUPERADMIN_PHONE_E164: ${SAAS_SUPERADMIN_PHONE_E164:?Set the verified bootstrap admin phone in protected server secrets}
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+      SAAS_DB_POOL_MIN: ${SAAS_DB_POOL_MIN:-1}
+      SAAS_DB_POOL_MAX: ${SAAS_DB_POOL_MAX:-8}
+      SAAS_DB_POOL_TIMEOUT_SECONDS: ${SAAS_DB_POOL_TIMEOUT_SECONDS:-5}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set the Identity private service token}
+      COMMERCE_SERVICE_URL: http://commerce-api:8000
+      COMMERCE_SERVICE_TOKEN: ${COMMERCE_SERVICE_TOKEN:?Set the private SaaS-to-Commerce service token}
+    depends_on:
+      commerce-api:
+        condition: service_healthy
+      identity-api:
+        condition: service_healthy
+      saas-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 200
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+      interval: 20s
+      timeout: 4s
+      start_period: 25s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.20
+
+  saas-sms-worker:
+    image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
+    command:
+      - python
+      - scripts/saas_sms_worker.py
+    environment:
+      APP_ENV: production
+      SAAS_DATABASE_URL: ${SAAS_DATABASE_URL:?Set the separate low-privilege runtime database connection string}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the expected SaaS PostgreSQL database name}
+      SAAS_OUTBOX_FERNET_KEY: ${SAAS_OUTBOX_FERNET_KEY:?Set the dedicated Fernet key}
+      SMS_PROVIDER: ${SMS_PROVIDER:?Set SMS_PROVIDER=kavenegar}
+      SMS_API_KEY: ${SMS_API_KEY:?Set the Kavenegar API key in protected server secrets}
+      SMS_SENDER: ${SMS_SENDER:?Set your approved Kavenegar sender line}
+      SAAS_NOTIFICATION_POLL_SECONDS: ${SAAS_NOTIFICATION_POLL_SECONDS:-2}
+    depends_on:
+      saas-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+  saas-prometheus:
+    image: prom/prometheus:v3.2.1
+    profiles:
+      - monitoring
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./deploy/monitoring/prometheus.saas.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/alerts.saas.yml:/etc/prometheus/alerts.yml:ro
+      - ${SAAS_METRICS_TOKEN_FILE:-/etc/tloomberg-saas/secrets/prometheus_token}:/run/secrets/saas_metrics_token:ro
+      - prometheus_data:/prometheus
+    expose:
+      - "9090"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    networks:
+      - saas-backend
+
+  saas-edge:
+    image: ${SAAS_EDGE_IMAGE:?Set an immutable SaaS edge image reference}
+    environment:
+      SAAS_DOMAIN: ${SAAS_DOMAIN:?Set the public API domain with DNS pointing to this host}
+    depends_on:
+      saas-api:
+        condition: service_healthy
+      identity-api:
+        condition: service_healthy
+      commerce-api:
+        condition: service_healthy
+      analytics-api:
+        condition: service_healthy
+      notification-api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 100
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1
+      interval: 20s
+      timeout: 4s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.10
+
+  identity-sms-worker:
+    image: ${IDENTITY_API_IMAGE:?Set an immutable Identity API image reference}
+    command:
+      - python
+      - scripts/identity_sms_worker.py
+    environment:
+      APP_ENV: production
+      IDENTITY_DATABASE_URL: ${IDENTITY_DATABASE_URL:?Set Identity runtime database connection}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set Identity database name}
+      IDENTITY_OUTBOX_FERNET_KEY: ${IDENTITY_OUTBOX_FERNET_KEY:?Set Identity outbox encryption key}
+      SMS_PROVIDER: ${SMS_PROVIDER:?Set SMS_PROVIDER=kavenegar}
+      SMS_API_KEY: ${SMS_API_KEY:?Set Kavenegar API key in protected server secrets}
+      SMS_SENDER: ${SMS_SENDER:?Set approved Kavenegar sender line}
+      SAAS_NOTIFICATION_POLL_SECONDS: ${SAAS_NOTIFICATION_POLL_SECONDS:-2}
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+  crm-migrate:
+    image: ${CRM_API_IMAGE:?Set an immutable CRM API image reference}
+    command: ["python","scripts/manage_crm_migrations.py","--apply","--grant-role","${CRM_APP_DATABASE_ROLE:?Set pre-created CRM runtime role}"]
+    environment:
+      APP_ENV: production
+      CRM_MIGRATION_DATABASE_URL: ${CRM_MIGRATION_DATABASE_URL:?Set CRM migration-owner connection}
+      CRM_EXPECTED_DATABASE_NAME: ${CRM_EXPECTED_DATABASE_NAME:?Set CRM database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  crm-api:
+    image: ${CRM_API_IMAGE:?Set an immutable CRM API image reference}
+    command: ["uvicorn","crm_service.api:app","--host","0.0.0.0","--port","8000","--workers","${CRM_WEB_WORKERS:-2}"]
+    environment:
+      APP_ENV: production
+      CRM_DATABASE_URL: ${CRM_DATABASE_URL:?Set separate CRM runtime database URL}
+      CRM_EXPECTED_DATABASE_NAME: ${CRM_EXPECTED_DATABASE_NAME:?Set CRM database name}
+      CRM_PROJECTION_TOKEN: ${CRM_PROJECTION_TOKEN:?Set distinct CRM projection token}
+      CRM_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      CRM_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS origins}
+      CRM_DB_POOL_MIN: ${CRM_DB_POOL_MIN:-1}
+      CRM_DB_POOL_MAX: ${CRM_DB_POOL_MAX:-8}
+      CRM_DB_POOL_TIMEOUT_SECONDS: ${CRM_DB_POOL_TIMEOUT_SECONDS:-5}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set private Identity service token}
+    depends_on:
+      crm-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 150
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+  notification-migrate:
+    image: ${NOTIFICATION_API_IMAGE:?Set immutable Notification API image reference}
+    command: ["python","scripts/manage_notification_migrations.py","--apply","--grant-role","${NOTIFICATION_APP_DATABASE_ROLE:?Set pre-created Notification runtime role}"]
+    environment:
+      APP_ENV: production
+      NOTIFICATION_MIGRATION_DATABASE_URL: ${NOTIFICATION_MIGRATION_DATABASE_URL:?Set Notification migration-owner connection}
+      NOTIFICATION_EXPECTED_DATABASE_NAME: ${NOTIFICATION_EXPECTED_DATABASE_NAME:?Set Notification database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  notification-api:
+    image: ${NOTIFICATION_API_IMAGE:?Set immutable Notification API image reference}
+    command: ["uvicorn","notification_service.api:app","--host","0.0.0.0","--port","8000","--workers","${NOTIFICATION_WEB_WORKERS:-2}"]
+    environment:
+      APP_ENV: production
+      NOTIFICATION_DATABASE_URL: ${NOTIFICATION_DATABASE_URL:?Set separate Notification runtime database URL}
+      NOTIFICATION_EXPECTED_DATABASE_NAME: ${NOTIFICATION_EXPECTED_DATABASE_NAME:?Set Notification database name}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set distinct SaaS database name}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set distinct Identity database name}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set distinct Commerce database name}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set distinct Analytics database name}
+      CRM_EXPECTED_DATABASE_NAME: ${CRM_EXPECTED_DATABASE_NAME:?Set distinct CRM database name}
+      NOTIFICATION_INGEST_TOKEN: ${NOTIFICATION_INGEST_TOKEN:?Set private Notification ingest token}
+      NOTIFICATION_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      NOTIFICATION_DB_POOL_MIN: ${NOTIFICATION_DB_POOL_MIN:-1}
+      NOTIFICATION_DB_POOL_MAX: ${NOTIFICATION_DB_POOL_MAX:-8}
+      NOTIFICATION_DB_POOL_TIMEOUT_SECONDS: ${NOTIFICATION_DB_POOL_TIMEOUT_SECONDS:-5}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set private Identity service token}
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 120
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+  notification-worker:
+    image: ${NOTIFICATION_API_IMAGE:?Set immutable Notification API image reference}
+    command: ["python","-m","notification_service.worker"]
+    environment:
+      APP_ENV: production
+      NOTIFICATION_DATABASE_URL: ${NOTIFICATION_DATABASE_URL:?Set separate Notification runtime database URL}
+      NOTIFICATION_EXPECTED_DATABASE_NAME: ${NOTIFICATION_EXPECTED_DATABASE_NAME:?Set Notification database name}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set distinct SaaS database name}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set distinct Identity database name}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set distinct Commerce database name}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set distinct Analytics database name}
+      CRM_EXPECTED_DATABASE_NAME: ${CRM_EXPECTED_DATABASE_NAME:?Set distinct CRM database name}
+      NOTIFICATION_WORKER_BATCH_SIZE: ${NOTIFICATION_WORKER_BATCH_SIZE:-20}
+      NOTIFICATION_WORKER_IDLE_SECONDS: ${NOTIFICATION_WORKER_IDLE_SECONDS:-2}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
+      NOTIFICATION_DESTINATION_HMAC_SECRET: ${NOTIFICATION_DESTINATION_HMAC_SECRET:?Set destination fingerprint key}
+      NOTIFICATION_SMTP_HOST: ${NOTIFICATION_SMTP_HOST:-}
+      NOTIFICATION_SMTP_PORT: ${NOTIFICATION_SMTP_PORT:-587}
+      NOTIFICATION_SMTP_USER: ${NOTIFICATION_SMTP_USER:-}
+      NOTIFICATION_SMTP_PASSWORD: ${NOTIFICATION_SMTP_PASSWORD:-}
+      NOTIFICATION_EMAIL_FROM: ${NOTIFICATION_EMAIL_FROM:-}
+      NOTIFICATION_SMS_WEBHOOK_URL: ${NOTIFICATION_SMS_WEBHOOK_URL:-}
+      NOTIFICATION_SMS_WEBHOOK_TOKEN: ${NOTIFICATION_SMS_WEBHOOK_TOKEN:-}
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+volumes:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+
+networks:
+  saas-backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24

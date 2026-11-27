@@ -1,0 +1,57 @@
+"""Authorization adapter: Identity owns permissions; Commerce owns subscriptions."""
+from __future__ import annotations
+from uuid import UUID
+
+class AuthorizationDenied(Exception):
+    """The authenticated principal lacks the requested capability."""
+
+def has_permission(conn, user_id: UUID, permission: str, principal: dict | None = None) -> bool:
+    if principal is not None and isinstance(principal.get("permissions"), list):
+        return permission in principal["permissions"]
+    with conn.cursor() as cur:
+        cur.execute("""SELECT EXISTS(
+            SELECT 1 FROM user_roles ur
+            JOIN role_permissions rp ON rp.role_id=ur.role_id
+            JOIN permissions p ON p.id=rp.permission_id
+            WHERE ur.user_id=%s AND p.code=%s
+        ) AS allowed""", (user_id, permission))
+        return bool(cur.fetchone()["allowed"])
+
+def require_permission(conn, user_id: UUID, permission: str, principal: dict | None = None) -> None:
+    if not has_permission(conn, user_id, permission, principal=principal):
+        raise AuthorizationDenied("permission denied")
+
+def has_entitlement(conn, user_id: UUID, entitlement: str, principal: dict | None = None) -> bool:
+    """Resolve commercial entitlements from SaaS; role-derived admin access comes from Identity."""
+    if entitlement == "data_management":
+        return has_permission(conn, user_id, "market.admin", principal=principal)
+    if entitlement not in {"premium_analytics", "ownership_graphs", "investor_history"}:
+        raise ValueError("unknown entitlement")
+    if principal is not None and isinstance(principal.get("roles"), list):
+        is_superadmin = "superadmin" in principal["roles"]
+    else:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT EXISTS(
+                SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+                WHERE ur.user_id=%s AND r.code='superadmin'
+            ) AS allowed""", (user_id,))
+            is_superadmin = bool(cur.fetchone()["allowed"])
+    if is_superadmin:
+        return True
+    # Once configured, Commerce is the only entitlement source of truth.
+    # Network failures propagate so API handlers can return 503 (fail closed).
+    from .commerce_client import commerce_enabled, get_entitlements
+    if commerce_enabled():
+        return bool(get_entitlements(user_id).get(entitlement, False))
+    with conn.cursor() as cur:
+        cur.execute("""SELECT EXISTS(
+            SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.user_id=%s AND s.status='active'
+              AND s.starts_at<=now() AND s.ends_at>now()
+              AND p.code IN ('premium_monthly','premium_quarterly')
+        ) AS allowed""", (user_id,))
+        return bool(cur.fetchone()["allowed"])
+
+def require_entitlement(conn, user_id: UUID, entitlement: str, principal: dict | None = None) -> None:
+    if not has_entitlement(conn, user_id, entitlement, principal=principal):
+        raise AuthorizationDenied("active subscription required")

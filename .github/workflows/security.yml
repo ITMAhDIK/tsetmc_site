@@ -1,0 +1,491 @@
+name: SaaS security checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - refactor/architecture-stabilization-phase0
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-security-${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install dependency auditor
+        run: python -m pip install --upgrade pip pip-audit
+      - name: Audit declared SaaS dependencies
+        run: pip-audit --requirement requirements-saas.txt
+      - name: Audit Market Data runtime dependencies
+        run: pip-audit --requirement requirements-market-data.txt
+      - name: Audit Ownership runtime dependencies
+        run: pip-audit --requirement requirements-ownership.txt
+      - name: Audit Portfolio runtime dependencies
+        run: pip-audit --requirement requirements-portfolio.txt
+      - name: Audit Screener runtime dependencies
+        run: pip-audit --requirement requirements-screener.txt
+      - name: Audit CRM runtime dependencies
+        run: pip-audit --requirement requirements-saas-runtime.txt
+      - name: Audit Notification runtime dependencies
+        run: pip-audit --requirement requirements-saas-runtime.txt
+
+  static-analysis:
+    name: High-severity Python security analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install static analyzer
+        run: python -m pip install --upgrade pip bandit
+      - name: Scan SaaS backend
+        run: bandit --recursive saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service crm_service notification_service scripts --severity-level high --confidence-level high
+      - name: Validate operational shell scripts
+        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh scripts/commerce_db_backup.sh scripts/commerce_db_restore_verify.sh scripts/commerce_offsite_backup.sh scripts/analytics_db_backup.sh scripts/analytics_db_restore_verify.sh scripts/analytics_offsite_backup.sh
+      - name: Compile Python service and operations tools
+        run: python -m compileall -q server.py site_api saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service crm_service notification_service scripts
+      - name: Build the non-root SaaS API image
+        run: |
+          docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-saas-api:ci)"
+          test "$image_user" = "10001:10001"
+      - name: Build the non-root Identity Service image
+        run: |
+          docker build --file Dockerfile.identity --tag tloomberg-identity:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-identity:ci)"
+          test "$image_user" = "10002:10002"
+          docker run --rm tloomberg-identity:ci python -c "import identity_service.api; print('identity runtime imports ok')"
+      - name: Build the non-root Commerce Service image
+        run: |
+          docker build --file Dockerfile.commerce --tag tloomberg-commerce:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-commerce:ci)"
+          test "$image_user" = "10003:10003"
+          docker run --rm tloomberg-commerce:ci python -c "import commerce_service.api; print('Commerce runtime imports ok')"
+      - name: Build the non-root Market API image
+        run: |
+          docker build --file Dockerfile.market --tag tloomberg-market-api:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-market-api:ci)"
+          test "$image_user" = "10001:10001"
+          docker run --rm tloomberg-market-api:ci python -c "import server; from site_api.refresh_worker import build_parser; print('market runtime imports ok')"
+      - name: Build the non-root Market Data Service image
+        run: |
+          docker build --file Dockerfile.market-data --tag tloomberg-market-data:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-market-data:ci)"
+          test "$image_user" = "10004:10004"
+          docker run --rm tloomberg-market-data:ci python -c "import market_data_service.api; print('Market Data runtime imports ok')"
+      - name: Build the non-root Ownership Service image
+        run: |
+          docker build --file Dockerfile.ownership --tag tloomberg-ownership:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-ownership:ci)"
+          test "$image_user" = "10001:10001"
+          docker run --rm tloomberg-ownership:ci python -c "import ownership_service.api; print('Ownership runtime imports ok')"
+      - name: Build the non-root Portfolio Service image
+        run: |
+          docker build --file Dockerfile.portfolio --tag tloomberg-portfolio:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-portfolio:ci)"
+          test "$image_user" = "10001:10001"
+          docker run --rm tloomberg-portfolio:ci python -c "import portfolio_service.api; print('Portfolio runtime imports ok')"
+      - name: Build the non-root Screener Service image
+        run: |
+          docker build --file Dockerfile.screener --tag tloomberg-screener:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-screener:ci)"
+          test "$image_user" = "10001:10001"
+          docker run --rm tloomberg-screener:ci python -c "import screener_service.api; print('Screener runtime imports ok')"
+      - name: Build the non-root Analytics Service image
+        run: |
+          docker build --file Dockerfile.analytics --tag tloomberg-analytics:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-analytics:ci)"
+          test "$image_user" = "10005:10005"
+          docker run --rm tloomberg-analytics:ci python -c "import analytics_service.api; import analytics_service.retention_worker; print('Analytics runtime imports ok')"
+      - name: Build the non-root CRM Service image
+        run: |
+          docker build --file Dockerfile.crm --tag tloomberg-crm:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-crm:ci)"
+          test "$image_user" = "10009:10009"
+          docker run --rm tloomberg-crm:ci python -c "import crm_service.api; print('CRM runtime imports ok')"
+      - name: Build the non-root Notification Service image
+        run: |
+          docker build --file Dockerfile.notification --tag tloomberg-notification:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-notification:ci)"
+          test "$image_user" = "10010:10010"
+          docker run --rm tloomberg-notification:ci python -c "import notification_service.api; import notification_service.worker; print('Notification runtime imports ok')"
+      - name: Build the same-origin SaaS edge image
+        run: |
+          docker build --file Dockerfile.saas-edge --tag tloomberg-saas-edge:ci .
+          docker run --rm tloomberg-saas-edge:ci sh -c 'test -s /srv/saas/index.html && test -s /srv/saas/admin.html && test -s /srv/saas/terms.html && test -s /srv/saas/privacy.html'
+          docker run --rm tloomberg-saas-edge:ci grep -F 'reverse_proxy analytics-api:8000' /etc/caddy/Caddyfile
+          docker run --rm tloomberg-saas-edge:ci grep -F 'reverse_proxy crm-api:8000' /etc/caddy/Caddyfile
+          docker run --rm tloomberg-saas-edge:ci grep -F 'reverse_proxy notification-api:8000' /etc/caddy/Caddyfile
+          docker run --rm tloomberg-saas-edge:ci grep -F '/api/v1/notifications/internal/*' /etc/caddy/Caddyfile
+          docker run --rm -e SAAS_DOMAIN=saas.example.com tloomberg-saas-edge:ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Validate production Compose configurations
+        env:
+          SAAS_API_IMAGE: tloomberg-saas-api:ci
+          SAAS_EDGE_IMAGE: tloomberg-saas-edge:ci
+          IDENTITY_API_IMAGE: tloomberg-identity:ci
+          COMMERCE_API_IMAGE: tloomberg-commerce:ci
+          ANALYTICS_API_IMAGE: tloomberg-analytics:ci
+          CRM_API_IMAGE: tloomberg-crm:ci
+          NOTIFICATION_API_IMAGE: tloomberg-notification:ci
+          ANALYTICS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
+          ANALYTICS_DATABASE_URL: postgresql://runtime:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
+          ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics
+          ANALYTICS_APP_DATABASE_ROLE: analytics_runtime
+          CRM_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@crm-db.internal:5432/tloomberg_crm?sslmode=verify-full
+          CRM_DATABASE_URL: postgresql://runtime:placeholder@crm-db.internal:5432/tloomberg_crm?sslmode=verify-full
+          CRM_EXPECTED_DATABASE_NAME: tloomberg_crm
+          CRM_APP_DATABASE_ROLE: crm_runtime
+          CRM_PROJECTION_TOKEN: ci-placeholder-crm-projection-token-123456789
+          CRM_DB_POOL_MIN: "1"
+          CRM_DB_POOL_MAX: "8"
+          NOTIFICATION_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@notification-db.internal:5432/tloomberg_notifications?sslmode=verify-full
+          NOTIFICATION_DATABASE_URL: postgresql://runtime:placeholder@notification-db.internal:5432/tloomberg_notifications?sslmode=verify-full
+          NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
+          NOTIFICATION_APP_DATABASE_ROLE: notification_runtime
+          NOTIFICATION_INGEST_TOKEN: ci-placeholder-notification-ingest-token-123456789
+          NOTIFICATION_DESTINATION_HMAC_SECRET: ci-placeholder-notification-destination-hmac-secret-123456789
+          NOTIFICATION_DB_POOL_MIN: "1"
+          NOTIFICATION_DB_POOL_MAX: "8"
+          ANALYTICS_EVENTS_PER_MINUTE: "600"
+          COMMERCE_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
+          COMMERCE_DATABASE_URL: postgresql://runtime:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
+          COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
+          COMMERCE_APP_DATABASE_ROLE: commerce_runtime
+          COMMERCE_SERVICE_TOKEN: ci-placeholder-commerce-service-token-123456789
+          COMMERCE_DB_POOL_MIN: "1"
+          COMMERCE_DB_POOL_MAX: "8"
+          IDENTITY_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@identity-db.internal:5432/tloomberg_identity?sslmode=verify-full
+          IDENTITY_DATABASE_URL: postgresql://runtime:placeholder@identity-db.internal:5432/tloomberg_identity?sslmode=verify-full
+          IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
+          IDENTITY_APP_DATABASE_ROLE: identity_runtime
+          IDENTITY_SERVICE_TOKEN: ci-placeholder-identity-service-token-123456789
+          NOTIFICATION_IDENTITY_SERVICE_TOKEN: ci-placeholder-notification-identity-contact-token-123456789
+          IDENTITY_OTP_HMAC_SECRET: ci-placeholder-identity-otp-hmac-secret-123456789
+          IDENTITY_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          IDENTITY_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+          IDENTITY_DB_POOL_MIN: "1"
+          IDENTITY_DB_POOL_MAX: "8"
+          SAAS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_DATABASE_URL: postgresql://runtime:placeholder@db.internal:5432/tloomberg_saas
+          SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas
+          SAAS_APP_DATABASE_ROLE: saas_runtime
+          SAAS_DOMAIN: saas.example.com
+          SAAS_SUPERADMIN_PHONE_E164: "+989121234567"
+          SMS_PROVIDER: kavenegar
+          SMS_API_KEY: ci-placeholder-sms-api-key
+          SMS_SENDER: "10000000000"
+          SAAS_TRUSTED_HOSTS: saas.example.com
+          SAAS_ALLOWED_ORIGINS: https://saas.example.com
+          SAAS_OTP_HMAC_SECRET: ci-placeholder-otp-hmac-secret-123456789
+          SAAS_OUTBOX_FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          SAAS_ADMIN_MFA_FERNET_KEY: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+          SAAS_METRICS_TOKEN: ci-placeholder-metrics-token-with-more-than-32-chars
+          PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+          SAAS_METRICS_TOKEN_FILE: /tmp/saas_metrics_token
+          MARKET_API_IMAGE: tloomberg-market-api:ci
+          MARKET_DATA_API_IMAGE: tloomberg-market-data:ci
+          OWNERSHIP_API_IMAGE: tloomberg-ownership:ci
+          PORTFOLIO_API_IMAGE: tloomberg-portfolio:ci
+          SCREENER_API_IMAGE: tloomberg-screener:ci
+          MARKET_SOURCE_DB_PATH: /tmp/market-source.sqlite
+          MARKET_API_DOMAIN: market-api.example.com
+          MARKET_ALLOWED_ORIGINS: https://itmahdik.github.io
+          MARKET_REFRESH_MINUTES: "10"
+          SAAS_TERMS_VERSION: ci-terms-review-version
+          SAAS_PRIVACY_VERSION: ci-privacy-review-version
+          SAAS_SUPERADMIN_PHONE_E164: "+989000000001"
+          SMS_PROVIDER: kavenegar
+          SMS_API_KEY: ci-placeholder-kavenegar-key-123456789
+          SMS_SENDER: "10004346"
+        run: |
+          printf '%s' 'ci-placeholder-metrics-token-with-more-than-32-chars' > /tmp/saas_metrics_token
+          touch /tmp/market-source.sqlite
+          docker compose -f docker-compose.saas.production.yml config --quiet
+          docker compose -f docker-compose.market.production.yml config --quiet
+          docker run --rm \
+            -e MARKET_API_DOMAIN=market-api.example.com \
+            -v "$GITHUB_WORKSPACE/Caddyfile.market:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  backup-restore-drill:
+    name: PostgreSQL backup and isolated restore drill
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tloomberg_saas_backup_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tloomberg_saas_backup_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      PGPASSWORD: postgres
+      SAAS_BACKUP_DATABASE_URL: postgresql://saas_backup@127.0.0.1:5432/tloomberg_saas_backup_test
+      SAAS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_saas_backup_test
+      SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas_backup_test
+      SAAS_EXPECTED_DB_NAME: tloomberg_saas_backup_test
+      COMMERCE_BACKUP_DATABASE_URL: postgresql://commerce_backup@127.0.0.1:5432/tloomberg_commerce_backup_test
+      COMMERCE_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_commerce_backup_test
+      COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce_backup_test
+      COMMERCE_EXPECTED_DB_NAME: tloomberg_commerce_backup_test
+      ANALYTICS_BACKUP_DATABASE_URL: postgresql://analytics_backup@127.0.0.1:5432/tloomberg_analytics_backup_test
+      ANALYTICS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_analytics_backup_test
+      ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics_backup_test
+      ANALYTICS_EXPECTED_DB_NAME: tloomberg_analytics_backup_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Set up Python for the migration runner
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install PostgreSQL driver for migration runner
+        run: python -m pip install "psycopg[binary]>=3.2,<4"
+      - name: Install age encryption tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+      - name: Generate independent ephemeral SaaS, Commerce and Analytics age identities
+        run: |
+          age-keygen -o "$RUNNER_TEMP/saas-backup-age-identity.txt"
+          echo "SAAS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/saas-backup-age-identity.txt")" >> "$GITHUB_ENV"
+          echo "SAAS_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/saas-backup-age-identity.txt" >> "$GITHUB_ENV"
+          age-keygen -o "$RUNNER_TEMP/commerce-backup-age-identity.txt"
+          echo "COMMERCE_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/commerce-backup-age-identity.txt")" >> "$GITHUB_ENV"
+          echo "COMMERCE_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/commerce-backup-age-identity.txt" >> "$GITHUB_ENV"
+          age-keygen -o "$RUNNER_TEMP/analytics-backup-age-identity.txt"
+          echo "ANALYTICS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/analytics-backup-age-identity.txt")" >> "$GITHUB_ENV"
+          echo "ANALYTICS_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/analytics-backup-age-identity.txt" >> "$GITHUB_ENV"
+      - name: Install PostgreSQL 16 client wrappers matching the server
+        run: |
+          mkdir -p "$RUNNER_TEMP/postgres16-bin"
+          for tool in psql pg_dump pg_restore createdb; do
+            cat > "$RUNNER_TEMP/postgres16-bin/$tool" <<EOF
+          #!/usr/bin/env bash
+          exec docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            -e PGPASSWORD \
+            postgres:16-alpine $tool "\$@"
+          EOF
+            chmod 700 "$RUNNER_TEMP/postgres16-bin/$tool"
+          done
+          echo "$RUNNER_TEMP/postgres16-bin" >> "$GITHUB_PATH"
+      - name: Build the disposable SaaS schema with migration checksums
+        run: |
+          python scripts/manage_saas_migrations.py --apply
+          python scripts/manage_saas_migrations.py --check
+      - name: Create disposable Commerce backup database and migrate it
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres", autocommit=True) as conn:
+              conn.execute("CREATE DATABASE tloomberg_commerce_backup_test")
+          PY
+          python scripts/manage_commerce_migrations.py --apply
+          python scripts/manage_commerce_migrations.py --check
+      - name: Create disposable Analytics backup database and migrate it
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres", autocommit=True) as conn:
+              conn.execute("CREATE DATABASE tloomberg_analytics_backup_test")
+          PY
+          python scripts/manage_analytics_migrations.py --apply
+          python scripts/manage_analytics_migrations.py --check
+          psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "
+            INSERT INTO analytics_consents(user_id,essential,product_analytics,consent_version)
+            VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1');
+            INSERT INTO analytics_consent_history(user_id,essential,product_analytics,consent_version,source)
+            VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1','api');
+            INSERT INTO analytics_events(user_id,session_id,event_name,page_path,client_event_id)
+            VALUES ('00000000-0000-4000-8000-000000000001',
+                    '00000000-0000-4000-8000-000000000002',
+                    'page_view','/backup-test',
+                    '00000000-0000-4000-8000-000000000003');
+            INSERT INTO analytics_ingestion_limits(user_id,window_started_at,event_count)
+            VALUES ('00000000-0000-4000-8000-000000000001',date_trunc('minute',now()),1);
+            INSERT INTO analytics_audit_logs(actor_user_id,action,target_type,target_id)
+            VALUES ('00000000-0000-4000-8000-000000000001',
+                    'analytics.backup.test','test','backup-roundtrip');
+          "
+          seeded_counts="$(psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "SELECT (SELECT count(*) FROM analytics_consents)||'|'||(SELECT count(*) FROM analytics_consent_history)||'|'||(SELECT count(*) FROM analytics_events)||'|'||(SELECT count(*) FROM analytics_audit_logs)||'|'||(SELECT count(*) FROM analytics_ingestion_limits)")"
+          echo "Analytics backup seed row counts: $seeded_counts"
+          test "$seeded_counts" = "1|1|1|1|1"
+      - name: Create dedicated read-only backup role
+        run: |
+          psql "$SAAS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE saas_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_saas_backup_test TO saas_backup; GRANT USAGE ON SCHEMA public TO saas_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO saas_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO saas_backup;"
+          backup_grants="$(psql "$SAAS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 \
+            -c "SELECT has_table_privilege('saas_backup','public.users','SELECT') AND NOT has_table_privilege('saas_backup','public.users','INSERT') AND NOT has_table_privilege('saas_backup','public.users','UPDATE') AND NOT has_table_privilege('saas_backup','public.users','DELETE') AND NOT has_schema_privilege('saas_backup','public','CREATE')")"
+          test "$backup_grants" = "t"
+      - name: Verify remote backup connections reject unverified TLS
+        env:
+          SAAS_BACKUP_DATABASE_URL: postgresql://saas_backup@db.example.invalid:5432/tloomberg_saas
+          SAAS_EXPECTED_DB_NAME: tloomberg_saas
+          SAAS_BACKUP_DIR: ${{ runner.temp }}/saas-backup-tls-negative
+        run: |
+          if bash scripts/saas_db_backup.sh >"$RUNNER_TEMP/backup-tls-negative.log" 2>&1; then
+            echo "Backup script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/backup-tls-negative.log"
+      - name: Create checksum-verified backup
+        run: |
+          export SAAS_BACKUP_DIR="$RUNNER_TEMP/saas-backups"
+          bash scripts/saas_db_backup.sh
+      - name: Create dedicated read-only Commerce backup role
+        run: |
+          psql "$COMMERCE_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE commerce_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_commerce_backup_test TO commerce_backup; GRANT USAGE ON SCHEMA public TO commerce_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO commerce_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO commerce_backup;"
+          grants="$(psql "$COMMERCE_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1             -c "SELECT has_table_privilege('commerce_backup','public.users','SELECT') AND NOT has_table_privilege('commerce_backup','public.users','INSERT') AND NOT has_table_privilege('commerce_backup','public.users','UPDATE') AND NOT has_table_privilege('commerce_backup','public.users','DELETE') AND NOT has_schema_privilege('commerce_backup','public','CREATE')")"
+          test "$grants" = "t"
+      - name: Reject unverified TLS for remote Commerce backup connections
+        env:
+          COMMERCE_BACKUP_DATABASE_URL: postgresql://commerce_backup@db.example.invalid:5432/tloomberg_commerce_backup_test
+          COMMERCE_EXPECTED_DB_NAME: tloomberg_commerce_backup_test
+          COMMERCE_BACKUP_DIR: ${{ runner.temp }}/commerce-backup-tls-negative
+        run: |
+          if bash scripts/commerce_db_backup.sh >"$RUNNER_TEMP/commerce-backup-tls-negative.log" 2>&1; then
+            echo "Commerce backup script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/commerce-backup-tls-negative.log"
+      - name: Create independent encrypted Commerce backup
+        run: |
+          export COMMERCE_BACKUP_DIR="$RUNNER_TEMP/commerce-backups"
+          bash scripts/commerce_db_backup.sh
+      - name: Create dedicated read-only Analytics backup role
+        run: |
+          psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE analytics_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_analytics_backup_test TO analytics_backup; GRANT USAGE ON SCHEMA public TO analytics_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO analytics_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO analytics_backup;"
+          grants="$(psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege('analytics_backup','public.analytics_events','SELECT') AND NOT has_table_privilege('analytics_backup','public.analytics_events','INSERT') AND NOT has_table_privilege('analytics_backup','public.analytics_events','UPDATE') AND NOT has_table_privilege('analytics_backup','public.analytics_events','DELETE') AND NOT has_schema_privilege('analytics_backup','public','CREATE')")"
+          test "$grants" = "t"
+      - name: Reject unverified TLS for remote Analytics backup connections
+        env:
+          ANALYTICS_BACKUP_DATABASE_URL: postgresql://analytics_backup@db.example.invalid:5432/tloomberg_analytics
+          ANALYTICS_EXPECTED_DB_NAME: tloomberg_analytics
+          ANALYTICS_BACKUP_DIR: ${{ runner.temp }}/analytics-backup-tls-negative
+          ANALYTICS_BACKUP_AGE_RECIPIENT: ${{ env.ANALYTICS_BACKUP_AGE_RECIPIENT }}
+        run: |
+          if bash scripts/analytics_db_backup.sh >"$RUNNER_TEMP/analytics-backup-tls-negative.log" 2>&1; then
+            echo "Analytics backup script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/analytics-backup-tls-negative.log"
+      - name: Create independent encrypted Analytics backup
+        run: |
+          export ANALYTICS_BACKUP_DIR="$RUNNER_TEMP/analytics-backups"
+          bash scripts/analytics_db_backup.sh
+      - name: Reject unverified TLS for Analytics restore targets
+        env:
+          ANALYTICS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_analytics_restore_verify
+          ANALYTICS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_analytics_restore_verify
+          ANALYTICS_PRODUCTION_DB_NAME: tloomberg_analytics_backup_test
+          ANALYTICS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/analytics-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/analytics-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          if ANALYTICS_BACKUP_FILE="$dump_file" bash scripts/analytics_db_restore_verify.sh >"$RUNNER_TEMP/analytics-restore-tls-negative.log" 2>&1; then
+            echo "Analytics restore script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/analytics-restore-tls-negative.log"
+      - name: Restore Analytics backup into an isolated database
+        run: |
+          createdb --host=127.0.0.1 --username=postgres tloomberg_analytics_restore_verify
+          dump_file="$(find "$RUNNER_TEMP/analytics-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          ANALYTICS_BACKUP_FILE="$dump_file" \
+          ANALYTICS_RESTORE_VERIFY_DATABASE_URL="postgresql://postgres@127.0.0.1:5432/tloomberg_analytics_restore_verify" \
+          ANALYTICS_RESTORE_VERIFY_EXPECTED_DB_NAME="tloomberg_analytics_restore_verify" \
+          ANALYTICS_PRODUCTION_DB_NAME="tloomberg_analytics_backup_test" \
+          ANALYTICS_BACKUP_AGE_IDENTITY="$RUNNER_TEMP/analytics-backup-age-identity.txt" \
+          TMPDIR="$RUNNER_TEMP" \
+          bash scripts/analytics_db_restore_verify.sh
+      - name: Verify restored Analytics schema boundary
+        run: |
+          psql "postgresql://postgres@127.0.0.1:5432/tloomberg_analytics_restore_verify" \
+            -X -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE c BIGINT; h BIGINT; e BIGINT; a BIGINT; l BIGINT; BEGIN SELECT count(*) INTO c FROM analytics_consents; SELECT count(*) INTO h FROM analytics_consent_history; SELECT count(*) INTO e FROM analytics_events; SELECT count(*) INTO a FROM analytics_audit_logs; SELECT count(*) INTO l FROM analytics_ingestion_limits; IF c <> 1 OR h <> 1 OR e <> 1 OR a <> 1 OR l <> 1 THEN RAISE EXCEPTION 'Analytics backup restore counts: consents=%, history=%, events=%, audit=%, limits=%', c,h,e,a,l; END IF; END \$\$"
+      - name: Reject unverified TLS for Commerce restore targets
+        env:
+          COMMERCE_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_commerce_restore_verify
+          COMMERCE_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_commerce_restore_verify
+          COMMERCE_PRODUCTION_DB_NAME: tloomberg_commerce_backup_test
+          COMMERCE_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/commerce-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/commerce-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          if COMMERCE_BACKUP_FILE="$dump_file" bash scripts/commerce_db_restore_verify.sh >"$RUNNER_TEMP/commerce-restore-tls-negative.log" 2>&1; then
+            echo "Commerce restore script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/commerce-restore-tls-negative.log"
+      - name: Restore Commerce backup into an isolated database
+        run: |
+          createdb --host=127.0.0.1 --username=postgres tloomberg_commerce_restore_verify
+          dump_file="$(find "$RUNNER_TEMP/commerce-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          COMMERCE_BACKUP_FILE="$dump_file" \
+          COMMERCE_RESTORE_VERIFY_DATABASE_URL="postgresql://postgres@127.0.0.1:5432/tloomberg_commerce_restore_verify" \
+          COMMERCE_RESTORE_VERIFY_EXPECTED_DB_NAME="tloomberg_commerce_restore_verify" \
+          COMMERCE_PRODUCTION_DB_NAME="tloomberg_commerce_backup_test" \
+          COMMERCE_BACKUP_AGE_IDENTITY="$RUNNER_TEMP/commerce-backup-age-identity.txt" \
+          TMPDIR="$RUNNER_TEMP" \
+          bash scripts/commerce_db_restore_verify.sh
+      - name: Verify restored Commerce schema boundary
+        run: |
+          psql "postgresql://postgres@127.0.0.1:5432/tloomberg_commerce_restore_verify" \
+            -X -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.users'), to_regclass('public.payment_orders'), to_regclass('public.wallet_ledger_entries'), to_regclass('public.commerce_schema_migrations')"
+      - name: Verify remote restore targets reject unverified TLS
+        env:
+          SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_saas_restore_verify
+          SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
+          SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
+          SAAS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/saas-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          if SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh >"$RUNNER_TEMP/restore-tls-negative.log" 2>&1; then
+            echo "Restore script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/restore-tls-negative.log"
+      - name: Create isolated restore target
+        run: createdb --host=127.0.0.1 --username=postgres tloomberg_saas_restore_verify
+      - name: Restore and verify the backup
+        env:
+          SAAS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify
+          SAAS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_saas_restore_verify
+          SAAS_PRODUCTION_DB_NAME: tloomberg_saas_backup_test
+          SAAS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/saas-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/saas-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          SAAS_BACKUP_FILE="$dump_file" bash scripts/saas_db_restore_verify.sh
+      - name: Verify restored schema and data boundary
+        run: |
+          psql "postgresql://postgres@127.0.0.1:5432/tloomberg_saas_restore_verify" \
+            -X -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.users'), to_regclass('public.payment_orders'), to_regclass('public.wallet_ledger_entries'), to_regclass('public.admin_audit_logs')"

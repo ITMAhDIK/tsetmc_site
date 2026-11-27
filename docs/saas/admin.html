@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="tloomberg-admin-api" content="same-origin">
+  <title>کنسول مدیریت | تلومبرگ</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0b1220;--panel:#111c2e;--panel2:#17243a;--line:#26364f;--ink:#eef4ff;--muted:#9fb0c8;--accent:#7dd3fc;--ok:#86efac;--warn:#fcd34d;--bad:#fca5a5}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.8 Tahoma,Arial,sans-serif}
+    a{color:var(--accent);text-decoration:none}button,input,select,textarea{font:inherit}
+    .shell{max-width:1500px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
+    h1{font-size:22px;margin:0}h2{font-size:17px;margin:0 0 12px}small,.muted{color:var(--muted)}
+    .pill{border:1px solid var(--line);border-radius:999px;padding:3px 10px;color:var(--muted);font-size:12px}
+    .alert{padding:12px 16px;border:1px solid var(--line);background:var(--panel);border-radius:12px;margin:14px 0}
+    .alert.error{border-color:#7f1d1d;color:var(--bad)}.alert.success{border-color:#166534;color:var(--ok)}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.tabs button,.btn{border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:8px 13px;border-radius:9px;cursor:pointer}
+    button:disabled{opacity:.45;cursor:not-allowed}.tabs button.active,.btn.primary{border-color:#247ba0;background:#12324a}
+    .btn.danger{border-color:#7f1d1d;color:var(--bad)}.btn.good{border-color:#166534;color:var(--ok)}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+    .metric{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:15px}
+    .metric strong{display:block;font-size:24px;font-variant-numeric:tabular-nums}.metric span{color:var(--muted);font-size:12px}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    input,select,textarea{background:#0c1626;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px;min-width:0}
+    input[type=search]{min-width:240px}textarea{width:100%;min-height:100px}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}
+    table{width:100%;border-collapse:collapse;min-width:700px}th,td{padding:10px 12px;text-align:right;border-bottom:1px solid var(--line);vertical-align:top}
+    th{color:var(--muted);font-weight:600;background:#101a2a;white-space:nowrap}tr:last-child td{border-bottom:0}
+    td .btn{margin:2px}.empty{padding:30px;text-align:center;color:var(--muted)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.row>*{flex:0 0 auto}
+    .hidden{display:none!important}.stack{display:grid;gap:12px}.ticket{border:1px solid var(--line);padding:12px;border-radius:10px;margin:8px 0}
+    .ticket.internal{border-color:#854d0e;background:#251d10}.ticket .body{white-space:pre-wrap;overflow-wrap:anywhere}
+    code{direction:ltr;display:inline-block;color:#bae6fd;overflow-wrap:anywhere}
+    @media(max-width:700px){.shell{padding:12px}.top{align-items:flex-start;flex-direction:column}.panel{padding:12px}input[type=search]{min-width:100%;width:100%}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div><h1>کنسول مدیریت تلومبرگ</h1><small>مدیریت کاربران، اشتراک‌ها، عملیات مالی، پشتیبانی و تحلیل محصول</small></div>
+    <div class="row"><span id="identity" class="pill">در حال بررسی نشست…</span><a class="btn" href="./index.html">بازگشت به حساب</a></div>
+  </header>
+  <div id="notice" class="alert">در حال اتصال به سرویس مدیریتی…</div>
+  <nav id="tabs" class="tabs hidden" aria-label="بخش‌های کنسول"></nav>
+  <main id="content" class="hidden"></main>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const API_BASE_SETTING = (document.querySelector('meta[name="tloomberg-admin-api"]')?.content || '').trim();
+  const API_BASE = API_BASE_SETTING === 'same-origin'
+    ? (window.location.hostname.endsWith('.github.io') ? '' : window.location.origin)
+    : API_BASE_SETTING.replace(/\/$/, '');
+  const state = { roles: [], section: 'overview', mfa: null };
+  const notice = (message, type='') => {
+    const n=$('notice'); n.textContent=message; n.className='alert'+(type?' '+type:'');
+  };
+  function apiError(payload, status) {
+    const detail=payload?.detail;
+    if(typeof detail==='string') return detail;
+    if(detail) return JSON.stringify(detail);
+    return payload?.message || ('خطای سرویس: '+status);
+  }
+  async function api(path, method='GET', body=null, headers={}) {
+    if(!API_BASE) throw new Error('نشانی API مدیریتی هنوز تنظیم نشده است. ورود مدیریتی غیرفعال است.');
+    const options={method,credentials:'include',mode:'cors',headers:{Accept:'application/json',...headers}};
+    if(body!==null){options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);}
+    const response=await fetch(API_BASE+'/api/v1'+path,options);
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(apiError(payload,response.status));
+    return payload;
+  }
+  function node(tag,value,className){
+    const el=document.createElement(tag);
+    if(value!==undefined&&value!==null)el.textContent=String(value);
+    if(className)el.className=className;
+    return el;
+  }
+  function button(label,fn,kind=''){
+    const b=node('button',label,'btn '+kind);b.type='button';
+    b.addEventListener('click',async()=>{b.disabled=true;try{await fn();}catch(e){notice(e.message,'error');}finally{b.disabled=false;}});
+    return b;
+  }
+  function panel(title){
+    const p=node('section',null,'panel');if(title)p.append(node('h2',title));return p;
+  }
+  function table(headers,rows){
+    const wrap=node('div',null,'table-wrap'),t=node('table'),thead=node('thead'),hr=node('tr');
+    headers.forEach(h=>hr.append(node('th',h)));thead.append(hr);t.append(thead);
+    const body=node('tbody');
+    if(!rows.length){const tr=node('tr'),td=node('td','موردی برای نمایش وجود ندارد','empty');td.colSpan=headers.length;tr.append(td);body.append(tr);}
+    rows.forEach(row=>{const tr=node('tr');row.forEach(value=>{const td=node('td');if(value instanceof Node)td.append(value);else td.textContent=value===null||value===undefined?'—':String(value);tr.append(td);});body.append(tr);});
+    t.append(body);wrap.append(t);return wrap;
+  }
+  function show(content){$('content').replaceChildren(content);$('content').classList.remove('hidden');}
+  function metricGrid(values){
+    const g=node('div',null,'grid');
+    Object.entries(values||{}).forEach(([key,value])=>{const m=node('div',null,'metric');m.append(node('span',key),node('strong',value??0));g.append(m);});
+    return g;
+  }
+  function otpInput(){const x=node('input');x.inputMode='numeric';x.maxLength=6;x.placeholder='کد ۶ رقمی';x.autocomplete='one-time-code';return x;}
+  async function setupMfa(){
+    const p=panel('فعال‌سازی احراز هویت دومرحله‌ای');
+    p.append(node('p','این حساب دارای دسترسی مدیریتی است. قبل از ورود به کنسول، یک برنامهٔ Authenticator مانند Google Authenticator یا Aegis را ثبت کن.'));
+    const start=button('ساخت کلید امن MFA',async()=>{
+      const result=await api('/auth/mfa/setup','POST',{});
+      const secret=node('code',result.secret);
+      const uri=node('code',result.otpauth_uri);
+      const verify=otpInput();
+      const confirm=button('تأیید و فعال‌سازی MFA',async()=>{
+        if(!/^\d{6}$/.test(verify.value))throw new Error('کد باید دقیقاً شش رقم باشد.');
+        await api('/auth/mfa/confirm','POST',{code:verify.value});
+        notice('MFA فعال شد و این نشست نیز تأیید شده است.','success');
+        await loadConsole();
+      },'primary');
+      p.replaceChildren(node('h2','ثبت MFA در برنامهٔ احراز هویت'),node('p','کلید زیر را فقط در برنامهٔ Authenticator وارد کن. این مقدار یک‌بار نمایش داده می‌شود؛ آن را در چت یا تیکت ارسال نکن.'),secret,node('p','آدرس استاندارد otpauth'),uri,verify,confirm);
+    },'primary');
+    p.append(start);show(p);
+  }
+  async function verifyMfa(){
+    const p=panel('تأیید ورود مدیریتی با MFA');
+    p.append(node('p','کد شش‌رقمی فعلی برنامهٔ Authenticator را وارد کن. کدهای قبلی و تکراری پذیرفته نمی‌شوند.'));
+    const code=otpInput();
+    p.append(code,button('تأیید کد',async()=>{
+      if(!/^\d{6}$/.test(code.value))throw new Error('کد باید دقیقاً شش رقم باشد.');
+      await api('/auth/mfa/verify','POST',{code:code.value});
+      notice('نشست مدیریتی با موفقیت تأیید شد.','success');
+      await loadConsole();
+    },'primary'));
+    show(p);
+  }
+  const sections=[
+    ['overview','نمای کلی',loadOverview],
+    ['users','کاربران',loadUsers],
+    ['plans','طرح‌ها',loadPlans],
+    ['subscriptions','اشتراک‌ها',loadSubscriptions],
+    ['payments','سفارش‌ها و پرداخت‌ها',loadPayments],
+    ['withdrawals','برداشت‌ها',loadWithdrawals],
+    ['referrals','دعوت‌ها',loadReferrals],
+    ['tickets','پشتیبانی',loadTickets],
+    ['faq','پرسش‌های متداول',loadFaq],
+    ['analytics','تحلیل محصول',loadAnalytics],
+    ['audit','گزارش حسابرسی',loadAudit]
+  ];
+  async function navigate(id){
+    const item=sections.find(x=>x[0]===id);if(!item)return;
+    state.section=id;
+    [...$('tabs').querySelectorAll('button')].forEach(b=>b.classList.toggle('active',b.dataset.id===id));
+    notice('در حال دریافت اطلاعات…');
+    try{await item[2]();notice('اطلاعات دریافت شد.','success');}catch(e){notice(e.message,'error');}
+  }
+  function renderTabs(){
+    const tabs=$('tabs');tabs.replaceChildren();
+    sections.forEach(([id,label])=>{const b=node('button',label);b.type='button';b.dataset.id=id;b.addEventListener('click',()=>navigate(id));tabs.append(b);});
+    tabs.classList.remove('hidden');
+  }
+  async function loadOverview(){
+    const d=await api('/admin/dashboard'),p=panel('وضعیت سامانه');
+    p.append(metricGrid(d.summary||{}));show(p);
+  }
+  async function loadUsers(){
+    const p=panel('مدیریت کاربران'),bar=node('div',null,'toolbar'),q=node('input'),status=node('select');
+    q.type='search';q.placeholder='جست‌وجو بر اساس شناسه یا نام';
+    [['همه وضعیت‌ها',''],['فعال','active'],['تعلیق‌شده','suspended'],['در انتظار','pending'],['حذف‌شده','deleted']].forEach(([label,value])=>{const o=node('option',label);o.value=value;status.append(o);});
+    const results=node('div');
+    async function refresh(){
+      const params=new URLSearchParams({limit:'50'});if(q.value)params.set('q',q.value);if(status.value)params.set('status',status.value);
+      const data=await api('/admin/users?'+params.toString());
+      const rows=(data.users||[]).map(u=>{
+        const actions=node('div',null,'row');
+        actions.append(button(u.status==='active'?'تعلیق':'فعال‌سازی',async()=>{
+          const next=u.status==='active'?'suspended':'active';
+          const reason=window.prompt('دلیل تغییر وضعیت را وارد کن:','بازبینی مدیر');
+          if(!reason)return;
+          await api('/admin/users/'+u.id+'/status','PATCH',{status:next,reason});
+          await refresh();
+        },u.status==='active'?'danger':'good'));
+        actions.append(button('جزئیات',async()=>{
+          const detail=await api('/admin/users/'+u.id);
+          const box=panel('جزئیات کاربر '+u.public_id);
+          box.append(node('pre',JSON.stringify(detail,null,2)));
+          box.append(button('بازگشت',refresh));show(box);
+        }));
+        return [u.public_id,u.display_name||u.username,u.phone_e164,u.status,(u.roles||[]).join('، '),actions];
+      });
+      results.replaceChildren(table(['شناسه','نام','موبایل','وضعیت','نقش‌ها','عملیات'],rows));
+    }
+    bar.append(q,status,button('جست‌وجو',refresh,'primary'));p.append(bar,results);show(p);await refresh();
+  }
+  async function loadPlans(){
+    const d=await api('/admin/plans'),p=panel('طرح‌های اشتراک');
+    const rows=(d.plans||[]).map(plan=>[plan.code,plan.title,plan.duration_days,plan.price_toman,plan.active?'فعال':'غیرفعال',
+      button('ویرایش',async()=>{
+        const price=window.prompt('قیمت جدید به تومان',String(plan.price_toman));if(price===null)return;
+        const duration=window.prompt('مدت به روز',String(plan.duration_days));if(duration===null)return;
+        await api('/admin/plans/'+plan.id,'PATCH',{price_toman:Number(price),duration_days:Number(duration)});
+        await loadPlans();
+      })]);
+    p.append(table(['کد','عنوان','روز','قیمت (تومان)','وضعیت','عملیات'],rows));show(p);
+  }
+  async function loadSubscriptions(){
+    const d=await api('/admin/subscriptions'),p=panel('اشتراک‌ها');
+    const rows=(d.subscriptions||[]).map(s=>[s.public_id,s.plan_title,s.price_toman,s.status,s.starts_at,s.ends_at,
+      ['pending','active'].includes(s.status)?button('لغو',async()=>{
+        const reason=window.prompt('دلیل لغو را وارد کن:','درخواست کاربر');if(!reason)return;
+        await api('/admin/subscriptions/'+s.id+'/cancel','POST',{reason});await loadSubscriptions();
+      },'danger'):'—']);
+    p.append(table(['کاربر','طرح','قیمت (تومان)','وضعیت','شروع','پایان','عملیات'],rows));show(p);
+  }
+  async function loadPayments(){
+    const d=await api('/admin/payments/orders'),p=panel('سفارش‌های پرداخت');
+    const rows=(d.orders||[]).map(o=>[o.public_id||o.user_public_id,o.plan_code,o.amount_toman,o.status||o.order_status,o.created_at,
+      button('ثبت یادداشت تطبیق',async()=>{
+        const note=window.prompt('یادداشت بررسی؛ این عملیات پرداخت را تسویه نمی‌کند:','');if(note===null||note.trim().length<3)return;
+        const key='admin-review-'+crypto.randomUUID();
+        await api('/admin/payments/orders/'+o.id+'/reconciliation-notes','POST',{note},{'Idempotency-Key':key});
+        notice('یادداشت ثبت شد؛ وضعیت پرداخت یا اشتراک تغییری نکرد.','success');await loadPayments();
+      })]);
+    p.append(table(['کاربر','طرح','مبلغ (تومان)','وضعیت','زمان','عملیات'],rows));show(p);
+  }
+  async function loadWallet(userId){
+    const d=await api('/admin/users/'+userId+'/wallet'),p=panel('کیف پول کاربر');
+    p.append(node('pre',JSON.stringify(d.balances||d,null,2)));
+    const bucket=node('select'),amount=node('input'),reason=node('input');
+    [['cash','نقدی'],['gift','هدیه']].forEach(([v,l])=>{const o=node('option',l);o.value=v;bucket.append(o);});
+    amount.type='number';amount.placeholder='مبلغ؛ عدد مثبت اعتبار و منفی بدهکار';
+    reason.placeholder='دلیل اصلاح دفترکل';
+    p.append(node('p','اصلاح کیف پول فقط با ثبت سند جبرانی و کلید تکرارناپذیری انجام می‌شود.'));
+    p.append(bucket,amount,reason,button('ثبت اصلاحیه',async()=>{
+      const n=Number(amount.value);if(!Number.isSafeInteger(n)||n===0)throw new Error('مبلغ باید عدد صحیح غیرصفر باشد.');
+      if(!reason.value||reason.value.trim().length<3)throw new Error('دلیل الزامی است.');
+      await api('/admin/users/'+userId+'/wallet/adjustments','POST',{bucket:bucket.value,amount_toman:n,reason:reason.value},{'Idempotency-Key':'admin-wallet-'+crypto.randomUUID()});
+      await loadWallet(userId);
+    },'primary'));
+    p.append(button('بازگشت به کاربران',loadUsers));show(p);
+  }
+  async function loadWithdrawals(){
+    const d=await api('/admin/withdrawals'),p=panel('درخواست‌های برداشت');
+    const rows=(d.withdrawals||[]).map(w=>[w.public_id,w.amount_toman,w.status,w.requested_at,
+      ['requested','approved'].includes(w.status)?button('تأیید',async()=>review(w,'approved'),'good'):'—',
+      ['requested','approved'].includes(w.status)?button('رد',async()=>review(w,'rejected'),'danger'):'—']);
+    async function review(w,decision){
+      const note=window.prompt('دلیل تصمیم را وارد کن:','');if(note===null||note.trim().length<3)return;
+      await api('/admin/withdrawals/'+w.id+'/review','POST',{decision,note});
+      await loadWithdrawals();
+    }
+    p.append(table(['کاربر','مبلغ','وضعیت','درخواست','تأیید','رد'],rows));
+    p.append(node('p','این کنسول برداشت را تأیید یا رد می‌کند؛ پرداخت بانکی واقعی انجام نمی‌دهد.','muted'));show(p);
+  }
+  async function loadReferrals(){
+    const d=await api('/admin/referrals'),p=panel('دعوت‌ها و پاداش‌ها');
+    p.append(table(['دعوت‌کننده','دعوت‌شده','وضعیت','زمان'],(d.referrals||[]).map(x=>[x.inviter_public_id||x.inviter_user_id,x.referred_public_id||x.referred_user_id,x.status,x.created_at])));show(p);
+  }
+  async function loadTickets(){
+    const d=await api('/support/manage/tickets'),p=panel('صف پشتیبانی');
+    const rows=(d.tickets||[]).map(t=>[t.ticket_number,t.subject,t.status,t.priority,t.user_public_id,
+      button('مشاهده',()=>ticketDetail(t.id))]);
+    p.append(table(['شماره','موضوع','وضعیت','اولویت','کاربر','عملیات'],rows));show(p);
+  }
+  async function ticketDetail(id){
+    const d=await api('/support/manage/tickets/'+id),p=panel('تیکت '+(d.ticket.ticket_number||id));
+    p.append(node('p',d.ticket.subject+' · '+d.ticket.status));
+    (d.messages||[]).forEach(m=>{const item=node('div',null,'ticket'+(m.is_internal_note?' internal':''));item.append(node('strong',m.is_internal_note?'یادداشت داخلی':'پیام'),node('div',m.body,'body'));p.append(item);});
+    const internal=node('textarea');internal.placeholder='یادداشت داخلی (فقط برای staff)';
+    p.append(internal,button('ثبت یادداشت داخلی',async()=>{await api('/support/manage/tickets/'+id+'/internal-notes','POST',{message:internal.value});await ticketDetail(id);},'primary'));
+    const reply=node('textarea');reply.placeholder='پاسخ عمومی به کاربر';
+    p.append(reply,button('ارسال پاسخ عمومی',async()=>{await api('/support/manage/tickets/'+id+'/messages','POST',{message:reply.value});await ticketDetail(id);}));
+    p.append(button('بازگشت',loadTickets));show(p);
+  }
+  async function loadFaq(){
+    const d=await api('/support/manage/faq'),p=panel('مدیریت پرسش‌های متداول');
+    const rows=(d.articles||[]).map(a=>[a.slug,a.question,a.published?'منتشر':'پیش‌نویس',a.sort_order,
+      button('ویرایش پاسخ',async()=>{const answer=window.prompt('پاسخ جدید',a.answer);if(answer===null)return;await api('/support/manage/faq/'+a.id,'PATCH',{answer});await loadFaq();})]);
+    p.append(table(['شناسه','سؤال','وضعیت','ترتیب','عملیات'],rows));show(p);
+  }
+  async function loadAnalytics(){
+    const [overview,pages,paths]=await Promise.all([
+      api('/analytics/admin/overview?days=30'),
+      api('/analytics/admin/pages?days=30&limit=20'),
+      api('/analytics/admin/paths?days=30&limit=20')
+    ]);
+    const p=panel('گزارش تحلیل محصول');
+    p.append(node('h2','نمای کلی ۳۰ روزه'),node('pre',JSON.stringify(overview.overview||overview,null,2)));
+    p.append(node('h2','صفحات پرتردد'),table(['مسیر','بازدید'],(pages.pages||[]).map(x=>[x.page_path,x.views])));
+    p.append(node('h2','مسیرهای تکرارشونده'),table(['مسیر','تعداد تکرار'],(paths.paths||[]).map(x=>[x.path_sequence||JSON.stringify(x),x.repetitions])));
+    show(p);
+  }
+  async function loadAudit(){
+    const d=await api('/admin/audit-logs'),p=panel('گزارش حسابرسی');
+    p.append(table(['زمان','اقدام','هدف','شناسه'],(d.logs||[]).map(x=>[x.created_at,x.action,x.target_type,x.target_id])));
+    show(p);
+  }
+  async function loadConsole(){
+    const data=await api('/auth/me');
+    const user=data.user||{};
+    if(!user.is_superadmin && !(user.roles||[]).includes('superadmin'))throw new Error('این حساب دسترسی سوپرادمین ندارد.');
+    $('identity').textContent='سوپرادمین · '+(user.public_id||user.username||user.id);
+    const mfa=await api('/auth/mfa/status');
+    state.mfa=mfa;
+    if(!mfa.enabled){renderTabs();await setupMfa();notice('برای نخستین ورود، ابتدا MFA را فعال کن.');return;}
+    if(!mfa.verified_for_session){renderTabs();await verifyMfa();notice('برای این نشست، کد MFA لازم است.');return;}
+    renderTabs();$('content').classList.remove('hidden');await navigate('overview');
+  }
+  async function start(){
+    if(!API_BASE){notice('API مدیریتی تنظیم نشده است. این صفحه به‌صورت نمایشی کار نمی‌کند و به دادهٔ مدیریتی دسترسی ندارد.','error');return;}
+    try{await loadConsole();}catch(e){notice(e.message,'error');}
+  }
+  start();
+})();
+</script>
+</body>
+</html>

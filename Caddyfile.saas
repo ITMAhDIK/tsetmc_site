@@ -1,0 +1,71 @@
+{$SAAS_DOMAIN} {
+    encode zstd gzip
+
+    request_body {
+        max_size 1MB
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    # Serve the browser and the API from one HTTPS origin. This preserves
+    # first-party HttpOnly cookies and avoids dependence on third-party cookies.
+    root * /srv/saas
+
+    # Never expose internal service endpoints, even through the /api/v1 prefix.
+    @private path /api/v1/internal/* /api/v1/notifications/internal/* /internal/* /openapi.json /docs /redoc
+    handle @private {
+        respond 404
+    }
+
+    # Identity is a separate upstream and owns all browser authentication routes.
+    # Strip only the /api/v1 prefix so Identity receives /auth/* unchanged.
+    @identity path /api/v1/auth /api/v1/auth/*
+    handle @identity {
+        uri strip_prefix /api/v1
+        reverse_proxy identity-api:8000
+    }
+
+    # Product Analytics is a separate service but remains on the same HTTPS origin.
+    @analytics path /api/v1/analytics /api/v1/analytics/*
+    handle @analytics {
+        uri strip_prefix /api/v1
+        reverse_proxy analytics-api:8000
+    }
+
+    # Commercial APIs are served by the independent Subscription & Payment service.
+    @commerce path /api/v1/payments /api/v1/payments/* /api/v1/wallet /api/v1/wallet/* /api/v1/plans /api/v1/subscriptions
+    handle @commerce {
+        uri strip_prefix /api/v1
+        reverse_proxy commerce-api:8000
+    }
+
+    # Notification inbox and preferences are served by the isolated Notification service.
+    @notifications path /api/v1/notifications /api/v1/notifications/*
+    handle @notifications {
+        uri strip_prefix /api/v1
+        reverse_proxy notification-api:8000
+    }
+
+    # CRM APIs are routed to the isolated CRM service.
+    @crm path /api/v1/crm /api/v1/crm/*
+    handle @crm {
+        uri strip_prefix /api/v1
+        reverse_proxy crm-api:8000
+    }
+
+    # Remaining account, support and admin APIs stay in SaaS.
+    handle_path /api/v1/* {
+        reverse_proxy saas-api:8000
+    }
+
+    # Private API paths are denied above; only named public API prefixes are proxied.
+
+    try_files {path} {path}/ /index.html
+    file_server
+}

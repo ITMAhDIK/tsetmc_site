@@ -5,7 +5,9 @@
 The existing market-data database and the SaaS account database remain independent.
 
 - **Market database:** instruments, prices, shareholders, ownership snapshots and TSETMC-derived information.
-- **SaaS PostgreSQL database:** users, identities, preferences, roles, subscriptions, payment orders, wallet ledger, referrals, support tickets, consent and product analytics.
+- **Identity PostgreSQL database:** accounts, credentials, sessions, role and permission facts, MFA and legal acceptance.
+- **Commerce PostgreSQL database:** plans, subscription orders and entitlements, payment attempts/events/refunds, wallet ledger, bank-account verification state, withdrawals and referral rewards.
+- **SaaS PostgreSQL database:** non-secret user projections, preferences, support tickets, CRM, consent, product analytics and staff audit data.
 
 There are no cross-database foreign keys or shared tables. The browser receives neither database credential. The SaaS API authenticates visitors, checks customer entitlements and may call market-data services for authorized responses.
 
@@ -20,7 +22,7 @@ Each account has an internal UUID primary key, a public random ID and an optiona
 
 Linking a new identity requires re-authentication of that identity. Purchasing a subscription always requires a verified phone number, including users who originally signed in through Google. A phone typed into checkout is not verified until an OTP challenge completes.
 
-The browser receives only an opaque HttpOnly, Secure, SameSite session cookie. Session tokens are hashed at rest. Roles and entitlements are read from the SaaS server, never from a browser cookie or user-supplied field.
+The browser receives only an opaque HttpOnly, Secure, SameSite session cookie. Identity hashes session tokens at rest and is the source of truth for roles/permissions. SaaS and Commerce independently validate the opaque session through Identity's private introspection endpoint; commercial entitlements are read from Commerce. No role, payment state or entitlement is accepted from a browser cookie or user-supplied field.
 
 ## 3. Roles and customer plans are separate concepts
 
@@ -73,7 +75,7 @@ After qualification, create exactly one 100,000 Toman gift ledger credit, one re
 
 ## 8. Support
 
-All signed-in customers can create tickets, view their own ticket history and reply. Support staff can access tickets within their permissions. Internal notes are staff-only. FAQ articles are stored and published independently. Private ticket bodies are never copied into product analytics.
+All signed-in customers can create tickets, view their own ticket history and reply. Support staff can access tickets within their permissions. Internal notes are staff-only. FAQ articles are stored and published independently. Private ticket bodies are never copied into product analytics. Payment, subscription, wallet and referral persistence is owned by the separate Commerce service.
 
 ## 9. Product analytics: eligible clicks, scroll and dwell intervals
 
@@ -92,7 +94,7 @@ Events can be associated with a user UUID after sign-in or pseudonymous anonymou
 
 Recommended starting retention for raw event-level data is 12 months, followed by deletion or irreversible aggregation. The final privacy notice must state the actual retention period. Restrict event-level access to authorized analytics administrators and record administrative access in audit logs.
 
-The initial schema already has analytics_events with user/anonymous/session identifiers, page, component, event name, scroll depth and active duration. analytics_consents stores the current choice. Migration 002 adds consent history and event indexes. A production event collector and ingestion endpoint are still required; no site-wide analytics events are collected by the current static Pages build.
+The initial schema has analytics_events and authenticated analytics_consents. Migration 002 adds consent history and event indexes; migration 003 adds current anonymous consent and event-ID idempotency. The implemented \`saas_core.domain.product_analytics.ProductAnalyticsService\` provides consent-gated ingestion, event validation, component-level engagement aggregation, ordered funnels, weekly cohort retention, audited user-level access and configurable event retention. A production HTTP adapter, browser collector and consent UI are still required; no site-wide analytics events are collected by the current static Pages build.
 
 ## 10. Right-side account menu
 
@@ -103,7 +105,7 @@ The menu is a fixed-width drawer opening from the right:
 4. **Settings:** Jalali/Gregorian calendar, Rial/Toman currency, light/dark theme, privacy and analytics consent.
 5. **Logout.**
 
-A superadmin-only staff area contains user/role management, support operations, subscription/payment review, analytics, audit logs and market-data administration. Ordinary users and paid customers do not receive that authority.
+A staff console domain service is provided in \`saas_core.domain.admin_console.AdminConsoleService\`. It covers user/role management, subscription/payment review, wallet/withdrawal operations, referrals, support queues, FAQ and audit. Every write is permission-gated and audited transactionally. This is not a deployed HTTP adapter or browser console yet. Ordinary users and paid customers do not receive that authority.
 
 ## 11. Suggested first-party API surface
 
@@ -119,3 +121,41 @@ A superadmin-only staff area contains user/role management, support operations, 
 ## 12. Implementation boundary
 
 The right-side menu, chart lock and checkout are frontend previews. The repository currently has the separate SaaS schema and wallet rules, but it does not yet have the production SaaS API, SMS sender, Google OAuth, payment callbacks, support service or analytics ingestion endpoint. Therefore wallet actions, referrals, tickets and role changes are not simulated as successful. Production activation requires deploying the dedicated PostgreSQL database and API, then integrating and testing each external provider.
+
+
+## CRM — Phase 10 backend foundation
+
+The internal CRM runs only on the SaaS PostgreSQL database and references
+customers by the stable `users.id` UUID. It provides staff-only customer
+search, lifecycle stage and assignment, an append-only interaction timeline,
+and due-dated follow-up tasks. The `crm.read` and `crm.manage` permissions
+are separate from support-ticket access and are granted to admin/superadmin
+roles only. Every CRM route requires a recent session-bound TOTP verification.
+
+CRM records do not duplicate phone/email addresses, Market data, private ticket
+messages, payment credentials, bank information, OTPs or analytics event
+payloads. CRM read/write activity is audited; interaction history cannot be
+updated or deleted. CRM staff MFA enrollment does not confer
+`superadmin.console.access`.
+
+The staff CRM UI, reminders, prospect capture and outbound campaigns are
+deferred. No marketing message is sent by the Phase 10 backend.
+
+
+## Microservices extraction — Identity Service, Phase 1
+
+The initial microservice boundary is now explicit: Identity owns authentication
+and authorization facts in a separate PostgreSQL database. The SaaS API calls
+Identity over its private service network for session introspection and
+permission claims. SaaS stores only a same-UUID, non-secret user projection to
+retain local payment, wallet, subscription, support and CRM foreign keys.
+SaaS remains the owner of product plans, subscriptions and commercial
+entitlements. See `docs/identity/PHASE_1_IDENTITY_SERVICE.md` for deployment,
+data migration, internal HTTP contracts and the production cutover sequence.
+
+
+## Microservices extraction — Subscription & Payment Service, Phase 2
+
+Commerce is independently deployed with its own PostgreSQL database. It owns plans, orders, payment attempts/events, subscription activation, refund request records, wallet ledger, withdrawal reservations, bank-account verification state and referrals/rewards. Commerce authenticates each browser session through Identity's private introspection API; it does not read Identity tables. The SaaS API no longer mounts payment or wallet routers and obtains subscription history/paid entitlements through the private Commerce API. The Edge routes public plans, subscription, payment and wallet paths to Commerce, while private internal endpoints remain inaccessible from Caddy.
+
+The current SnapPay/DigiPay adapters intentionally return `PaymentNotConfigured`; no official merchant integration pack or sandbox evidence was available. Bank verification, payout execution, live top-ups and refund execution also remain disabled. Migration of existing SaaS commercial rows is a separate dry-run-first script and has not been run against production. See `docs/commerce/PHASE_2_COMMERCE_SERVICE.md` for service contracts, migration/cutover and production gates.

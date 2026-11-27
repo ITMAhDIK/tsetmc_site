@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: tloomberg_saas
       POSTGRES_USER: tloomberg_saas
-      POSTGRES_PASSWORD: \${SAAS_POSTGRES_PASSWORD:-local-development-only-change-me}
+      POSTGRES_PASSWORD: ${SAAS_POSTGRES_PASSWORD:?Set SAAS_POSTGRES_PASSWORD in your protected environment}
     ports:
       - "127.0.0.1:55432:5432"
     volumes:
@@ -16,5 +16,353 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  identity-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-identity-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_identity
+      POSTGRES_USER: tloomberg_identity
+      POSTGRES_PASSWORD: ${IDENTITY_POSTGRES_PASSWORD:?Set IDENTITY_POSTGRES_PASSWORD separately from the SaaS password}
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - tloomberg_identity_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_identity -d tloomberg_identity"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  identity-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.identity
+    env_file: .env.saas
+    command: ["python","scripts/manage_identity_migrations.py","--apply"]
+    environment:
+      IDENTITY_MIGRATION_DATABASE_URL: postgresql://tloomberg_identity:${IDENTITY_POSTGRES_PASSWORD:?Set IDENTITY_POSTGRES_PASSWORD}@identity-postgres:5432/tloomberg_identity
+      IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  identity-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.identity
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      IDENTITY_DATABASE_URL: postgresql://tloomberg_identity:${IDENTITY_POSTGRES_PASSWORD:?Set IDENTITY_POSTGRES_PASSWORD}@identity-postgres:5432/tloomberg_identity
+      IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
+      IDENTITY_COOKIE_SECURE: "false"
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:58001:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+
+  commerce-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-commerce-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_commerce
+      POSTGRES_USER: tloomberg_commerce
+      POSTGRES_PASSWORD: ${COMMERCE_POSTGRES_PASSWORD:?Set COMMERCE_POSTGRES_PASSWORD separately from SaaS and Identity passwords}
+    ports:
+      - "127.0.0.1:55434:5432"
+    volumes:
+      - tloomberg_commerce_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_commerce -d tloomberg_commerce"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  commerce-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.commerce
+    env_file: .env.saas
+    command: ["python","scripts/manage_commerce_migrations.py","--apply"]
+    environment:
+      COMMERCE_MIGRATION_DATABASE_URL: postgresql://tloomberg_commerce:${COMMERCE_POSTGRES_PASSWORD:?Set COMMERCE_POSTGRES_PASSWORD}@commerce-postgres:5432/tloomberg_commerce
+      COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
+    depends_on:
+      commerce-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  commerce-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.commerce
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      COMMERCE_DATABASE_URL: postgresql://tloomberg_commerce:${COMMERCE_POSTGRES_PASSWORD:?Set COMMERCE_POSTGRES_PASSWORD}@commerce-postgres:5432/tloomberg_commerce
+      COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
+      COMMERCE_SERVICE_TOKEN: ${COMMERCE_SERVICE_TOKEN:?Set a distinct Commerce private service token}
+      COMMERCE_TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      COMMERCE_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:5500
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set the Identity private service token}
+    depends_on:
+      commerce-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:58002:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+
+  crm-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-crm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_crm
+      POSTGRES_USER: tloomberg_crm
+      POSTGRES_PASSWORD: ${CRM_POSTGRES_PASSWORD:?Set a distinct CRM database password}
+    ports:
+      - "127.0.0.1:55436:5432"
+    volumes:
+      - tloomberg_crm_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_crm -d tloomberg_crm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  crm-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+    env_file: .env.saas
+    command: ["python","scripts/manage_crm_migrations.py","--apply"]
+    environment:
+      CRM_MIGRATION_DATABASE_URL: postgresql://tloomberg_crm:${CRM_POSTGRES_PASSWORD:?Set CRM password}@crm-postgres:5432/tloomberg_crm
+      CRM_EXPECTED_DATABASE_NAME: tloomberg_crm
+    depends_on:
+      crm-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  crm-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      CRM_DATABASE_URL: postgresql://tloomberg_crm:${CRM_POSTGRES_PASSWORD:?Set CRM password}@crm-postgres:5432/tloomberg_crm
+      CRM_EXPECTED_DATABASE_NAME: tloomberg_crm
+      CRM_PROJECTION_TOKEN: ${CRM_PROJECTION_TOKEN:?Set a distinct CRM projection token}
+      CRM_TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      CRM_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:5500
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set Identity private service token}
+    depends_on:
+      crm-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:58004:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+  analytics-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-analytics-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_analytics
+      POSTGRES_USER: tloomberg_analytics
+      POSTGRES_PASSWORD: ${ANALYTICS_POSTGRES_PASSWORD:?Set a distinct Analytics database password}
+    ports:
+      - "127.0.0.1:55435:5432"
+    volumes:
+      - tloomberg_analytics_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_analytics -d tloomberg_analytics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  analytics-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.analytics
+    env_file: .env.saas
+    command:
+      - python
+      - scripts/manage_analytics_migrations.py
+      - --apply
+      - --grant-role
+      - tloomberg_analytics
+    environment:
+      ANALYTICS_MIGRATION_DATABASE_URL: postgresql://tloomberg_analytics:${ANALYTICS_POSTGRES_PASSWORD:?Set Analytics password}@analytics-postgres:5432/tloomberg_analytics
+      ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics
+    depends_on:
+      analytics-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  analytics-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.analytics
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      ANALYTICS_DATABASE_URL: postgresql://tloomberg_analytics:${ANALYTICS_POSTGRES_PASSWORD:?Set Analytics password}@analytics-postgres:5432/tloomberg_analytics
+      ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics
+      ANALYTICS_TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      ANALYTICS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:5500
+      ANALYTICS_EVENTS_PER_MINUTE: ${ANALYTICS_EVENTS_PER_MINUTE:-600}
+      SAAS_ANALYTICS_CONSENT_VERSION: ${SAAS_ANALYTICS_CONSENT_VERSION:-v1}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set the Identity private service token}
+    depends_on:
+      analytics-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:58003:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+
+  analytics-retention-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.analytics
+    env_file: .env.saas
+    command: ["python","-m","analytics_service.retention_worker"]
+    environment:
+      APP_ENV: development
+      ANALYTICS_DATABASE_URL: postgresql://tloomberg_analytics:${ANALYTICS_POSTGRES_PASSWORD:?Set Analytics password}@analytics-postgres:5432/tloomberg_analytics
+      ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+      ANALYTICS_RETENTION_POLL_SECONDS: ${ANALYTICS_RETENTION_POLL_SECONDS:-3600}
+    depends_on:
+      analytics-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  notification-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-notification-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_notifications
+      POSTGRES_USER: tloomberg_notifications
+      POSTGRES_PASSWORD: ${NOTIFICATION_POSTGRES_PASSWORD:?Set a distinct Notification database password}
+    ports:
+      - "127.0.0.1:55437:5432"
+    volumes:
+      - tloomberg_notification_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_notifications -d tloomberg_notifications"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  notification-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.notification
+    env_file: .env.saas
+    command: ["python","scripts/manage_notification_migrations.py","--apply"]
+    environment:
+      NOTIFICATION_MIGRATION_DATABASE_URL: postgresql://tloomberg_notifications:${NOTIFICATION_POSTGRES_PASSWORD:?Set Notification password}@notification-postgres:5432/tloomberg_notifications
+      NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
+    depends_on:
+      notification-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  notification-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.notification
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      NOTIFICATION_DATABASE_URL: postgresql://tloomberg_notifications:${NOTIFICATION_POSTGRES_PASSWORD:?Set Notification password}@notification-postgres:5432/tloomberg_notifications
+      NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
+      NOTIFICATION_INGEST_TOKEN: ${NOTIFICATION_INGEST_TOKEN:?Set private Notification ingest token}
+      NOTIFICATION_TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set Identity private service token}
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:58005:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+
+  notification-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.notification
+    env_file: .env.saas
+    command: ["python","-m","notification_service.worker"]
+    environment:
+      APP_ENV: development
+      NOTIFICATION_DATABASE_URL: postgresql://tloomberg_notifications:${NOTIFICATION_POSTGRES_PASSWORD:?Set Notification password}@notification-postgres:5432/tloomberg_notifications
+      NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
+      NOTIFICATION_DESTINATION_HMAC_SECRET: ${NOTIFICATION_DESTINATION_HMAC_SECRET:?Set destination fingerprint key}
+      NOTIFICATION_SMTP_HOST: ${NOTIFICATION_SMTP_HOST:-}
+      NOTIFICATION_SMTP_PORT: ${NOTIFICATION_SMTP_PORT:-587}
+      NOTIFICATION_SMTP_USER: ${NOTIFICATION_SMTP_USER:-}
+      NOTIFICATION_SMTP_PASSWORD: ${NOTIFICATION_SMTP_PASSWORD:-}
+      NOTIFICATION_EMAIL_FROM: ${NOTIFICATION_EMAIL_FROM:-}
+      NOTIFICATION_SMS_WEBHOOK_URL: ${NOTIFICATION_SMS_WEBHOOK_URL:-}
+      NOTIFICATION_SMS_WEBHOOK_TOKEN: ${NOTIFICATION_SMS_WEBHOOK_TOKEN:-}
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    restart: unless-stopped
 volumes:
   tloomberg_saas_pgdata:
+  tloomberg_identity_pgdata:
+  tloomberg_commerce_pgdata:
+  tloomberg_analytics_pgdata:
+  tloomberg_crm_pgdata:
+  tloomberg_notification_pgdata:

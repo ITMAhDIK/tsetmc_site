@@ -1,0 +1,55 @@
+{$MARKET_API_DOMAIN} {
+    encode zstd gzip
+
+    request_body {
+        max_size 1MB
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    # Shareholder snapshots, ownership series, cross-company search and history.
+    @ownership path /api/v1/stocks/*/shareholders /api/v1/stocks/*/ownership-series /api/v1/shareholders/search /api/v1/shareholders/observation-history
+    handle @ownership {
+        reverse_proxy ownership-api:8000
+    }
+
+    # Stock screening query and XLSX export.
+    @screener path /api/v1/screener/query /api/v1/screener/export
+    handle @screener {
+        reverse_proxy screener-api:8000
+    }
+
+    # Investor portfolio reconstruction and dated holdings history.
+    @portfolio path /api/v1/portfolios/investors /api/v1/portfolios/*
+    handle @portfolio {
+        reverse_proxy portfolio-api:8000
+    }
+
+    # Instrument reference/search and daily prices are served by the
+    # independent read-only Market Data microservice.
+    @marketData path /api/v1/market/instruments /api/v1/market/instruments/* /api/v1/stocks/search /api/v1/stocks/*/prices
+    handle @marketData {
+        reverse_proxy market-data-api:8000
+    }
+
+    # Saved filters, watchlists, screener persistence and other legacy routes remain on Market API.
+    handle /api/v1/* {
+        reverse_proxy market-api:8000
+    }
+
+    handle /healthz {
+        reverse_proxy market-api:8000
+    }
+
+    handle /readyz {
+        reverse_proxy market-api:8000
+    }
+
+    respond "Tloomberg Market API" 404
+}

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - preview/investor-history-affinity
+      - refactor/architecture-stabilization-phase0
       - main
     paths:
       - "docs/**"
@@ -45,23 +46,36 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: python -m pip install --disable-pip-version-check openpyxl pytest
+        run: python -m pip install --disable-pip-version-check -r requirements-saas.txt openpyxl
 
       - name: Test SaaS wallet, schema and XLSX contracts
         run: python -m pytest tests/saas tests/test_screener_export_xlsx.py -q
 
-      - name: Parse SaaS PostgreSQL schemas
+      - name: Parse all SaaS and microservice PostgreSQL schemas
         run: |
           python -m pip install --disable-pip-version-check pglast
           python - <<'PY'
           from pathlib import Path
           from pglast import parse_sql
-          for path in (
-              Path("saas_core/schema/001_initial.sql"),
-              Path("saas_core/schema/002_product_features_referrals_analytics.sql"),
-          ):
-              parse_sql(path.read_text(encoding="utf-8"))
-              print(f"PostgreSQL syntax OK: {path}")
+
+          schema_dirs = (
+              Path("saas_core/schema"),
+              Path("analytics_service/schema"),
+              Path("commerce_service/schema"),
+              Path("identity_service/schema"),
+              Path("crm_service/schema"),
+              Path("notification_service/schema"),
+          )
+          parsed = 0
+          for directory in schema_dirs:
+              migrations = sorted(directory.glob("*.sql"))
+              if not migrations:
+                  raise SystemExit(f"No SQL migrations found in {directory}")
+              for path in migrations:
+                  parse_sql(path.read_text(encoding="utf-8"))
+                  parsed += 1
+                  print(f"PostgreSQL syntax OK: {path}")
+          print(f"Validated {parsed} PostgreSQL migration files")
           PY
 
       - name: Validate dashboard JSX syntax
@@ -123,13 +137,13 @@ jobs:
               raise SystemExit("Auth page is not using the site_main_lego_2 image")
           if "tloomberg.webp" in page_source or "tloomberg.webp" in auth_source:
               raise SystemExit("Previous logo reference remains")
-          if "DEMO_OTP_MODE = !API_BASE" not in script or 'maxlength="4"' not in auth:
-              raise SystemExit("Four-digit no-SMS demo mode is not configured")
+          if "const DEMO_OTP_MODE = false;" not in script or 'maxlength="6"' not in auth:
+              raise SystemExit("Public Pages must keep demo OTP disabled and require a six-digit code")
           if "setDemoMenuCookie(role)" not in script or "tloomberg_demo_menu=" not in script:
               raise SystemExit("Demo sign-in does not persist the dashboard menu display state")
           if "localStorage" in script or "sessionStorage" in script:
               raise SystemExit("Auth sessions must not be stored in browser storage")
-          for required in ("/api/v1/auth/otp/request", "/api/v1/auth/otp/verify",
+          for required in ("/api/v1/auth/phone/request", "/api/v1/auth/phone/verify",
                            "/api/v1/auth/me", "/api/v1/auth/logout"):
               if required not in script:
                   raise SystemExit(f"Missing live API contract: {required}")
@@ -215,7 +229,7 @@ jobs:
       pages: write
       id-token: write
     environment:
-      name: github-pages
+      name: github-pages-investor-preview
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages

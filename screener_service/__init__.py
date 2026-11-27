@@ -1,0 +1,1 @@
+"""Independent stock screening microservice."""

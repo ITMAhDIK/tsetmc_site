@@ -1,11 +1,13 @@
 # Tloomberg SaaS Core
 
-Independent foundation for accounts, roles, subscriptions, payments, wallet,
-referrals, support and product analytics.
+Independent SaaS application for account preferences, support, staff operations,
+CRM and product analytics. Identity and Commerce are separately deployed services.
 
 ## Data separation
 - Existing market data remains in its existing database and read-only service.
-- SaaS identity and commercial records use a dedicated PostgreSQL database.
+- Identity accounts/credentials use the dedicated Identity PostgreSQL database.
+- Subscription, payment and wallet records use the dedicated Commerce PostgreSQL database.
+- SaaS keeps non-secret user projections and owns support, CRM and analytics.
 - No cross-database foreign keys or shared tables connect these domains.
 - Analytics is allow-listed and must never collect secrets, raw form values,
   OTPs, passwords, payment data or private ticket content.
@@ -36,9 +38,17 @@ They require merchant credentials, current provider contracts, secrets,
 sandbox verification and dedicated service implementations.
 
 
-## Feature entitlement extension
+## Microservices boundary
 
-- Migration 002 adds free/premium feature entitlements, a separate market-data-manager role, phone-based referral invitations, analytics consent history and event indexes.
-- The free plan currently includes only the basic market overview and basic stock page; charts and advanced analysis belong to the two paid plans.
-- Market-data administration is a staff permission, not a subscription feature.
-- The menu and checkout are frontend previews. SMS, Google sign-in, live payments, tickets and analytics collection need a deployed API.
+The SaaS API delegates browser authentication to Identity and commercial operations
+to Commerce. Payment and wallet routers are no longer mounted by the SaaS app.
+The Commerce implementation, own database schema, independent migration runner,
+container, Edge routing and dry-run-first legacy data migration are documented in
+`docs/commerce/PHASE_2_COMMERCE_SERVICE.md`.
+
+Run Commerce migrations with:
+```powershell
+python scripts/manage_commerce_migrations.py --apply
+```
+Use the dedicated `COMMERCE_MIGRATION_DATABASE_URL` and verify the expected database
+name before applying migrations. Never point it at the Market or Identity database.
