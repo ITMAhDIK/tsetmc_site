@@ -8,7 +8,8 @@ ROOT=Path(__file__).resolve().parents[2]
 def test_notification_service_exposes_public_and_private_contracts():
  from notification_service.api import app
  paths=set(app.openapi()["paths"])
- assert {"/health","/ready","/notifications","/notifications/{notification_id}/read","/notifications/preferences","/notifications/internal/notifications"} <= paths
+ assert {"/health","/ready","/notifications","/notifications/{notification_id}/read","/notifications/preferences"} <= paths
+ assert "/internal/notifications" not in paths
 
 def test_notification_schema_has_independent_store_idempotency_and_queue():
  sql=(ROOT/"notification_service/schema/001_notification_core.sql").read_text()
