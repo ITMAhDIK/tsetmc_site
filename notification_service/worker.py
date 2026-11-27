@@ -14,7 +14,7 @@ def main():
  if not dsn: raise RuntimeError("NOTIFICATION_DATABASE_URL required")
  p=conninfo_to_dict(dsn)
  if os.getenv("APP_ENV","development").lower() in {"prod","production"} and p.get("sslmode","prefer").lower()!="verify-full": raise RuntimeError("Notification worker requires verified TLS")
- with psycopg.connect(dsn,connect_timeout=5) as conn:
+ with psycopg.connect(dsn,connect_timeout=5,autocommit=True) as conn:
   while not STOP:
    try:
     count=run_worker_once(conn,int(os.getenv("NOTIFICATION_WORKER_BATCH_SIZE","20")))
