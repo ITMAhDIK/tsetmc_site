@@ -470,6 +470,8 @@ services:
         condition: service_healthy
       analytics-api:
         condition: service_healthy
+      notification-api:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
@@ -595,6 +597,110 @@ services:
       timeout: 4s
       start_period: 20s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+  notification-migrate:
+    image: ${NOTIFICATION_API_IMAGE:?Set immutable Notification API image reference}
+    command: ["python","scripts/manage_notification_migrations.py","--apply","--grant-role","${NOTIFICATION_APP_DATABASE_ROLE:?Set pre-created Notification runtime role}"]
+    environment:
+      APP_ENV: production
+      NOTIFICATION_MIGRATION_DATABASE_URL: ${NOTIFICATION_MIGRATION_DATABASE_URL:?Set Notification migration-owner connection}
+      NOTIFICATION_EXPECTED_DATABASE_NAME: ${NOTIFICATION_EXPECTED_DATABASE_NAME:?Set Notification database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  notification-api:
+    image: ${NOTIFICATION_API_IMAGE:?Set immutable Notification API image reference}
+    command: ["uvicorn","notification_service.api:app","--host","0.0.0.0","--port","8000","--workers","${NOTIFICATION_WEB_WORKERS:-2}"]
+    environment:
+      APP_ENV: production
+      NOTIFICATION_DATABASE_URL: ${NOTIFICATION_DATABASE_URL:?Set separate Notification runtime database URL}
+      NOTIFICATION_EXPECTED_DATABASE_NAME: ${NOTIFICATION_EXPECTED_DATABASE_NAME:?Set Notification database name}
+      NOTIFICATION_INGEST_TOKEN: ${NOTIFICATION_INGEST_TOKEN:?Set private Notification ingest token}
+      NOTIFICATION_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      NOTIFICATION_DB_POOL_MIN: ${NOTIFICATION_DB_POOL_MIN:-1}
+      NOTIFICATION_DB_POOL_MAX: ${NOTIFICATION_DB_POOL_MAX:-8}
+      NOTIFICATION_DB_POOL_TIMEOUT_SECONDS: ${NOTIFICATION_DB_POOL_TIMEOUT_SECONDS:-5}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set private Identity service token}
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 120
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
+  notification-worker:
+    image: ${NOTIFICATION_API_IMAGE:?Set immutable Notification API image reference}
+    command: ["python","-m","notification_service.worker"]
+    environment:
+      APP_ENV: production
+      NOTIFICATION_DATABASE_URL: ${NOTIFICATION_DATABASE_URL:?Set separate Notification runtime database URL}
+      NOTIFICATION_EXPECTED_DATABASE_NAME: ${NOTIFICATION_EXPECTED_DATABASE_NAME:?Set Notification database name}
+      NOTIFICATION_WORKER_BATCH_SIZE: ${NOTIFICATION_WORKER_BATCH_SIZE:-20}
+      NOTIFICATION_WORKER_IDLE_SECONDS: ${NOTIFICATION_WORKER_IDLE_SECONDS:-2}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set private Identity service token}
+      NOTIFICATION_SMTP_HOST: ${NOTIFICATION_SMTP_HOST:-}
+      NOTIFICATION_SMTP_PORT: ${NOTIFICATION_SMTP_PORT:-587}
+      NOTIFICATION_SMTP_USER: ${NOTIFICATION_SMTP_USER:-}
+      NOTIFICATION_SMTP_PASSWORD: ${NOTIFICATION_SMTP_PASSWORD:-}
+      NOTIFICATION_EMAIL_FROM: ${NOTIFICATION_EMAIL_FROM:-}
+      NOTIFICATION_SMS_WEBHOOK_URL: ${NOTIFICATION_SMS_WEBHOOK_URL:-}
+      NOTIFICATION_SMS_WEBHOOK_TOKEN: ${NOTIFICATION_SMS_WEBHOOK_TOKEN:-}
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
     logging:
       driver: json-file
       options:
