@@ -131,6 +131,65 @@ services:
       timeout: 4s
       retries: 3
 
+  crm-postgres:
+    image: postgres:16-alpine
+    container_name: tloomberg-crm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tloomberg_crm
+      POSTGRES_USER: tloomberg_crm
+      POSTGRES_PASSWORD: ${CRM_POSTGRES_PASSWORD:?Set a distinct CRM database password}
+    ports:
+      - "127.0.0.1:55436:5432"
+    volumes:
+      - tloomberg_crm_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tloomberg_crm -d tloomberg_crm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  crm-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+    env_file: .env.saas
+    command: ["python","scripts/manage_crm_migrations.py","--apply"]
+    environment:
+      CRM_MIGRATION_DATABASE_URL: postgresql://tloomberg_crm:${CRM_POSTGRES_PASSWORD:?Set CRM password}@crm-postgres:5432/tloomberg_crm
+      CRM_EXPECTED_DATABASE_NAME: tloomberg_crm
+    depends_on:
+      crm-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  crm-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+    env_file: .env.saas
+    environment:
+      APP_ENV: development
+      CRM_DATABASE_URL: postgresql://tloomberg_crm:${CRM_POSTGRES_PASSWORD:?Set CRM password}@crm-postgres:5432/tloomberg_crm
+      CRM_EXPECTED_DATABASE_NAME: tloomberg_crm
+      CRM_PROJECTION_TOKEN: ${CRM_PROJECTION_TOKEN:?Set a distinct CRM projection token}
+      CRM_TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      CRM_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:5500
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set Identity private service token}
+    depends_on:
+      crm-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:58004:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
   analytics-postgres:
     image: postgres:16-alpine
     container_name: tloomberg-analytics-postgres
@@ -219,3 +278,4 @@ volumes:
   tloomberg_identity_pgdata:
   tloomberg_commerce_pgdata:
   tloomberg_analytics_pgdata:
+  tloomberg_crm_pgdata:
