@@ -7,10 +7,12 @@ from uuid import UUID
 from fastapi import Depends,HTTPException,Request as FastAPIRequest
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
 bearer=HTTPBearer(auto_error=False); COOKIE_NAME="tloomberg_session"
-def _call(path,body=None):
- base=os.getenv("IDENTITY_SERVICE_URL","").strip().rstrip("/"); token=os.getenv("NOTIFICATION_IDENTITY_SERVICE_TOKEN","").strip()
+def _call(path,body=None,notification_contact=False):
+ base=os.getenv("IDENTITY_SERVICE_URL","").strip().rstrip("/")
+ token=os.getenv("NOTIFICATION_IDENTITY_SERVICE_TOKEN" if notification_contact else "IDENTITY_SERVICE_TOKEN","").strip()
+ auth_header="X-Notification-Service-Token" if notification_contact else "X-Identity-Service-Token"
  if not base or len(token)<32: raise RuntimeError("Identity unavailable")
- req=Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers={"Content-Type":"application/json","X-Notification-Service-Token":token},method="POST" if body is not None else "GET")
+ req=Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers={"Content-Type":"application/json",auth_header:token},method="POST" if body is not None else "GET")
  try:
   with urlopen(req,timeout=3) as response: raw=response.read(65537)
  except HTTPError as e:
@@ -31,6 +33,6 @@ def current_user(request:FastAPIRequest,credentials:HTTPAuthorizationCredentials
  except (RuntimeError,KeyError,ValueError,TypeError): raise HTTPException(503,detail="Identity service unavailable") from None
 def verified_contact(user_id:UUID):
  try:
-  data=_call(f"/internal/notification-contact/{user_id}")
+  data=_call(f"/internal/notification-contact/{user_id}",notification_contact=True)
   return data.get("contact",{})
  except PermissionError: return {}
