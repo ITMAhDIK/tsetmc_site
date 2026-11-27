@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS notifications (
  template_key VARCHAR(64) NOT NULL,
  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
  category VARCHAR(24) NOT NULL CHECK(category IN ('security','transactional','product','marketing')),
+ in_app_visible BOOLEAN NOT NULL DEFAULT TRUE,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  expires_at TIMESTAMPTZ,
  read_at TIMESTAMPTZ
