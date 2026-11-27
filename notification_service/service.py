@@ -35,7 +35,7 @@ def enqueue(conn,user_ids,template_key,payload,channels,idempotency_key,actor="s
    pref=conn.execute("SELECT * FROM notification_preferences WHERE user_id=%s",(uid,)).fetchone() or {"email_enabled":True,"sms_enabled":True,"in_app_enabled":True,"marketing_enabled":False}
    allowed=[c for c in set(channels) if (c=="email" and pref["email_enabled"]) or (c=="sms" and pref["sms_enabled"]) or (c=="in_app" and pref["in_app_enabled"])]
    if category=="marketing" and not pref["marketing_enabled"]: allowed=[]
-   row=conn.execute("INSERT INTO notifications(user_id,template_key,payload,category) VALUES(%s,%s,%s::jsonb,%s) RETURNING id",(uid,template_key,json.dumps(payload),category)).fetchone()
+   row=conn.execute("INSERT INTO notifications(user_id,template_key,payload,category,in_app_visible) VALUES(%s,%s,%s::jsonb,%s,%s) RETURNING id",(uid,template_key,json.dumps(payload),category,"in_app" in allowed)).fetchone()
    nid=row["id"]; ids.append(nid)
    for channel in allowed:
     conn.execute("INSERT INTO notification_deliveries(notification_id,channel) VALUES(%s,%s)",(nid,channel))
