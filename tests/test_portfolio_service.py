@@ -1022,6 +1022,7 @@ def test_phase_10_crm_runs_alongside_market_without_cross_database_access(
             (staff["id"],),
         )
         staff_token, _ = create_session(setup_conn, staff["id"])
+        customer_token, _ = create_session(setup_conn, customer["id"])
         setup_conn.commit()
 
     def test_connection():
@@ -1088,16 +1089,12 @@ def test_phase_10_crm_runs_alongside_market_without_cross_database_access(
             )
             assert interaction.status_code == 201, interaction.text
 
-            ordinary = create_session
             # A standard customer does not inherit staff CRM permissions.
             denied = client.get(
                 "/crm/customers",
-                headers={"Authorization": f"Bearer {staff_token}"},
-                params={"lifecycle_stage": "not-a-stage"},
+                headers={"Authorization": f"Bearer {customer_token}"},
             )
-            # The admin can read CRM but cannot enter the Superadmin console;
-            # schema and permission boundaries are checked separately below.
-            assert denied.status_code == 200
+            assert denied.status_code == 403
 
         after_status, after_body = market_overview()
         assert after_status == 200, after_body.decode("utf-8", "replace")
