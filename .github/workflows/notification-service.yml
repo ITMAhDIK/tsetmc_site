@@ -48,6 +48,12 @@ jobs:
           python scripts/manage_notification_migrations.py --check
       - name: Run Notification unit, API, and PostgreSQL integration tests
         run: python -m pytest -q tests/notification_service
+      - name: Build and verify non-root Notification image
+        run: |
+          docker build --file Dockerfile.notification --tag tloomberg-notification:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-notification:ci)"
+          test "$image_user" = "10010:10010"
+          docker run --rm tloomberg-notification:ci python -c "import notification_service.api; import notification_service.worker; print('Notification runtime imports ok')"
       - name: Validate local and production Compose
         env:
           SAAS_API_IMAGE: tloomberg-saas-api:ci
