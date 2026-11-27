@@ -49,5 +49,6 @@ jobs:
         run: python -m pytest -q tests/crm_service
       - name: Validate local and production Compose
         run: |
+          cp .env.saas.example .env.saas
           docker compose --env-file .env.saas.example -f docker-compose.saas.yml config --quiet
           docker compose --env-file .env.saas.example -f docker-compose.saas.production.yml config --quiet
