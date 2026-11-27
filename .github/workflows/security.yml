@@ -381,7 +381,7 @@ jobs:
       - name: Verify restored Analytics schema boundary
         run: |
           psql "postgresql://postgres@127.0.0.1:5432/tloomberg_analytics_restore_verify" \
-            -X -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF (SELECT count(*) FROM analytics_consents) <> 1 OR (SELECT count(*) FROM analytics_consent_history) <> 1 OR (SELECT count(*) FROM analytics_events) <> 1 OR (SELECT count(*) FROM analytics_audit_logs) <> 1 OR (SELECT count(*) FROM analytics_ingestion_limits) <> 1 THEN RAISE EXCEPTION 'Analytics backup restore did not preserve expected rows'; END IF; END \$\$"
+            -X -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE c BIGINT; h BIGINT; e BIGINT; a BIGINT; l BIGINT; BEGIN SELECT count(*) INTO c FROM analytics_consents; SELECT count(*) INTO h FROM analytics_consent_history; SELECT count(*) INTO e FROM analytics_events; SELECT count(*) INTO a FROM analytics_audit_logs; SELECT count(*) INTO l FROM analytics_ingestion_limits; IF c <> 1 OR h <> 1 OR e <> 1 OR a <> 1 OR l <> 1 THEN RAISE EXCEPTION 'Analytics backup restore counts: consents=%, history=%, events=%, audit=%, limits=%', c,h,e,a,l; END IF; END \$\$"
       - name: Reject unverified TLS for Commerce restore targets
         env:
           COMMERCE_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_commerce_restore_verify

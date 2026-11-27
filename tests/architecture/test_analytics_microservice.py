@@ -39,7 +39,8 @@ def test_analytics_runtime_image_is_non_root_and_has_healthcheck():
     assert "analytics_service.api:app" in dockerfile
     assert "COPY --chown=10005:10005 analytics_service /app/analytics_service" in dockerfile
     compose = read("docker-compose.saas.production.yml")
-    assert "python -m analytics_service.retention_worker" in compose
+    retention = compose.split("  analytics-retention-worker:", 1)[1].split("\n  saas-migrate:", 1)[0]
+    assert "- analytics_service.retention_worker" in retention
     assert "HEALTHCHECK" in dockerfile
 
 

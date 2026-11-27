@@ -11,7 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request as FastAPIRequest
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 COOKIE_NAME = "tloomberg_session"
@@ -87,7 +87,7 @@ def _request_identity(token: str) -> dict:
 
 
 def current_user(
-    request: FastAPIRequest,
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> dict:
     token = credentials.credentials if credentials else request.cookies.get(COOKIE_NAME)
