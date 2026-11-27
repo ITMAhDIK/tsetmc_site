@@ -66,3 +66,25 @@
   object-fit: contain;
   border-radius: inherit;
 }
+
+/* The supplied finance logo is a horizontal 3:1 lockup. */
+.app-brand { gap: 0; }
+.app-brand-mark {
+  width: 142px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 0;
+}
+.app-brand-copy { display: none; }
+.brand-mark {
+  width: 142px;
+  height: 48px;
+  border-radius: 0;
+}
+.brand > span { display: none; }
+@media (max-width: 680px) {
+  .app-brand-mark, .brand-mark {
+    width: 116px;
+    height: 39px;
+  }
+}
