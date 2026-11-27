@@ -88,3 +88,13 @@
     height: 39px;
   }
 }
+
+/* The supplied PNG wordmark is black; invert it for dark surfaces while
+   rotating the green hue back to green. Preserve the original on light UI. */
+.app-brand-mark,
+.brand-mark,
+.tloomberg-admin-brand > img,
+.mark img {
+  filter: invert(1) hue-rotate(180deg);
+}
+.app-shell.theme-light .app-brand-mark { filter: none; }
