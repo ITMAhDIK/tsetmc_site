@@ -4,7 +4,8 @@ import hashlib,json,os,re,uuid,html
 from uuid import UUID
 from fastapi import HTTPException
 from notification_service.identity import verified_contact
-from notification_service.providers import send_email,send_sms,DeliveryError\nhtml_escape=html.escape
+from notification_service.providers import send_email,send_sms,DeliveryError
+html_escape=html.escape
 TEMPLATES={
  "welcome":("Welcome {name} to Tloomberg","Your account is ready, {name}.","Your account is ready, {name}.", "transactional"),
  "security_alert":("Security alert","A security event was detected on your account.","A security event was detected on your account.", "security"),
