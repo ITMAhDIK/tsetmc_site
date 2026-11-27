@@ -83,6 +83,7 @@ def _require_crm_assignee(conn, user_id: UUID) -> None:
 def list_customers(
     conn,
     *,
+    actor_user_id: UUID,
     query: str | None = None,
     account_status: str | None = None,
     lifecycle_stage: str | None = None,
@@ -148,7 +149,7 @@ def list_customers(
             total = cur.fetchone()["total"]
         _audit(
             conn,
-            actor_user_id=UUID(str(_actor_id_from_connection(conn))),
+            actor_user_id=actor_user_id,
             action="crm.customers.list",
             target_type="customer_list",
             target_id="all",
@@ -163,14 +164,6 @@ def list_customers(
             },
         )
     return {"customers": customers, "total": total, "limit": limit, "offset": offset}
-
-
-def _actor_id_from_connection(conn) -> UUID:
-    """Read-only context hook populated by the CRM API for audited reads."""
-    actor_id = getattr(conn, "crm_actor_user_id", None)
-    if actor_id is None:
-        raise RuntimeError("CRM audit actor is required")
-    return actor_id
 
 
 def get_customer(conn, *, actor_user_id: UUID, customer_id: UUID) -> dict | None:
