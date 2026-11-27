@@ -46,7 +46,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: python -m pip install --disable-pip-version-check openpyxl pytest
+        run: python -m pip install --disable-pip-version-check -r requirements-saas.txt openpyxl
 
       - name: Test SaaS wallet, schema and XLSX contracts
         run: python -m pytest tests/saas tests/test_screener_export_xlsx.py -q
