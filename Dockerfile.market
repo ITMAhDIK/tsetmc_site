@@ -16,6 +16,7 @@ RUN groupadd --system --gid 10001 market \
 
 COPY --chown=10001:10001 server.py sector_affinity.py /app/
 COPY --chown=10001:10001 site_api /app/site_api
+COPY --chown=10001:10001 screener_service /app/screener_service
 COPY --chown=10001:10001 docs/data/instrument_sectors.json docs/data/dashboard_sector_categories.json /app/docs/data/
 RUN printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><title>Market API</title></head><body>API only</body></html>' > /app/docs/index.html \
     && chown 10001:10001 /app/docs/index.html

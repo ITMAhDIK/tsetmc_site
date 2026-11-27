@@ -19,6 +19,7 @@ RUN python -m pip install --no-cache-dir -r /app/requirements-ownership.txt
 # The extracted domain code is wired through the compatibility composition root.
 COPY server.py sector_affinity.py /app/
 COPY site_api /app/site_api
+COPY screener_service /app/screener_service
 COPY ownership_service /app/ownership_service
 
 USER 10001:10001

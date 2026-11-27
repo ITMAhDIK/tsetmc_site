@@ -20,6 +20,7 @@ RUN python -m pip install --no-cache-dir -r /app/requirements-portfolio.txt
 # collector or Sidecar refresh process is included in this runtime image.
 COPY server.py sector_affinity.py /app/
 COPY site_api /app/site_api
+COPY screener_service /app/screener_service
 COPY portfolio_service /app/portfolio_service
 COPY docs/data/instrument_sectors.json docs/data/dashboard_sector_categories.json /app/docs/data/
 
