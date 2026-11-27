@@ -1,4 +1,3 @@
-BEGIN;
 CREATE TABLE IF NOT EXISTS crm_customers (
   user_id UUID PRIMARY KEY,
   username VARCHAR(80) NOT NULL,
@@ -55,4 +54,3 @@ CREATE TABLE IF NOT EXISTS crm_audit_log (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_crm_audit_time ON crm_audit_log(created_at DESC);
-COMMIT;
