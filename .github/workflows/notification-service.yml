@@ -74,6 +74,7 @@ jobs:
           NOTIFICATION_DATABASE_URL: postgresql://runtime:placeholder@notification-db.internal:5432/tloomberg_notifications?sslmode=verify-full
           NOTIFICATION_APP_DATABASE_ROLE: notification_runtime
           NOTIFICATION_INGEST_TOKEN: ci-placeholder-notification-ingest-token-123456789
+          NOTIFICATION_DESTINATION_HMAC_SECRET: ci-placeholder-notification-destination-hmac-secret-123456789
           IDENTITY_SERVICE_TOKEN: ci-placeholder-identity-service-token-123456789
           NOTIFICATION_IDENTITY_SERVICE_TOKEN: ci-placeholder-notification-identity-contact-token-123456789
           IDENTITY_SERVICE_URL: http://identity-api:8000
