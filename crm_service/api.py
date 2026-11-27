@@ -32,6 +32,9 @@ class Interaction(BaseModel):
     channel:Literal["call","email","meeting","note","support","other"]; subject:str=Field(min_length=3,max_length=180); summary:str=Field(min_length=2,max_length=4000); happened_at:datetime|None=None
 class Followup(BaseModel):
     customer_id:UUID; assigned_to:UUID; title:str=Field(min_length=3,max_length=180); details:str=Field(default="",max_length=2000); due_at:datetime
+class CustomerProfile(BaseModel):
+    lifecycle_stage:Literal["new","active","at_risk","churned"]
+    assigned_to:UUID|None=None
 class FollowupStatus(BaseModel):
     status:Literal["open","completed","cancelled"]
 @asynccontextmanager
@@ -87,12 +90,12 @@ def customer(customer_id:UUID,principal=Depends(current_user),conn=Depends(get_c
     _audit(conn,principal["id"],"crm.customer.read","customer",customer_id)
     return {"customer":row}
 @app.patch("/crm/customers/{customer_id}/profile")
-def profile(customer_id:UUID,lifecycle_stage:Literal["new","active","at_risk","churned"],assigned_to:UUID|None=None,principal=Depends(current_user),conn=Depends(get_conn)):
+def profile(customer_id:UUID,body:CustomerProfile,principal=Depends(current_user),conn=Depends(get_conn)):
     _permission(principal,"crm.manage")
-    cur=conn.execute("UPDATE crm_customers SET lifecycle_stage=%s,assigned_to=%s WHERE user_id=%s RETURNING user_id,lifecycle_stage,assigned_to",(lifecycle_stage,assigned_to,customer_id))
+    cur=conn.execute("UPDATE crm_customers SET lifecycle_stage=%s,assigned_to=%s WHERE user_id=%s RETURNING user_id,lifecycle_stage,assigned_to",(body.lifecycle_stage,body.assigned_to,customer_id))
     row=cur.fetchone()
     if not row: raise HTTPException(404,detail="customer not found")
-    _audit(conn,principal["id"],"crm.customer.profile.update","customer",customer_id,{"lifecycle_stage":lifecycle_stage,"assigned_to":str(assigned_to) if assigned_to else None})
+    _audit(conn,principal["id"],"crm.customer.profile.update","customer",customer_id,{"lifecycle_stage":body.lifecycle_stage,"assigned_to":str(body.assigned_to) if body.assigned_to else None})
     return {"profile":row}
 @app.get("/crm/customers/{customer_id}/interactions")
 def interactions(customer_id:UUID,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0,le=10000),principal=Depends(current_user),conn=Depends(get_conn)):
