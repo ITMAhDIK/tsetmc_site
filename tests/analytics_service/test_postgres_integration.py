@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 
@@ -70,8 +71,6 @@ def client(db):
 
     # Use a request-injected override. The real production dependency uses
     # Identity introspection and is tested separately in unit coverage.
-    from fastapi import Request
-
     def test_identity(request: Request):
         from fastapi import HTTPException
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
