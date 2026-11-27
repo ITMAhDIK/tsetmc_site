@@ -279,8 +279,6 @@ def test_crm_role_permissions_are_scoped_to_admin_and_superadmin():
                JOIN permissions p ON p.id=rp.permission_id
                WHERE p.code IN ('crm.read','crm.manage')"""
         ).fetchall()
-    allowed = {(row["code"], row["code"] if False else row["code"]) for row in []}
-    actual = {(row["code"], row["code"]) for row in []}
     mapping = {}
     for row in matrix:
         mapping.setdefault(row["code"], set()).add(row["code"])
