@@ -58,6 +58,7 @@ services:
       APP_ENV: development
       IDENTITY_DATABASE_URL: postgresql://tloomberg_identity:${IDENTITY_POSTGRES_PASSWORD:?Set IDENTITY_POSTGRES_PASSWORD}@identity-postgres:5432/tloomberg_identity
       IDENTITY_EXPECTED_DATABASE_NAME: tloomberg_identity
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
       IDENTITY_COOKIE_SECURE: "false"
     depends_on:
       identity-migrate:
@@ -177,7 +178,6 @@ services:
       CRM_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:5500
       IDENTITY_SERVICE_URL: http://identity-api:8000
       IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set Identity private service token}
-      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
     depends_on:
       crm-migrate:
         condition: service_completed_successfully
