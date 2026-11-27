@@ -166,7 +166,7 @@ def test_crm_customer_interaction_followup_and_audit_lifecycle(crm_context):
 
     detail = client.get(f"/crm/customers/{customer_id}", headers=admin_headers)
     assert detail.status_code == 200, detail.text
-    assert detail.json()["customer"]["id"] == customer["id"]
+    assert detail.json()["customer"]["id"] == str(customer["id"])
     assert "phone_e164" not in detail.json()["customer"]
     assert "email" not in detail.json()["customer"]
 
@@ -273,7 +273,7 @@ def test_crm_customer_and_followup_routes_validate_missing_records(crm_context):
 def test_crm_role_permissions_are_scoped_to_admin_and_superadmin():
     with psycopg.connect(_DSN, row_factory=dict_row) as conn:
         matrix = conn.execute(
-            """SELECT r.code, p.code
+            """SELECT r.code AS role_code, p.code AS permission_code
                FROM role_permissions rp
                JOIN roles r ON r.id=rp.role_id
                JOIN permissions p ON p.id=rp.permission_id
@@ -281,7 +281,10 @@ def test_crm_role_permissions_are_scoped_to_admin_and_superadmin():
         ).fetchall()
     mapping = {}
     for row in matrix:
-        mapping.setdefault(row["code"], set()).add(row["code"])
+        mapping.setdefault(row["role_code"], set()).add(row["permission_code"])
     # Keep role names explicit in the assertion; support/user roles must not
     # inherit CRM access through the support-ticket permission.
-    assert set(mapping) == {"admin", "superadmin"}
+    assert mapping == {
+        "admin": {"crm.read", "crm.manage"},
+        "superadmin": {"crm.read", "crm.manage"},
+    }
