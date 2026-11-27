@@ -42,11 +42,18 @@
     @media(max-width:760px){.grid{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
     @media(max-width:480px){.grid{grid-template-columns:1fr}.wrap{width:calc(100% - 22px);padding-top:18px}}
   </style>
+  <link rel="icon" type="image/png" href="../assets/tloomberg-favicon.png" />
+  <link rel="apple-touch-icon" href="../assets/tloomberg-favicon.png" />
+  <link rel="stylesheet" href="../brand-assets.css" />
 </head>
 <body>
+  <div id="tloomberg-page-loader" class="tloomberg-page-loader" role="status">
+    <img src="../assets/tloomberg-loader.svg" alt="" aria-hidden="true" />
+    <span class="tloomberg-sr-only">در حال بارگذاری تلومبرگ…</span>
+  </div>
   <main class="wrap">
     <header class="top">
-      <div class="brand"><span class="mark">T</span><span>تلومبرگ <small style="display:block;color:var(--muted);font-size:9px;font-weight:500">TLOOMBERG · SAAS FOUNDATION</small></span></div>
+      <div class="brand"><span class="mark"><img src="../assets/tloomberg-favicon.png" alt="" /></span><span>تلومبرگ <small style="display:block;color:var(--muted);font-size:9px;font-weight:500">TLOOMBERG · SAAS FOUNDATION</small></span></div>
       <a class="back" href="../index.html">بازگشت به داشبورد تلومبرگ ←</a>
     </header>
 
@@ -104,5 +111,6 @@
     </section>
     <footer class="foot">TLOOMBERG · SaaS foundation · مرحلهٔ زیرساخت، نه نسخهٔ عملیاتی پرداخت یا احراز هویت</footer>
   </main>
+  <script src="../brand-assets.js"></script>
 </body>
 </html>
