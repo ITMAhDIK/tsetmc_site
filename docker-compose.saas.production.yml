@@ -171,6 +171,135 @@ services:
       saas-backend:
         ipv4_address: 172.31.240.40
 
+  analytics-migrate:
+    image: ${ANALYTICS_API_IMAGE:?Set an immutable Analytics API image reference}
+    command:
+      - python
+      - scripts/manage_analytics_migrations.py
+      - --apply
+      - --grant-role
+      - ${ANALYTICS_APP_DATABASE_ROLE:?Set the pre-created low-privilege Analytics runtime role}
+    environment:
+      APP_ENV: production
+      ANALYTICS_MIGRATION_DATABASE_URL: ${ANALYTICS_MIGRATION_DATABASE_URL:?Set the dedicated Analytics migration-owner connection}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set the dedicated Analytics database name}
+      ANALYTICS_IMPORT_SOURCE_DATABASE_URL: ${ANALYTICS_IMPORT_SOURCE_DATABASE_URL:-}
+      ANALYTICS_IMPORT_SOURCE_DATABASE_NAME: ${ANALYTICS_IMPORT_SOURCE_DATABASE_NAME:-}
+      ANALYTICS_IMPORT_TARGET_DATABASE_URL: ${ANALYTICS_IMPORT_TARGET_DATABASE_URL:-}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  analytics-api:
+    image: ${ANALYTICS_API_IMAGE:?Set an immutable Analytics API image reference}
+    command:
+      - uvicorn
+      - analytics_service.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${ANALYTICS_WEB_WORKERS:-2}
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - 172.31.240.10
+    environment:
+      APP_ENV: production
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:?Set the separate low-privilege Analytics database URL}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set the dedicated Analytics database name}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the distinct SaaS database name}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set the distinct Identity database name}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set the distinct Commerce database name}
+      ANALYTICS_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      ANALYTICS_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS origins}
+      ANALYTICS_DB_POOL_MIN: ${ANALYTICS_DB_POOL_MIN:-1}
+      ANALYTICS_DB_POOL_MAX: ${ANALYTICS_DB_POOL_MAX:-8}
+      ANALYTICS_DB_POOL_TIMEOUT_SECONDS: ${ANALYTICS_DB_POOL_TIMEOUT_SECONDS:-5}
+      ANALYTICS_EVENTS_PER_MINUTE: ${ANALYTICS_EVENTS_PER_MINUTE:-600}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set the Identity private service token}
+      SAAS_ANALYTICS_CONSENT_VERSION: ${SAAS_ANALYTICS_CONSENT_VERSION:-v1}
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+    depends_on:
+      analytics-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 150
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      saas-backend:
+        ipv4_address: 172.31.240.50
+
+  analytics-retention-worker:
+    image: ${ANALYTICS_API_IMAGE:?Set an immutable Analytics API image reference}
+    command:
+      - python
+      - -m
+      - analytics_service.retention_worker
+    environment:
+      APP_ENV: production
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:?Set the separate low-privilege Analytics database URL}
+      ANALYTICS_EXPECTED_DATABASE_NAME: ${ANALYTICS_EXPECTED_DATABASE_NAME:?Set the dedicated Analytics database name}
+      SAAS_EXPECTED_DATABASE_NAME: ${SAAS_EXPECTED_DATABASE_NAME:?Set the distinct SaaS database name}
+      IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set the distinct Identity database name}
+      COMMERCE_EXPECTED_DATABASE_NAME: ${COMMERCE_EXPECTED_DATABASE_NAME:?Set the distinct Commerce database name}
+      SAAS_ANALYTICS_RETENTION_DAYS: ${SAAS_ANALYTICS_RETENTION_DAYS:-365}
+      ANALYTICS_RETENTION_POLL_SECONDS: ${ANALYTICS_RETENTION_POLL_SECONDS:-3600}
+    depends_on:
+      analytics-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 50
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
   saas-migrate:
     image: ${SAAS_API_IMAGE:?Set an immutable SaaS API image reference (prefer a registry digest)}
     command:
@@ -338,6 +467,8 @@ services:
       identity-api:
         condition: service_healthy
       commerce-api:
+        condition: service_healthy
+      analytics-api:
         condition: service_healthy
     ports:
       - "80:80"

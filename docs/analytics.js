@@ -100,8 +100,8 @@
     let inFlight = false;
     let consentState = "unknown";
     let initialPageTracked = false;
-    let currentRoute = { page: "market" };
-    let currentPath = "/market";
+    let currentRoute = win.TLOOMBERG_ANALYTICS_INITIAL_ROUTE || { page: "market" };
+    let currentPath = routePath(currentRoute);
     let queue = [];
     let timer = null;
     let scrollHandler = null;
@@ -166,6 +166,11 @@
       if (eventName === "active_time" && Number.isInteger(input.active_duration_ms)) {
         allowed.active_duration_ms = Math.max(0, Math.min(180000, input.active_duration_ms));
       }
+      if (eventName === "click" &&
+          Number.isFinite(input.x_pct) && Number.isFinite(input.y_pct)) {
+        allowed.x_pct = Math.max(0, Math.min(100, input.x_pct));
+        allowed.y_pct = Math.max(0, Math.min(100, input.y_pct));
+      }
       queue.push(allowed);
       if (queue.length > maxQueueSize) queue = queue.slice(-maxQueueSize);
       if (queue.length >= EVENT_BATCH_SIZE) void flush();
@@ -177,7 +182,7 @@
       inFlight = true;
       const batch = queue.slice(0, EVENT_BATCH_SIZE);
       try {
-        await request("/analytics/events", "POST", { events: batch }, true);
+        await request("/api/v1/analytics/events", "POST", { events: batch }, true);
         queue.splice(0, batch.length);
         return true;
       } catch (error) {
@@ -195,22 +200,45 @@
     }
 
     function trackPage(route, options) {
-      currentRoute = route && typeof route === "object" ? { ...route } : { page: "market" };
-      currentPath = routePath(currentRoute);
+      const nextRoute = route && typeof route === "object" ? { ...route } : { page: "market" };
+      const nextPath = routePath(nextRoute);
+      const changed = nextPath !== currentPath;
+      currentRoute = nextRoute;
+      currentPath = nextPath;
       scrollReported.clear();
       if (!enabled) return false;
       const isInitial = Boolean(options && options.initial);
       if (isInitial && initialPageTracked) return false;
+      if (!isInitial && !changed) return false;
       if (isInitial) initialPageTracked = true;
       enqueue("navigation", { component_id: "route-change", element_role: "navigation" });
       enqueue("page_view");
+      const pageName = VALID_PAGES.has(currentRoute.page) ? currentRoute.page : "market";
+      enqueue("feature_view", {
+        component_id: "feature-" + pageName,
+        element_role: "feature"
+      });
       return true;
     }
 
-    function trackClick(componentId, elementRole) {
+    function trackClick(componentId, elementRole, xPercent, yPercent) {
       const component = safeIdentifier(componentId, "other");
       const role = safeIdentifier(elementRole, "other");
-      return enqueue("click", { component_id: component, element_role: role });
+      const fields = { component_id: component, element_role: role };
+      if (Number.isFinite(xPercent) && Number.isFinite(yPercent)) {
+        fields.x_pct = Math.max(0, Math.min(100, xPercent));
+        fields.y_pct = Math.max(0, Math.min(100, yPercent));
+      }
+      return enqueue("click", fields);
+    }
+
+    function trackFeature(featureId) {
+      const feature = safeIdentifier(featureId, "");
+      if (!feature) return false;
+      return enqueue("feature_view", {
+        component_id: feature,
+        element_role: "feature"
+      });
     }
 
     function trackScroll(depthPercent) {
@@ -240,7 +268,17 @@
         ? safeIdentifier(element.getAttribute("data-analytics-id"), "")
         : "";
       // No textContent, href, form value, URL query or user-entered text is read.
-      trackClick(component || (tag === "a" ? "link" : tag === "button" ? "button" : "control"), role);
+      // Coordinates are viewport-relative percentages, never DOM positions or content.
+      const width = Number(win.innerWidth) || 0;
+      const height = Number(win.innerHeight) || 0;
+      const xPct = width > 0 && Number.isFinite(event.clientX)
+        ? (event.clientX / width) * 100 : undefined;
+      const yPct = height > 0 && Number.isFinite(event.clientY)
+        ? (event.clientY / height) * 100 : undefined;
+      trackClick(
+        component || (tag === "a" ? "link" : tag === "button" ? "button" : "control"),
+        role, xPct, yPct
+      );
     }
 
     function onScroll() {
@@ -375,7 +413,11 @@
       reject.className = "tloomberg-analytics-reject";
       reject.textContent = "موافق نیستم";
       reject.addEventListener("click", async () => {
-        await setConsent(false);
+        const result = await setConsent(false);
+        if (apiBase && !result.stored) {
+          status.textContent = "ثبت لغو رضایت به سرور نرسید. جمع‌آوری در این مرورگر متوقف شد؛ برای حذف داده‌های قبلی، پس از برقراری ارتباط دوباره تلاش کنید.";
+          return;
+        }
         setDismissed(true);
         removeBanner();
         renderSettingsButton();
@@ -410,7 +452,7 @@
         stopCollectors();
         if (!apiBase) return { stored: false, product_analytics: false };
         try {
-          const result = await request("/analytics/consent", "PUT", { product_analytics: false });
+          const result = await request("/api/v1/analytics/consent", "PUT", { product_analytics: false });
           return { stored: true, product_analytics: Boolean(result.consent && result.consent.product_analytics) };
         } catch (_) {
           return { stored: false, product_analytics: false };
@@ -421,7 +463,7 @@
         error.code = "analytics_api_not_configured";
         throw error;
       }
-      const result = await request("/analytics/consent", "PUT", { product_analytics: true });
+      const result = await request("/api/v1/analytics/consent", "PUT", { product_analytics: true });
       if (!result.consent || result.consent.product_analytics !== true) {
         throw new Error("analytics_consent_not_confirmed");
       }
@@ -435,18 +477,17 @@
     async function init() {
       if (initialized) return getState();
       initialized = true;
+      if (!apiBase) {
+        consentState = "unconfigured";
+        return getState();
+      }
       renderSettingsButton();
       if (isDismissed()) {
         consentState = "dismissed";
         return getState();
       }
-      if (!apiBase) {
-        consentState = "unconfigured";
-        showConsentBanner(consentState);
-        return getState();
-      }
       try {
-        const result = await request("/analytics/consent", "GET");
+        const result = await request("/api/v1/analytics/consent", "GET");
         enabled = Boolean(result.consent && result.consent.product_analytics === true);
         consentState = enabled ? "accepted" : "consent-required";
         if (enabled) {
@@ -488,6 +529,7 @@
       setConsent,
       trackPage,
       trackClick,
+      trackFeature,
       trackScroll,
       trackActiveTime,
       flush,

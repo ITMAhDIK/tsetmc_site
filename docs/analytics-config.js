@@ -1,9 +1,9 @@
 /*
  * Public runtime configuration for the GitHub Pages client.
  *
- * Set apiBase to the HTTPS origin (or same-origin reverse-proxy path) of the
- * separately hosted SaaS API only after that host, CORS and session cookies
- * have been configured. Never place credentials or secrets in this file.
+ * Set apiBase to the HTTPS origin (or same-origin proxy base path) only after
+ * the Analytics API, same-origin session cookie and privacy notice are live.
+ * The SDK appends /api/v1/analytics itself. Never put credentials or secrets here.
  *
  * Empty by default: analytics stays off and no activity is transmitted.
  */

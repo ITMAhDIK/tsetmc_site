@@ -10,11 +10,14 @@
    preferences, support, CRM and product-facing API composition.
 4. Commerce: independent FastAPI/PostgreSQL service owning plans, orders,
    payments, subscriptions, wallet ledger, withdrawals and referrals.
-5. Product analytics: consent-controlled events with a strict data allow-list.
+5. Product Analytics: consent-controlled behavioral events, consent evidence,
+   rate-limit state and analytics audit in a dedicated PostgreSQL database.
 
 No direct database joins or cross-database foreign keys are permitted between
-Market, Identity, SaaS and Commerce. Identity and SaaS/Commerce communicate
-only through private HTTP contracts. SaaS reads subscription and entitlement
+Market, Identity, SaaS, Commerce and Product Analytics. Analytics calls
+Identity's private session-introspection contract and never queries Identity,
+SaaS or Commerce tables. Identity, Commerce and Analytics communicate only
+through private HTTP contracts. SaaS reads subscription and entitlement
 state from Commerce rather than a local commercial copy. The application
 authorizes Market API calls using the authenticated Identity principal and
 Commerce subscription entitlements.
@@ -85,17 +88,25 @@ Users can create tickets and see only their own tickets. Support agents use
 permission-controlled queues. Internal notes are never visible to users.
 
 ## Analytics and privacy
-Collect events only under recorded consent and retention policy. Record stable
-component IDs, event names, page paths, timestamps, viewport, scroll depth and
-active visible duration. Never capture typed text, raw input values, OTPs,
-passwords, payment fields, bank details, private ticket messages or keystrokes.
-Provide consent, retention, deletion and audited user-level analytics access.
+Product Analytics is an independent FastAPI service backed by its own
+PostgreSQL database. It verifies every user/session through Identity and accepts
+events only after current-version explicit consent. Reports include overview,
+popular pages, viewport-relative click heatmaps, ordered funnels, mature D7/D30
+retention cohorts and repeated in-session journeys. Aggregate groups smaller
+than five users are suppressed. User-level event/path inspection requires
+superadmin permission and recent MFA, and each read is audited. Event bodies,
+batches and per-user rates are bounded; retention runs in a separate worker.
+Never capture typed text, raw input values, OTPs, passwords, payment fields,
+bank details, private ticket messages, IP addresses, user-agent strings or
+keystrokes. The browser SDK remains disabled until the same-origin HTTPS API,
+session topology and approved privacy notice are live.
 
 ## Deployment
-The deployment template has two independent deployables: a read-only Market
-API/Sidecar platform and a separate FastAPI/PostgreSQL SaaS platform. SaaS login,
-admin and legal pages are served by a same-origin HTTPS Edge image so
-HttpOnly/Secure/SameSite=Lax session cookies remain first-party. The Market
+The deployment template has independent Market, Identity, Commerce and
+Product Analytics services plus the SaaS core API, with separate PostgreSQL
+databases for Identity, Commerce, Analytics and SaaS. A same-origin HTTPS Edge
+routes the Identity, commercial and Analytics API prefixes to their own
+upstreams so HttpOnly/Secure/SameSite=Lax session cookies remain first-party. The Market
 source SQLite is mounted read-only and public production routes are restricted
 to read-only market and side-effect-free screener requests. Use independent
 database credentials, protected secrets, encrypted backup/restore, migration
@@ -139,8 +150,9 @@ This is a deliberate strangler migration: Identity can be deployed and its
 database seeded before the Edge is switched. The copy utility defaults to
 dry-run, refuses identical databases and non-empty user targets, and reads
 the SaaS source in read-only mode. No live database has been migrated by this
-code change. The SaaS application remains a modular monolith for payments,
-wallet, support, analytics and CRM; those domains are not split by this phase.
+code change. The SaaS application remains the modular core for account composition,
+support and CRM. Commerce owns payments and wallet; Product Analytics owns
+consent-controlled behavioral events.
 
 
 ## Commerce — Microservices Phase 2
@@ -184,3 +196,24 @@ site-state endpoints. Market Data has no dependency on Identity or Commerce
 databases. Public market reads do not require a subscription; paid feature
 authorization remains enforced by SaaS through Commerce, not by placing
 commercial data in the Market Data service.
+
+
+## Product Analytics — Microservices Phase 7
+
+Product Analytics is a separate FastAPI process and dedicated PostgreSQL
+database. Its public same-origin API is /api/v1/analytics/*; Caddy strips the
+version prefix and forwards to the private Analytics API. Production SaaS no
+longer mounts the legacy Analytics router or requires Analytics tables for
+readiness, while development retains a temporary compatibility path.
+
+Analytics receives authenticated identity, session, permission and MFA claims
+from Identity's private introspection endpoint. It has no direct database
+connection to Identity, Commerce, SaaS or Market. The legacy importer is
+dry-run-first, reads the SaaS source read-only, preserves IDs/order, strips
+query/fragment and free-form metadata, and never deletes source data.
+
+The service supports explicit versioned consent, bounded/idempotent event
+batches, per-user database-enforced rate limits, aggregate privacy suppression,
+audited superadmin-only user-level reads, bounded retention and encrypted
+backup/restore. The browser SDK sends only allow-listed fields and stays
+disabled until production API/session/privacy prerequisites are reviewed.

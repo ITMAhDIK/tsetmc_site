@@ -50,11 +50,11 @@ jobs:
       - name: Install static analyzer
         run: python -m pip install --upgrade pip bandit
       - name: Scan SaaS backend
-        run: bandit --recursive saas_core identity_service market_data_service ownership_service portfolio_service screener_service scripts --severity-level high --confidence-level high
+        run: bandit --recursive saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service scripts --severity-level high --confidence-level high
       - name: Validate operational shell scripts
-        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh scripts/commerce_db_backup.sh scripts/commerce_db_restore_verify.sh scripts/commerce_offsite_backup.sh
+        run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh scripts/commerce_db_backup.sh scripts/commerce_db_restore_verify.sh scripts/commerce_offsite_backup.sh scripts/analytics_db_backup.sh scripts/analytics_db_restore_verify.sh scripts/analytics_offsite_backup.sh
       - name: Compile Python service and operations tools
-        run: python -m compileall -q server.py site_api saas_core identity_service market_data_service ownership_service portfolio_service screener_service scripts
+        run: python -m compileall -q server.py site_api saas_core identity_service market_data_service ownership_service portfolio_service screener_service analytics_service scripts
       - name: Build the non-root SaaS API image
         run: |
           docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
@@ -102,10 +102,17 @@ jobs:
           image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-screener:ci)"
           test "$image_user" = "10001:10001"
           docker run --rm tloomberg-screener:ci python -c "import screener_service.api; print('Screener runtime imports ok')"
+      - name: Build the non-root Analytics Service image
+        run: |
+          docker build --file Dockerfile.analytics --tag tloomberg-analytics:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-analytics:ci)"
+          test "$image_user" = "10005:10005"
+          docker run --rm tloomberg-analytics:ci python -c "import analytics_service.api; import analytics_service.retention_worker; print('Analytics runtime imports ok')"
       - name: Build the same-origin SaaS edge image
         run: |
           docker build --file Dockerfile.saas-edge --tag tloomberg-saas-edge:ci .
           docker run --rm tloomberg-saas-edge:ci sh -c 'test -s /srv/saas/index.html && test -s /srv/saas/admin.html && test -s /srv/saas/terms.html && test -s /srv/saas/privacy.html'
+          docker run --rm tloomberg-saas-edge:ci grep -F 'reverse_proxy analytics-api:8000' /etc/caddy/Caddyfile
           docker run --rm -e SAAS_DOMAIN=saas.example.com tloomberg-saas-edge:ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Validate production Compose configurations
         env:
@@ -113,6 +120,12 @@ jobs:
           SAAS_EDGE_IMAGE: tloomberg-saas-edge:ci
           IDENTITY_API_IMAGE: tloomberg-identity:ci
           COMMERCE_API_IMAGE: tloomberg-commerce:ci
+          ANALYTICS_API_IMAGE: tloomberg-analytics:ci
+          ANALYTICS_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
+          ANALYTICS_DATABASE_URL: postgresql://runtime:placeholder@analytics-db.internal:5432/tloomberg_analytics?sslmode=verify-full
+          ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics
+          ANALYTICS_APP_DATABASE_ROLE: analytics_runtime
+          ANALYTICS_EVENTS_PER_MINUTE: "600"
           COMMERCE_MIGRATION_DATABASE_URL: postgresql://migrator:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
           COMMERCE_DATABASE_URL: postgresql://runtime:placeholder@commerce-db.internal:5432/tloomberg_commerce?sslmode=verify-full
           COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce
@@ -195,6 +208,10 @@ jobs:
       COMMERCE_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_commerce_backup_test
       COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce_backup_test
       COMMERCE_EXPECTED_DB_NAME: tloomberg_commerce_backup_test
+      ANALYTICS_BACKUP_DATABASE_URL: postgresql://analytics_backup@127.0.0.1:5432/tloomberg_analytics_backup_test
+      ANALYTICS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_analytics_backup_test
+      ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics_backup_test
+      ANALYTICS_EXPECTED_DB_NAME: tloomberg_analytics_backup_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Set up Python for the migration runner
@@ -207,7 +224,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes age
-      - name: Generate independent ephemeral SaaS and Commerce age identities
+      - name: Generate independent ephemeral SaaS, Commerce and Analytics age identities
         run: |
           age-keygen -o "$RUNNER_TEMP/saas-backup-age-identity.txt"
           echo "SAAS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/saas-backup-age-identity.txt")" >> "$GITHUB_ENV"
@@ -215,6 +232,9 @@ jobs:
           age-keygen -o "$RUNNER_TEMP/commerce-backup-age-identity.txt"
           echo "COMMERCE_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/commerce-backup-age-identity.txt")" >> "$GITHUB_ENV"
           echo "COMMERCE_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/commerce-backup-age-identity.txt" >> "$GITHUB_ENV"
+          age-keygen -o "$RUNNER_TEMP/analytics-backup-age-identity.txt"
+          echo "ANALYTICS_BACKUP_AGE_RECIPIENT=$(age-keygen -y "$RUNNER_TEMP/analytics-backup-age-identity.txt")" >> "$GITHUB_ENV"
+          echo "ANALYTICS_BACKUP_AGE_IDENTITY=$RUNNER_TEMP/analytics-backup-age-identity.txt" >> "$GITHUB_ENV"
       - name: Install PostgreSQL 16 client wrappers matching the server
         run: |
           mkdir -p "$RUNNER_TEMP/postgres16-bin"
@@ -244,6 +264,31 @@ jobs:
           PY
           python scripts/manage_commerce_migrations.py --apply
           python scripts/manage_commerce_migrations.py --check
+      - name: Create disposable Analytics backup database and migrate it
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres", autocommit=True) as conn:
+              conn.execute("CREATE DATABASE tloomberg_analytics_backup_test")
+          PY
+          python scripts/manage_analytics_migrations.py --apply
+          python scripts/manage_analytics_migrations.py --check
+          psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO analytics_consents(user_id,essential,product_analytics,consent_version)
+          VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1');
+          INSERT INTO analytics_consent_history(user_id,essential,product_analytics,consent_version,source)
+          VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1','api');
+          INSERT INTO analytics_events(user_id,session_id,event_name,page_path,client_event_id)
+          VALUES ('00000000-0000-4000-8000-000000000001',
+                  '00000000-0000-4000-8000-000000000002',
+                  'page_view','/backup-test',
+                  '00000000-0000-4000-8000-000000000003');
+          INSERT INTO analytics_ingestion_limits(user_id,window_started_at,event_count)
+          VALUES ('00000000-0000-4000-8000-000000000001',date_trunc('minute',now()),1);
+          INSERT INTO analytics_audit_logs(actor_user_id,action,target_type,target_id)
+          VALUES ('00000000-0000-4000-8000-000000000001',
+                  'analytics.backup.test','test','backup-roundtrip');
+          SQL
       - name: Create dedicated read-only backup role
         run: |
           psql "$SAAS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE saas_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_saas_backup_test TO saas_backup; GRANT USAGE ON SCHEMA public TO saas_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO saas_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO saas_backup;"
@@ -285,6 +330,58 @@ jobs:
         run: |
           export COMMERCE_BACKUP_DIR="$RUNNER_TEMP/commerce-backups"
           bash scripts/commerce_db_backup.sh
+      - name: Create dedicated read-only Analytics backup role
+        run: |
+          psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE analytics_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_analytics_backup_test TO analytics_backup; GRANT USAGE ON SCHEMA public TO analytics_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO analytics_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO analytics_backup;"
+          grants="$(psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege('analytics_backup','public.analytics_events','SELECT') AND NOT has_table_privilege('analytics_backup','public.analytics_events','INSERT') AND NOT has_table_privilege('analytics_backup','public.analytics_events','UPDATE') AND NOT has_table_privilege('analytics_backup','public.analytics_events','DELETE') AND NOT has_schema_privilege('analytics_backup','public','CREATE')")"
+          test "$grants" = "t"
+      - name: Reject unverified TLS for remote Analytics backup connections
+        env:
+          ANALYTICS_BACKUP_DATABASE_URL: postgresql://analytics_backup@db.example.invalid:5432/tloomberg_analytics
+          ANALYTICS_EXPECTED_DB_NAME: tloomberg_analytics
+          ANALYTICS_BACKUP_DIR: ${{ runner.temp }}/analytics-backup-tls-negative
+          ANALYTICS_BACKUP_AGE_RECIPIENT: ${{ env.ANALYTICS_BACKUP_AGE_RECIPIENT }}
+        run: |
+          if bash scripts/analytics_db_backup.sh >"$RUNNER_TEMP/analytics-backup-tls-negative.log" 2>&1; then
+            echo "Analytics backup script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/analytics-backup-tls-negative.log"
+      - name: Create independent encrypted Analytics backup
+        run: |
+          export ANALYTICS_BACKUP_DIR="$RUNNER_TEMP/analytics-backups"
+          bash scripts/analytics_db_backup.sh
+      - name: Reject unverified TLS for Analytics restore targets
+        env:
+          ANALYTICS_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_analytics_restore_verify
+          ANALYTICS_RESTORE_VERIFY_EXPECTED_DB_NAME: tloomberg_analytics_restore_verify
+          ANALYTICS_PRODUCTION_DB_NAME: tloomberg_analytics_backup_test
+          ANALYTICS_BACKUP_AGE_IDENTITY: ${{ runner.temp }}/analytics-backup-age-identity.txt
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          dump_file="$(find "$RUNNER_TEMP/analytics-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          if ANALYTICS_BACKUP_FILE="$dump_file" bash scripts/analytics_db_restore_verify.sh >"$RUNNER_TEMP/analytics-restore-tls-negative.log" 2>&1; then
+            echo "Analytics restore script accepted a remote connection without verify-full" >&2
+            exit 1
+          fi
+          grep -F "sslmode=verify-full" "$RUNNER_TEMP/analytics-restore-tls-negative.log"
+      - name: Restore Analytics backup into an isolated database
+        run: |
+          createdb --host=127.0.0.1 --username=postgres tloomberg_analytics_restore_verify
+          dump_file="$(find "$RUNNER_TEMP/analytics-backups" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
+          test -n "$dump_file"
+          ANALYTICS_BACKUP_FILE="$dump_file" \
+          ANALYTICS_RESTORE_VERIFY_DATABASE_URL="postgresql://postgres@127.0.0.1:5432/tloomberg_analytics_restore_verify" \
+          ANALYTICS_RESTORE_VERIFY_EXPECTED_DB_NAME="tloomberg_analytics_restore_verify" \
+          ANALYTICS_PRODUCTION_DB_NAME="tloomberg_analytics_backup_test" \
+          ANALYTICS_BACKUP_AGE_IDENTITY="$RUNNER_TEMP/analytics-backup-age-identity.txt" \
+          TMPDIR="$RUNNER_TEMP" \
+          bash scripts/analytics_db_restore_verify.sh
+      - name: Verify restored Analytics schema boundary
+        run: |
+          psql "postgresql://postgres@127.0.0.1:5432/tloomberg_analytics_restore_verify" \
+            -X -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF (SELECT count(*) FROM analytics_consents) <> 1 OR (SELECT count(*) FROM analytics_consent_history) <> 1 OR (SELECT count(*) FROM analytics_events) <> 1 OR (SELECT count(*) FROM analytics_audit_logs) <> 1 OR (SELECT count(*) FROM analytics_ingestion_limits) <> 1 THEN RAISE EXCEPTION 'Analytics backup restore did not preserve expected rows'; END IF; END \$\$"
       - name: Reject unverified TLS for Commerce restore targets
         env:
           COMMERCE_RESTORE_VERIFY_DATABASE_URL: postgresql://postgres@db.example.invalid:5432/tloomberg_commerce_restore_verify

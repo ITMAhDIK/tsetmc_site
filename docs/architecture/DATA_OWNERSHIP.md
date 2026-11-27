@@ -14,6 +14,7 @@ user-owned state.
 | Identity PostgreSQL | Identity Service | Canonical users, credentials, sessions, roles, permissions, OTP, MFA and legal evidence | Identity Service only | Durable business records; migrations/backups required |
 | Commerce PostgreSQL | Commerce Service | Plans, orders, payment events, subscriptions, wallet ledger, withdrawals and referrals | Commerce Service only | Durable business records; migrations/backups required |
 | SaaS PostgreSQL | SaaS core | Non-secret user projections, account preferences, support, CRM and product composition state | SaaS core only | Durable business records; migrations/backups required |
+| Analytics PostgreSQL | Product Analytics Service | Versioned consent, append-only consent history, minimized user/session events, rate-limit state and immutable analytics audit | Analytics API and retention worker only | Durable consent/audit evidence; raw events expire by policy; migrations/backups required |
 
 ## Market Data Service boundary
 

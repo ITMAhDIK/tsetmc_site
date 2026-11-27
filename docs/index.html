@@ -56,10 +56,13 @@
     ::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
   </style>
   <link rel="stylesheet" href="./ui-refresh.css" />
+  <link rel="stylesheet" href="./analytics.css" />
 </head>
 <body>
   <div id="root"></div>
 
+  <script src="./analytics-config.js"></script>
+  <script src="./analytics.js"></script>
   <script type="text/babel" data-presets="react">
     const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
     const ChartAccessContext = React.createContext({ allowed: false, onUpgrade: () => {} });
@@ -2987,11 +2990,24 @@
         setSearchResults([]);
       };
 
+      useEffect(() => {
+        const route = { page, activeSymbol };
+        window.TLOOMBERG_ANALYTICS_INITIAL_ROUTE = route;
+        if (!window.TLOOMBERG_ANALYTICS_ROUTE_SYNCED) {
+          window.TLOOMBERG_ANALYTICS_ROUTE_SYNCED = true;
+          if (window.TloombergAnalytics) {
+            window.TloombergAnalytics.trackPage(route, { initial: true });
+          }
+        } else if (window.TloombergAnalytics) {
+          window.TloombergAnalytics.trackPage(route);
+        }
+      }, [page, activeSymbol]);
+
       return (
         <div className={`app-shell min-h-screen flex flex-col text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
           <header className="app-header">
             <div className="app-topbar-inner">
-              <button onClick={() => navigateTo('market')} className="app-brand" aria-label="بازگشت به نمای کلی بازار">
+              <button onClick={() => navigateTo('market')} className="app-brand" data-analytics-id="brand-home" aria-label="بازگشت به نمای کلی بازار">
                 <img className="app-brand-mark" src="https://raw.githubusercontent.com/ITMAhDIK/tsetmc_site/main/LegoV3.png" alt="" aria-hidden="true" />
                 <span className="app-brand-copy"><strong>تلومبرگ</strong><small>TLOOMBERG · تحلیل بازار و مالکیت سهام</small></span>
               </button>
@@ -3016,7 +3032,7 @@
                 )}
               </div>
               <div className="app-user-menu">
-                <button type="button" className="app-menu-trigger" onClick={() => setMenuOpen(true)} aria-expanded={menuOpen} aria-haspopup="dialog" aria-label="باز کردن منوی حساب کاربری">
+                <button type="button" className="app-menu-trigger" data-analytics-id="account-menu" onClick={() => setMenuOpen(true)} aria-expanded={menuOpen} aria-haspopup="dialog" aria-label="باز کردن منوی حساب کاربری">
                   <span className="app-menu-trigger-icon" aria-hidden="true">☰</span>
                   <strong>{authUser || demoMenuRole ? 'حساب من' : 'ورود'}</strong>
                   <span className="app-menu-trigger-hint" aria-hidden="true">حساب و تنظیمات</span>
@@ -3026,7 +3042,7 @@
             <div className="app-nav-wrap">
               <nav className="app-nav" aria-label="بخش‌های سامانه">
                 {NAV_PAGES.map(n => (
-                  <button key={n.id} onClick={() => navigateTo(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
+                  <button key={n.id} data-analytics-id={`nav-${n.id}`} onClick={() => navigateTo(n.id)} aria-current={page === n.id ? 'page' : undefined} className={`app-nav-item ${page === n.id ? 'is-active' : ''}`}>
                     {n.label}
                   </button>
                 ))}

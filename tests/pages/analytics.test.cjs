@@ -137,17 +137,17 @@ test("consent enables bounded events and sends only allow-listed fields", async 
   sdk.trackActiveTime(15000);
 
   assert.equal(sdk.getState().enabled, true);
-  assert.equal(sdk.getState().queuedEvents, 5); // navigation + page_view + 3 interactions
+  assert.equal(sdk.getState().queuedEvents, 6); // navigation + page_view + feature view + 3 interactions
   await sdk.flush();
 
   const post = calls.find(call => call.url.endsWith("/analytics/events"));
   assert.ok(post);
   assert.equal(post.options.credentials, "include");
   const sent = JSON.parse(post.options.body).events;
-  assert.equal(sent.length, 5);
+  assert.equal(sent.length, 6);
   assert.deepEqual(
     sent.map(event => event.event_name),
-    ["navigation", "page_view", "click", "scroll", "active_time"],
+    ["navigation", "page_view", "feature_view", "click", "scroll", "active_time"],
   );
   assert.ok(sent.every(event => event.page_path === "/stock/فولاد"));
   assert.ok(sent.every(event => !("metadata" in event)));
@@ -172,7 +172,7 @@ test("repeated scroll thresholds are recorded once per page", async () => {
   sdk.trackScroll(25);
   sdk.trackScroll(25);
   sdk.trackScroll(60);
-  assert.equal(sdk.getState().queuedEvents, 4); // initial route events + 25% + 50%
+  assert.equal(sdk.getState().queuedEvents, 5); // initial route events + 25% + 50%
 });
 
 test("revoking consent immediately stops collection and discards queued events", async () => {
@@ -224,10 +224,102 @@ test("initial route is recorded only once when SDK and React initialize together
   });
 
   await sdk.init();
-  assert.equal(sdk.getState().queuedEvents, 2);
+  assert.equal(sdk.getState().queuedEvents, 3);
   assert.equal(
     sdk.trackPage({ page: "market" }, { initial: true }),
     false,
   );
-  assert.equal(sdk.getState().queuedEvents, 2);
+  assert.equal(sdk.getState().queuedEvents, 3);
+});
+
+
+test("failed server-side consent withdrawal still stops local collection", async () => {
+  const win = makeWindow();
+  const calls = [];
+  const sdk = createAnalyticsSdk({
+    windowRef: win,
+    documentRef: null,
+    config: { apiBase: "https://saas.example.test" },
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      if (url.endsWith("/analytics/consent") && options.method === "GET") {
+        return response(200, { consent: { product_analytics: true } });
+      }
+      if (url.endsWith("/analytics/consent") && options.method === "PUT") {
+        return response(503, {});
+      }
+      return response(200, {});
+    },
+  });
+  await sdk.init();
+  assert.equal(sdk.getState().enabled, true);
+  const result = await sdk.setConsent(false);
+  assert.equal(result.stored, false);
+  assert.equal(sdk.getState().enabled, false);
+  assert.equal(sdk.getState().queuedEvents, 0);
+});
+
+
+test("unchanged SPA route state does not generate duplicate page views", async () => {
+  const win = makeWindow();
+  const { fetchImpl } = makeFetch(false);
+  const sdk = createAnalyticsSdk({
+    windowRef: win,
+    documentRef: null,
+    config: { apiBase: "https://api.example.test" },
+    fetchImpl,
+  });
+  await sdk.init();
+  await sdk.setConsent(true);
+  assert.equal(sdk.getState().queuedEvents, 3);
+  assert.equal(sdk.trackPage({ page: "market", activeSymbol: "فولاد" }), false);
+  assert.equal(sdk.getState().queuedEvents, 3);
+  assert.equal(sdk.trackPage({ page: "stock", activeSymbol: "فولاد" }), true);
+  assert.equal(sdk.getState().queuedEvents, 6);
+});
+
+
+test("click heatmap coordinates and feature views are bounded and privacy-minimized", async () => {
+  const win = makeWindow();
+  const { calls, fetchImpl } = makeFetch(false);
+  const sdk = createAnalyticsSdk({
+    windowRef: win,
+    documentRef: null,
+    config: { apiBase: "https://api.example.test" },
+    fetchImpl,
+  });
+
+  await sdk.init();
+  await sdk.setConsent(true);
+  assert.equal(sdk.trackClick("nav-market", "button", 50.5, 25.25), true);
+  assert.equal(sdk.trackFeature("ownership-graph"), true);
+  assert.equal(sdk.trackFeature("private feature label"), false);
+  await sdk.flush();
+
+  const post = calls.find(call => call.url.endsWith("/analytics/events"));
+  const events = JSON.parse(post.options.body).events;
+  const click = events.find(event => event.event_name === "click");
+  const feature = events.find(event => event.event_name === "feature_view" && event.component_id === "ownership-graph");
+  assert.equal(click.x_pct, 50.5);
+  assert.equal(click.y_pct, 25.25);
+  assert.equal(feature.element_role, "feature");
+  assert.ok(events.every(event => !("text" in event) && !("href" in event)));
+});
+
+
+test("public Analytics requests use the versioned same-origin API prefix", async () => {
+  const win = makeWindow();
+  const { calls, fetchImpl } = makeFetch(false);
+  const sdk = createAnalyticsSdk({
+    windowRef: win,
+    documentRef: null,
+    config: { apiBase: "https://saas.example.test" },
+    fetchImpl,
+  });
+  await sdk.init();
+  await sdk.setConsent(true);
+  sdk.trackClick("nav-market", "button");
+  await sdk.flush();
+  assert.ok(calls.some(call => call.url === "https://saas.example.test/api/v1/analytics/consent"));
+  assert.ok(calls.some(call => call.url === "https://saas.example.test/api/v1/analytics/events"));
 });

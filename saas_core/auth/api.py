@@ -66,12 +66,11 @@ _REQUIRED_SCHEMA_TABLES = (
     "plans", "subscriptions", "payment_orders", "payment_attempts",
     "wallet_accounts", "wallet_ledger_entries", "wallet_bank_accounts",
     "withdrawal_requests", "referrals", "tickets", "ticket_messages", "notification_outbox",
-    "analytics_consents", "analytics_events", "admin_audit_logs",
+    "admin_audit_logs",
     "payment_reconciliation_notes", "user_admin_mfa", "legal_acceptances",
     "crm_customer_profiles", "crm_interactions", "crm_followups",
 )
 _REQUIRED_SCHEMA_COLUMNS = (
-    "analytics_events.event_order",
     "sessions.mfa_verified_at",
     "phone_verifications.signup_terms_version",
     "phone_verifications.signup_privacy_version",
@@ -789,14 +788,16 @@ def logout(
 
 from saas_core.account.api import router as account_router
 from saas_core.support.api import router as support_router
-from saas_core.analytics.api import router as analytics_router
+if APP_ENV not in {"prod", "production"}:
+    from saas_core.analytics.api import router as analytics_router
 from saas_core.admin.api import router as admin_router
 from saas_core.crm.api import router as crm_router
 
-# Payment and Wallet APIs are now served by the independent Commerce service.
-# The SaaS app keeps account, support, analytics, admin and CRM only.
+# Payment/Wallet and Product Analytics are independent services in production.
+# The legacy Analytics router remains a development-only compatibility path.
 app.include_router(account_router)
 app.include_router(support_router)
-app.include_router(analytics_router)
+if APP_ENV not in {"prod", "production"}:
+    app.include_router(analytics_router)
 app.include_router(admin_router)
 app.include_router(crm_router)

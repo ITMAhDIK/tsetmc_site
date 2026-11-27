@@ -58,8 +58,9 @@ minimum-cohort suppression and separately permission-gated user-level event
 history. A consent-gated browser SDK/banner is now wired into the Pages frontend
 for route changes, UI clicks, scroll thresholds and active time. Live telemetry
 remains disabled until a deployed API and real login/session cookie topology are
-configured. Admin analytics dashboard UI and automatic retention scheduling
-remain. No market-data database or service changes.
+configured. The separate retention worker is implemented; its production
+database and schedule still require provisioning. Admin analytics dashboard UI
+remains deferred. No market-data database or service changes.
 
 ## Phase 8 — Superadmin console (API foundation started)
 Implemented on feat/tloomberg-saas-superadmin-phase8: superadmin-only dashboard
@@ -261,3 +262,26 @@ Implemented on `refactor/architecture-stabilization-phase0`:
 No production image publish, Sidecar rebuild or live traffic cutover was
 performed. Verify readiness and query/XLSX parity before operator-controlled
 traffic routing.
+
+
+## Microservices Phase 7 — Product Analytics Service
+
+Implemented on `refactor/architecture-stabilization-phase0`:
+- Extracted consent, event ingestion, product reporting and privacy controls into
+  an independent FastAPI service and dedicated PostgreSQL database.
+- Identity owns user/session identity and permission claims; Analytics uses the
+  private introspection contract and has no cross-database join or foreign key.
+- Added consent-version enforcement, idempotent batches, bounded request size,
+  atomic per-user rate limits, route anonymization, minimum-cohort suppression,
+  audited superadmin-only user-level inspection and a separate retention worker.
+- Added overview, pages, click heatmap, event funnel, weekly D7/D30 retention
+  and repeated journey reports.
+- Added safe legacy importer, non-root Docker image, local/production Compose,
+  Caddy routing, dedicated backup/restore and off-host backup scripts, plus
+  Python/PostgreSQL and browser SDK tests.
+
+The browser SDK remains disabled by default. No live data migration, production
+secrets, deployment, DNS change or traffic cutover has been performed. Admin
+analytics dashboard UI, production secret rotation, immutable off-host storage
+configuration, high-volume load/soak tests and independent privacy/security
+review remain release gates.

@@ -31,6 +31,13 @@
         reverse_proxy identity-api:8000
     }
 
+    # Product Analytics is a separate service but remains on the same HTTPS origin.
+    @analytics path /api/v1/analytics /api/v1/analytics/*
+    handle @analytics {
+        uri strip_prefix /api/v1
+        reverse_proxy analytics-api:8000
+    }
+
     # Commercial APIs are served by the independent Subscription & Payment service.
     @commerce path /api/v1/payments /api/v1/payments/* /api/v1/wallet /api/v1/wallet/* /api/v1/plans /api/v1/subscriptions
     handle @commerce {
@@ -38,7 +45,7 @@
         reverse_proxy commerce-api:8000
     }
 
-    # Remaining account, support, analytics, admin and CRM APIs stay in SaaS.
+    # Remaining account, support, admin and CRM APIs stay in SaaS.
     handle_path /api/v1/* {
         reverse_proxy saas-api:8000
     }

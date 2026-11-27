@@ -41,6 +41,10 @@ jobs:
       COMMERCE_TEST_DATABASE_NAME: tloomberg_commerce_test
       COMMERCE_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_commerce_test
       COMMERCE_EXPECTED_DATABASE_NAME: tloomberg_commerce_test
+      ANALYTICS_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_analytics_test
+      ANALYTICS_TEST_DATABASE_NAME: tloomberg_analytics_test
+      ANALYTICS_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/tloomberg_analytics_test
+      ANALYTICS_EXPECTED_DATABASE_NAME: tloomberg_analytics_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -79,6 +83,19 @@ jobs:
         run: |
           python scripts/manage_commerce_migrations.py --apply
           python scripts/manage_commerce_migrations.py --check
+      - name: Create separate disposable Analytics database
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres", autocommit=True) as conn:
+              conn.execute("CREATE DATABASE tloomberg_analytics_test")
+          PY
+      - name: Apply and verify independent Analytics migrations
+        run: |
+          python scripts/manage_analytics_migrations.py --apply
+          python scripts/manage_analytics_migrations.py --check
+      - name: Run Analytics unit and PostgreSQL integration tests
+        run: python -m pytest -q tests/analytics_service tests/architecture/test_analytics_microservice.py
       - name: Run Commerce service PostgreSQL/API tests
         run: python -m pytest -q tests/commerce
       - name: Run Identity service PostgreSQL/API tests

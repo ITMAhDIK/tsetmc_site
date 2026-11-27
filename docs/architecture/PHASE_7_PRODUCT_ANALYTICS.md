@@ -1,61 +1,114 @@
-# Phase 7 — Product Analytics
+# Phase 7 — Product Analytics Service
 
 Branch: `refactor/architecture-stabilization-phase0`
 
-## Delivered domain boundary
+## Delivered microservice boundary
 
-`saas_core.domain.product_analytics.ProductAnalyticsService` adds consent-aware
-analytics operations over the independent SaaS PostgreSQL database. It does not
-connect to the market database and is not yet a separately hosted HTTP service.
+The Product Analytics capability is extracted from the SaaS modular monolith into
+an independently deployable FastAPI service with its own PostgreSQL database.
+Production Caddy routes `/api/v1/analytics/*` to Analytics; production SaaS no
+longer mounts the legacy analytics router or requires Analytics tables for
+readiness. Development retains a temporary compatibility router.
 
-- Current user and anonymous consent state, with append-only consent history.
-- A strict event vocabulary: page view, navigation, click, scroll milestone,
-  section view, active time and product action.
-- Stable component IDs and element roles; no text labels or raw input values.
-- Bounded event batches, UUID event IDs and idempotent retries.
-- Consent checked server-side before any batch is inserted.
-- Aggregated component-engagement heatmap, ordered event funnel and weekly
-  cohort-retention reports.
-- User-level event lookup protected by `analytics.read` and an
-  `admin_audit_logs` record in the same transaction.
-- Configurable raw-event retention and audited purge operation (365 days by
-  default; production privacy notice must publish the actual policy).
+- API: `analytics_service.api:app`
+- Dedicated schema and checksummed migration runner:
+  `analytics_service/schema/001_analytics_core.sql`,
+  `scripts/manage_analytics_migrations.py`
+- Runtime pool is separate from the migration-owner connection.
+- Identity is authoritative for user/session IDs, permissions and MFA. Analytics
+  calls Identity's private `POST /internal/introspect` contract using a
+  dedicated service token; it never queries Identity or SaaS tables.
+- No cross-database joins or foreign keys. Identity UUIDs are preserved by the
+  existing identity migration.
+- Independent non-root Docker image, local/production Compose services,
+  Caddy routing, health/readiness endpoints and a separate retention worker.
 
-## Privacy controls
+## Product behavior and reporting
 
-- Consent defaults to absent/off. Stale consent versions are rejected.
-- Authenticated and anonymous users have separate current-consent records.
-- Caller-supplied event identity fields are rejected; trusted identity is
-  supplied separately by the server-side session boundary.
-- Query strings, fragments, free text, form values, credentials, phone/email,
-  payment details, bank data and private ticket content are not accepted.
-- Only event-specific metadata keys and short safe identifiers are accepted.
-- Event timestamps, viewport measurements, scroll milestones, active durations
-  and batch sizes are bounded.
-- Event IDs are unique for safe retry; duplicates are ignored.
-- Individual event access requires the analytics permission and is audited.
+- Consent defaults off. The server enforces the current consent policy version.
+  A policy version change requires fresh opt-in.
+- Authenticated, consented event batches support page views, navigation, clicks,
+  scroll milestones, foreground-active time and feature views.
+- Client event UUIDs make retries idempotent. The database serializes per-user
+  ingestion and applies a cross-worker rate limit (600 events/minute by default).
+- Reports include overview KPIs, popular pages, viewport click heatmaps,
+  ordered event funnels, mature weekly D7/D30 retention cohorts and repeated
+  contiguous 2–5-step page-view journeys.
+- Aggregate groups below five distinct users are suppressed. User-level event
+  and path inspection requires superadmin role, a dedicated permission and MFA
+  verified within the last 15 minutes. Every individual read is audited.
 
-## Schema and usage
+## Privacy and abuse controls
 
-Apply schema migrations in order to the dedicated SaaS PostgreSQL database:
+- Request bodies are capped at 64 KiB before JSON parsing; batches are limited
+  to 1–50 events.
+- The event vocabulary and accepted fields are allow-listed. The API never
+  accepts caller-supplied user/session identity, free-form metadata, raw URLs,
+  query strings, fragments, form values, typed text, credentials, contact
+  details, payment data, IP addresses or user-agent strings.
+- Route IDs are normalized to `:id`; legacy paths are sanitized during import
+  and arbitrary legacy metadata is discarded.
+- Withdrawing consent immediately stops browser collection and deletes the
+  user's identifiable raw events and ingestion-limit state. Append-only
+  consent history remains as evidence.
+- Raw event retention is bounded to 30–730 days (365 by default). The separate
+  worker uses a PostgreSQL advisory lock and records each purge in the immutable
+  audit log.
+- Backup/restore scripts use a read-only backup role, age encryption, SHA-256
+  sidecars, TLS hostname verification for remote PostgreSQL and isolated
+  restore verification. An off-host script supports immutable rclone remotes.
+
+## API surface
+
+- `GET /analytics/consent`, `PUT /analytics/consent`
+- `POST /analytics/events`
+- `GET /analytics/admin/overview`, `pages`, `heatmap`, `funnel`,
+  `retention`, `paths`
+- `GET /analytics/admin/users/{user_id}/events`
+- `GET /analytics/admin/users/{user_id}/paths`
+- `DELETE /analytics/admin/retention/expired`
+- `GET /health`, `GET /ready`
+
+The public same-origin prefix is `/api/v1/analytics`; Caddy strips `/api/v1`
+before proxying to the service.
+
+## Safe legacy data migration
+
+The dry-run-first importer reads the existing SaaS database with a read-only
+source role and copies only consent, user/session-linked events and analytics
+audit rows into the dedicated database in bounded batches. It preserves source
+event IDs/order, normalizes paths, discards free-form metadata, and is
+idempotent. It refuses same-database source/target configurations and
+conflicting target rows. Source tables are never deleted or modified. The old
+tables remain available for rollback until counts and reports are reconciled.
 
 ```bash
-psql "$SAAS_DATABASE_URL" -v ON_ERROR_STOP=1 -f saas_core/schema/001_initial.sql
-psql "$SAAS_DATABASE_URL" -v ON_ERROR_STOP=1 -f saas_core/schema/002_product_features_referrals_analytics.sql
-psql "$SAAS_DATABASE_URL" -v ON_ERROR_STOP=1 -f saas_core/schema/003_product_analytics_ingestion.sql
+python scripts/manage_analytics_migrations.py --apply
+python scripts/manage_analytics_migrations.py --check
+python scripts/migrate_legacy_analytics.py --dry-run
+python scripts/migrate_legacy_analytics.py --apply
 ```
 
-A service instance requires a DB-API connection factory, an authoritative
-server-side permission checker, and the currently published consent version.
-The caller must derive `user_id` from a validated server session; anonymous and
-session UUIDs must be first-party pseudonymous identifiers.
+## Browser SDK boundary
 
-## Not claimed as production-complete
+The existing consent banner and SDK use the versioned `/api/v1/analytics`
+routes, send only allow-listed fields, record viewport-relative click
+coordinates for heatmaps and expose explicit feature-view instrumentation.
+If server-side consent withdrawal fails, local collection still stops and the
+UI asks the user to retry. The public config remains deliberately empty:
+tracking is **not enabled** until a same-origin HTTPS API, working login
+session, privacy notice and legal approval are provisioned.
 
-The repository still has no deployed SaaS HTTP API, consent UI integration,
-browser event collector, scheduler, privacy notice publication, or hosting
-secrets. The suggested `POST /api/v1/analytics/consent` and
-`POST /api/v1/analytics/events` endpoints are contracts for a future adapter,
-not live public endpoints. Do not enable tracking on the GitHub Pages site
-until the consent notice, API host, secure session boundary and frontend
-instrumentation have been provisioned and tested.
+## Validation and release status
+
+The Python workflow provisions a separate disposable Analytics PostgreSQL
+database, applies checksum-protected migrations and runs unit plus PostgreSQL
+integration tests. The security workflow builds the non-root image, checks
+production Compose/Caddy routing, scans dependencies and code, and rehearses
+encrypted backup/restore.
+
+This code change does **not** deploy production infrastructure, provision
+production secrets, migrate live user data, enable visitor tracking, change
+DNS or switch live traffic. Admin analytics dashboard UI, external secret
+rotation, off-host retention policy setup, high-volume load/soak tests and an
+independent privacy/security review remain release gates.
