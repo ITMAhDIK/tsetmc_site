@@ -51,18 +51,31 @@ jobs:
       - name: Test SaaS wallet, schema and XLSX contracts
         run: python -m pytest tests/saas tests/test_screener_export_xlsx.py -q
 
-      - name: Parse SaaS PostgreSQL schemas
+      - name: Parse all SaaS and microservice PostgreSQL schemas
         run: |
           python -m pip install --disable-pip-version-check pglast
           python - <<'PY'
           from pathlib import Path
           from pglast import parse_sql
-          for path in (
-              Path("saas_core/schema/001_initial.sql"),
-              Path("saas_core/schema/002_product_features_referrals_analytics.sql"),
-          ):
-              parse_sql(path.read_text(encoding="utf-8"))
-              print(f"PostgreSQL syntax OK: {path}")
+
+          schema_dirs = (
+              Path("saas_core/schema"),
+              Path("analytics_service/schema"),
+              Path("commerce_service/schema"),
+              Path("identity_service/schema"),
+              Path("crm_service/schema"),
+              Path("notification_service/schema"),
+          )
+          parsed = 0
+          for directory in schema_dirs:
+              migrations = sorted(directory.glob("*.sql"))
+              if not migrations:
+                  raise SystemExit(f"No SQL migrations found in {directory}")
+              for path in migrations:
+                  parse_sql(path.read_text(encoding="utf-8"))
+                  parsed += 1
+                  print(f"PostgreSQL syntax OK: {path}")
+          print(f"Validated {parsed} PostgreSQL migration files")
           PY
 
       - name: Validate dashboard JSX syntax
