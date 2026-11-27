@@ -57,8 +57,15 @@
   </style>
   <link rel="stylesheet" href="./ui-refresh.css" />
   <link rel="stylesheet" href="./analytics.css" />
+  <link rel="icon" type="image/png" href="./assets/tloomberg-favicon.png" />
+  <link rel="apple-touch-icon" href="./assets/tloomberg-favicon.png" />
+  <link rel="stylesheet" href="./brand-assets.css" />
 </head>
 <body>
+  <div id="tloomberg-page-loader" class="tloomberg-page-loader" role="status">
+    <img src="./assets/tloomberg-loader.svg" alt="" aria-hidden="true" />
+    <span class="tloomberg-sr-only">در حال بارگذاری تلومبرگ…</span>
+  </div>
   <div id="root"></div>
 
   <script src="./analytics-config.js"></script>
@@ -3008,7 +3015,7 @@
           <header className="app-header">
             <div className="app-topbar-inner">
               <button onClick={() => navigateTo('market')} className="app-brand" data-analytics-id="brand-home" aria-label="بازگشت به نمای کلی بازار">
-                <img className="app-brand-mark" src="https://raw.githubusercontent.com/ITMAhDIK/tsetmc_site/main/LegoV3.png" alt="" aria-hidden="true" />
+                <img className="app-brand-mark" src="./assets/tloomberg-logo.png" alt="" aria-hidden="true" />
                 <span className="app-brand-copy"><strong>تلومبرگ</strong><small>TLOOMBERG · تحلیل بازار و مالکیت سهام</small></span>
               </button>
               <div className="app-search" role="search">
@@ -3081,5 +3088,6 @@
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
+  <script src="./brand-assets.js"></script>
 </body>
 </html>
