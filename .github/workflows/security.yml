@@ -273,22 +273,25 @@ jobs:
           PY
           python scripts/manage_analytics_migrations.py --apply
           python scripts/manage_analytics_migrations.py --check
-          psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
-          INSERT INTO analytics_consents(user_id,essential,product_analytics,consent_version)
-          VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1');
-          INSERT INTO analytics_consent_history(user_id,essential,product_analytics,consent_version,source)
-          VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1','api');
-          INSERT INTO analytics_events(user_id,session_id,event_name,page_path,client_event_id)
-          VALUES ('00000000-0000-4000-8000-000000000001',
-                  '00000000-0000-4000-8000-000000000002',
-                  'page_view','/backup-test',
-                  '00000000-0000-4000-8000-000000000003');
-          INSERT INTO analytics_ingestion_limits(user_id,window_started_at,event_count)
-          VALUES ('00000000-0000-4000-8000-000000000001',date_trunc('minute',now()),1);
-          INSERT INTO analytics_audit_logs(actor_user_id,action,target_type,target_id)
-          VALUES ('00000000-0000-4000-8000-000000000001',
-                  'analytics.backup.test','test','backup-roundtrip');
-          SQL
+          psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "
+            INSERT INTO analytics_consents(user_id,essential,product_analytics,consent_version)
+            VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1');
+            INSERT INTO analytics_consent_history(user_id,essential,product_analytics,consent_version,source)
+            VALUES ('00000000-0000-4000-8000-000000000001',TRUE,TRUE,'v1','api');
+            INSERT INTO analytics_events(user_id,session_id,event_name,page_path,client_event_id)
+            VALUES ('00000000-0000-4000-8000-000000000001',
+                    '00000000-0000-4000-8000-000000000002',
+                    'page_view','/backup-test',
+                    '00000000-0000-4000-8000-000000000003');
+            INSERT INTO analytics_ingestion_limits(user_id,window_started_at,event_count)
+            VALUES ('00000000-0000-4000-8000-000000000001',date_trunc('minute',now()),1);
+            INSERT INTO analytics_audit_logs(actor_user_id,action,target_type,target_id)
+            VALUES ('00000000-0000-4000-8000-000000000001',
+                    'analytics.backup.test','test','backup-roundtrip');
+          "
+          seeded_counts="$(psql "$ANALYTICS_MIGRATION_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "SELECT (SELECT count(*) FROM analytics_consents)||'|'||(SELECT count(*) FROM analytics_consent_history)||'|'||(SELECT count(*) FROM analytics_events)||'|'||(SELECT count(*) FROM analytics_audit_logs)||'|'||(SELECT count(*) FROM analytics_ingestion_limits)")"
+          echo "Analytics backup seed row counts: $seeded_counts"
+          test "$seeded_counts" = "1|1|1|1|1"
       - name: Create dedicated read-only backup role
         run: |
           psql "$SAAS_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE ROLE saas_backup LOGIN PASSWORD 'postgres'; GRANT CONNECT ON DATABASE tloomberg_saas_backup_test TO saas_backup; GRANT USAGE ON SCHEMA public TO saas_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO saas_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO saas_backup;"

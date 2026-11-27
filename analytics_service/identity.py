@@ -3,12 +3,10 @@
 Analytics never queries Identity tables directly. Every request is introspected
 against Identity using a dedicated service token and the caller's session token.
 """
-from __future__ import annotations
-
 import json
 import os
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request
@@ -29,7 +27,7 @@ def _request_identity(token: str) -> dict:
     service_token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
     if not base_url or len(service_token) < 32:
         raise IdentityUnavailable("private Identity connection is not configured")
-    request = Request(
+    request = UrlRequest(
         base_url + "/internal/introspect",
         data=json.dumps({"token": token}, separators=(",", ":")).encode("utf-8"),
         headers={
