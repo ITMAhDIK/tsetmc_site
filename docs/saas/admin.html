@@ -35,11 +35,18 @@
     code{direction:ltr;display:inline-block;color:#bae6fd;overflow-wrap:anywhere}
     @media(max-width:700px){.shell{padding:12px}.top{align-items:flex-start;flex-direction:column}.panel{padding:12px}input[type=search]{min-width:100%;width:100%}}
   </style>
+  <link rel="icon" type="image/png" href="../assets/tloomberg-favicon.png" />
+  <link rel="apple-touch-icon" href="../assets/tloomberg-favicon.png" />
+  <link rel="stylesheet" href="../brand-assets.css" />
 </head>
 <body>
+  <div id="tloomberg-page-loader" class="tloomberg-page-loader" role="status">
+    <img src="../assets/tloomberg-loader.svg" alt="" aria-hidden="true" />
+    <span class="tloomberg-sr-only">در حال بارگذاری تلومبرگ…</span>
+  </div>
 <div class="shell">
   <header class="top">
-    <div><h1>کنسول مدیریت تلومبرگ</h1><small>مدیریت کاربران، اشتراک‌ها، عملیات مالی، پشتیبانی و تحلیل محصول</small></div>
+    <div class="tloomberg-admin-brand"><img src="../assets/tloomberg-logo.png" alt="تلومبرگ" /><span><h1>کنسول مدیریت تلومبرگ</h1><small>مدیریت کاربران، اشتراک‌ها، عملیات مالی، پشتیبانی و تحلیل محصول</small></span></div>
     <div class="row"><span id="identity" class="pill">در حال بررسی نشست…</span><a class="btn" href="./index.html">بازگشت به حساب</a></div>
   </header>
   <div id="notice" class="alert">در حال اتصال به سرویس مدیریتی…</div>
@@ -311,5 +318,6 @@
   start();
 })();
 </script>
+  <script src="../brand-assets.js"></script>
 </body>
 </html>
