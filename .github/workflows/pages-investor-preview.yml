@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - preview/investor-history-affinity
+      - refactor/architecture-stabilization-phase0
       - main
     paths:
       - "docs/**"
