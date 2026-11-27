@@ -58,6 +58,10 @@ jobs:
           CRM_API_IMAGE: tloomberg-crm:ci
           NOTIFICATION_API_IMAGE: tloomberg-notification:ci
           SAAS_DOMAIN: saas.example.com
+          SAAS_SUPERADMIN_PHONE_E164: "+989121234567"
+          SMS_PROVIDER: kavenegar
+          SMS_API_KEY: ci-placeholder-sms-api-key
+          SMS_SENDER: "10000000000"
           SAAS_TRUSTED_HOSTS: saas.example.com
           SAAS_ALLOWED_ORIGINS: https://saas.example.com
           SAAS_EXPECTED_DATABASE_NAME: tloomberg_saas
