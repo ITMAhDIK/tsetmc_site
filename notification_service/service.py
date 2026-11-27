@@ -1,9 +1,7 @@
 """Idempotent notification enqueue, inbox, and leased delivery queue."""
 from __future__ import annotations
 import hashlib,json,os,re,uuid,html
-from datetime import datetime,timezone,timedelta
 from uuid import UUID
-from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from notification_service.identity import verified_contact
 from notification_service.providers import send_email,send_sms,DeliveryError\nhtml_escape=html.escape
