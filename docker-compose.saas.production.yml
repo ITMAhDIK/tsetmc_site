@@ -539,6 +539,70 @@ services:
     networks:
       - saas-backend
 
+  crm-migrate:
+    image: ${CRM_API_IMAGE:?Set an immutable CRM API image reference}
+    command: ["python","scripts/manage_crm_migrations.py","--apply","--grant-role","${CRM_APP_DATABASE_ROLE:?Set pre-created CRM runtime role}"]
+    environment:
+      APP_ENV: production
+      CRM_MIGRATION_DATABASE_URL: ${CRM_MIGRATION_DATABASE_URL:?Set CRM migration-owner connection}
+      CRM_EXPECTED_DATABASE_NAME: ${CRM_EXPECTED_DATABASE_NAME:?Set CRM database name}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - saas-backend
+
+  crm-api:
+    image: ${CRM_API_IMAGE:?Set an immutable CRM API image reference}
+    command: ["uvicorn","crm_service.api:app","--host","0.0.0.0","--port","8000","--workers","${CRM_WEB_WORKERS:-2}"]
+    environment:
+      APP_ENV: production
+      CRM_DATABASE_URL: ${CRM_DATABASE_URL:?Set separate CRM runtime database URL}
+      CRM_EXPECTED_DATABASE_NAME: ${CRM_EXPECTED_DATABASE_NAME:?Set CRM database name}
+      CRM_PROJECTION_TOKEN: ${CRM_PROJECTION_TOKEN:?Set distinct CRM projection token}
+      CRM_TRUSTED_HOSTS: ${SAAS_TRUSTED_HOSTS:?Set explicit public hostnames}
+      CRM_ALLOWED_ORIGINS: ${SAAS_ALLOWED_ORIGINS:?Set explicit HTTPS origins}
+      CRM_DB_POOL_MIN: ${CRM_DB_POOL_MIN:-1}
+      CRM_DB_POOL_MAX: ${CRM_DB_POOL_MAX:-8}
+      CRM_DB_POOL_TIMEOUT_SECONDS: ${CRM_DB_POOL_TIMEOUT_SECONDS:-5}
+      IDENTITY_SERVICE_URL: http://identity-api:8000
+      IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set private Identity service token}
+    depends_on:
+      crm-migrate:
+        condition: service_completed_successfully
+      identity-api:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 150
+    healthcheck:
+      test: ["CMD","python","-c","from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready',timeout=3).read()"]
+      interval: 20s
+      timeout: 4s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - saas-backend
+
 volumes:
   caddy_data:
   caddy_config:
