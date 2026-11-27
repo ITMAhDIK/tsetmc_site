@@ -158,6 +158,7 @@ jobs:
           NOTIFICATION_EXPECTED_DATABASE_NAME: tloomberg_notifications
           NOTIFICATION_APP_DATABASE_ROLE: notification_runtime
           NOTIFICATION_INGEST_TOKEN: ci-placeholder-notification-ingest-token-123456789
+          NOTIFICATION_DESTINATION_HMAC_SECRET: ci-placeholder-notification-destination-hmac-secret-123456789
           NOTIFICATION_DB_POOL_MIN: "1"
           NOTIFICATION_DB_POOL_MAX: "8"
           ANALYTICS_EVENTS_PER_MINUTE: "600"
