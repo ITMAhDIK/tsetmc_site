@@ -49,7 +49,7 @@ def get_inbox(limit:int=Query(30,ge=1,le=100),offset:int=Query(0,ge=0,le=10000),
  return {"notifications":rows,"limit":limit,"offset":offset}
 @app.patch("/notifications/{notification_id}/read")
 def mark_read(notification_id:UUID,user=Depends(current_user),conn=Depends(get_conn)):
- row=conn.execute("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE id=%s AND user_id=%s RETURNING id,read_at",(notification_id,user["id"])).fetchone()
+ row=conn.execute("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE id=%s AND user_id=%s AND in_app_visible=TRUE RETURNING id,read_at",(notification_id,user["id"])).fetchone()
  if not row: raise HTTPException(404,detail="notification not found")
  _audit(conn,str(user["id"]),"notification.read",notification_id)
  return {"notification":row}
