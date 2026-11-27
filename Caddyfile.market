@@ -19,6 +19,12 @@
         reverse_proxy ownership-api:8000
     }
 
+    # Stock screening query and XLSX export.
+    @screener path /api/v1/screener/query /api/v1/screener/export
+    handle @screener {
+        reverse_proxy screener-api:8000
+    }
+
     # Investor portfolio reconstruction and dated holdings history.
     @portfolio path /api/v1/portfolios/investors /api/v1/portfolios/*
     handle @portfolio {
@@ -32,7 +38,7 @@
         reverse_proxy market-data-api:8000
     }
 
-    # Ownership, portfolio, screener and legacy routes remain on Market API.
+    # Saved filters, watchlists, screener persistence and other legacy routes remain on Market API.
     handle /api/v1/* {
         reverse_proxy market-api:8000
     }

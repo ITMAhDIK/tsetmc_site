@@ -12,6 +12,7 @@ from .errors import ApiError
 from .market_data_client import proxy_market_data_request
 from .ownership_client import proxy_ownership_request
 from .portfolio_client import proxy_portfolio_request
+from .screener_client import proxy_screener_request
 
 
 def _public_read_only() -> bool:
@@ -102,6 +103,15 @@ def dispatch_api(api, method, path, params, body):
     )
     if is_portfolio_route:
         proxied = proxy_portfolio_request(path, params)
+        if proxied is not None:
+            return proxied
+
+    is_screener_route = (
+        method == "POST"
+        and rest in ([ "screener", "query" ], [ "screener", "export" ])
+    )
+    if is_screener_route:
+        proxied = proxy_screener_request(path, body)
         if proxied is not None:
             return proxied
     if method == "GET" and rest == ["market", "overview"]:

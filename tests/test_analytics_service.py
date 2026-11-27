@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import io
+import sqlite3
 from zipfile import ZipFile
+from fastapi.testclient import TestClient
 
 import pytest
 
 import server
 from server import ApiError, SiteApi
 from site_api.analytics_service import AnalyticsService
+from screener_service.api import app as screener_app, get_runtime
+from screener_service.runtime import ReadOnlyScreenerRuntime
 from site_api.dispatch import dispatch_api
 
 
@@ -199,3 +203,119 @@ def test_analytics_service_enforces_sidecar_readiness(analytics_api):
     with pytest.raises(ApiError) as export_error:
         analytics_api.screener_export({})
     assert export_error.value.status == 503
+
+
+@pytest.fixture
+def read_only_screener_runtime(analytics_api):
+    return ReadOnlyScreenerRuntime(analytics_api.sidecar_path)
+
+
+def test_independent_screener_http_api_preserves_query_and_excel_contract(
+    read_only_screener_runtime,
+):
+    previous = screener_app.dependency_overrides.get(get_runtime)
+    screener_app.dependency_overrides[get_runtime] = lambda: read_only_screener_runtime
+    try:
+        with TestClient(screener_app) as client:
+            assert client.get("/healthz").json() == {
+                "status": "ok", "service": "screener"
+            }
+            ready = client.get("/readyz")
+            assert ready.status_code == 200, ready.text
+            assert ready.json()["service"] == "screener"
+
+            query = client.post(
+                "/api/v1/screener/query",
+                json={
+                    "logic": "AND",
+                    "conditions": [
+                        {"field": "market", "op": "=", "value": "TSE"},
+                        {"field": "ownership_percent_calculated", "op": ">=", "value": 20},
+                    ],
+                    "sort_by": "ownership_percent_calculated",
+                    "sort_dir": "DESC",
+                    "limit": 20,
+                },
+            )
+            assert query.status_code == 200, query.text
+            assert query.json()["rows"] == [{
+                "symbol": "فولاد",
+                "market": "TSE",
+                "shareholder_name": "سرمایه‌گذار فولاد",
+                "ownership_percent_calculated": 25.0,
+                "shares_change": 20,
+                "disclosed_ownership_percent_sum": 65.0,
+            }]
+
+            exported = client.post(
+                "/api/v1/screener/export",
+                json={"conditions": [{"field": "market", "op": "=", "value": "TSE"}]},
+            )
+            assert exported.status_code == 200, exported.text
+            assert exported.headers["content-type"].startswith(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            assert "attachment" in exported.headers["content-disposition"]
+            with ZipFile(io.BytesIO(exported.content)) as archive:
+                assert archive.testzip() is None
+                sheet = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
+            assert "فولاد" in sheet
+            assert "shareholder_id" not in sheet
+            assert "identity_status" not in sheet
+    finally:
+        if previous is None:
+            screener_app.dependency_overrides.pop(get_runtime, None)
+        else:
+            screener_app.dependency_overrides[get_runtime] = previous
+
+
+def test_screener_runtime_is_read_only_and_never_opens_market_source(
+    read_only_screener_runtime,
+):
+    conn = read_only_screener_runtime.sidecar()
+    try:
+        assert conn.execute("PRAGMA query_only").fetchone()[0] == 1
+        databases = list(conn.execute("PRAGMA database_list"))
+        assert [row[1] for row in databases] == ["main"]
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute("UPDATE site_watch SET market='MUTATED' WHERE ins_code='1001'")
+    finally:
+        conn.close()
+
+
+def test_screener_readiness_rejects_incomplete_projection(analytics_api):
+    side = analytics_api.sidecar()
+    try:
+        side.execute("DROP TABLE site_corp_action_counts")
+        side.commit()
+    finally:
+        side.close()
+    runtime = ReadOnlyScreenerRuntime(analytics_api.sidecar_path)
+    ready, reason = runtime.readiness()
+    assert ready is False
+    assert reason == "screener projection schema is incomplete"
+
+
+def test_screener_api_bounds_filter_ast_and_validates_query_limit(
+    read_only_screener_runtime,
+):
+    previous = screener_app.dependency_overrides.get(get_runtime)
+    screener_app.dependency_overrides[get_runtime] = lambda: read_only_screener_runtime
+    try:
+        with TestClient(screener_app) as client:
+            too_many = client.post(
+                "/api/v1/screener/query",
+                json={"conditions": [{"field": "market", "op": "=", "value": "TSE"}] * 51},
+            )
+            assert too_many.status_code == 422
+
+            invalid_limit = client.post(
+                "/api/v1/screener/query",
+                json={"limit": "not-a-number"},
+            )
+            assert invalid_limit.status_code == 422
+    finally:
+        if previous is None:
+            screener_app.dependency_overrides.pop(get_runtime, None)
+        else:
+            screener_app.dependency_overrides[get_runtime] = previous

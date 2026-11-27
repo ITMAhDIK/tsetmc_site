@@ -1,0 +1,32 @@
+# Independent query-only Screener API. The Market refresh worker owns Sidecar writes.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN groupadd --system --gid 10001 market \
+    && useradd --system --uid 10001 --gid market --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin screener \
+    && mkdir -p /tmp/screener
+
+COPY requirements-screener.txt /app/requirements-screener.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements-screener.txt
+
+# The small composition compatibility layer is imported for the canonical
+# Sidecar readiness contract. This image does not bundle the refresh worker.
+COPY server.py sector_affinity.py /app/
+COPY site_api /app/site_api
+COPY screener_service /app/screener_service
+
+USER 10001:10001
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/readyz', timeout=4).read()"
+
+CMD ["uvicorn", "screener_service.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

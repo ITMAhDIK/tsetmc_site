@@ -238,3 +238,26 @@ Implemented on `refactor/architecture-stabilization-phase0`:
 No production image publish, Sidecar rebuild or live traffic cutover was
 performed. Compare representative investor portfolios against the legacy API,
 verify `/readyz`, then perform an operator-controlled rollout.
+
+## Phase 6 — Screener Service
+
+Implemented on `refactor/architecture-stabilization-phase0`:
+- Extracted the stock-filtering engine into the Screener bounded context while
+  retaining the old `AnalyticsService` import as a compatibility alias.
+- Added an independent FastAPI service for JSON screener queries and XLSX
+  exports with the existing allow-listed field/operator model and output
+  columns.
+- Kept query limits, export limits, AND/OR filters and date normalization
+  compatible with existing Market API behavior.
+- Screener reads only the materialized Sidecar projection using
+  `mode=ro` and `query_only=ON`; it has no source-database or SaaS database
+  mount and does not write projection data.
+- Added the non-root Docker image, production Compose service, Caddy routing,
+  bounded fail-closed HTTP adapter, dependency audit, image build and tests.
+- Saved-filter persistence remains on Market API until a per-account ownership
+  and authorization model is defined for the existing global saved-filter
+  table.
+
+No production image publish, Sidecar rebuild or live traffic cutover was
+performed. Verify readiness and query/XLSX parity before operator-controlled
+traffic routing.
