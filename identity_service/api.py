@@ -737,6 +737,20 @@ def change_user_role(user_id:UUID,role_code:str,body:RoleBody,conn=Depends(get_c
             _audit(conn,actor_id,"identity.user.role",str(user_id),{"role":role_code,"granted":body.grant})
     return {"principal":_principal_for_user(conn,user_id)}
 
+@app.get("/internal/notification-contact/{user_id}",dependencies=[Depends(_service_auth)])
+def notification_contact(user_id:UUID,conn=Depends(get_conn)):
+    """Return only verified delivery destinations to the private Notification service."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT phone_e164,phone_verified_at,email,email_verified_at,status
+                       FROM users WHERE id=%s""",(user_id,))
+        row=cur.fetchone()
+    if not row or row["status"]!="active":
+        return {"contact":{}}
+    return {"contact":{"phone_e164":row["phone_e164"] if row["phone_verified_at"] else None,
+                       "phone_verified":bool(row["phone_verified_at"]),
+                       "email":row["email"] if row["email_verified_at"] else None,
+                       "email_verified":bool(row["email_verified_at"])}}
+
 @app.get("/internal/permissions",dependencies=[Depends(_service_auth)])
 def permission_catalog(conn=Depends(get_conn)):
     with conn.cursor() as cur:
