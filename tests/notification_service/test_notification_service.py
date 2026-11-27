@@ -87,3 +87,9 @@ def test_notification_worker_uses_separate_scoped_contact_token():
  assert "X-Notification-Service-Token" in source
  assert '"/internal/notification-contact/{user_id}"' in identity
  assert "def _notification_service_auth" in identity
+
+def test_destination_fingerprints_use_hmac_not_plain_sha256():
+ source=(ROOT/"notification_service/service.py").read_text()
+ assert "hmac.new(secret.encode(),value.encode(),hashlib.sha256)" in source
+ assert "_request_hash(canonical)" in source
+ assert "NOTIFICATION_DESTINATION_HMAC_SECRET" in (ROOT/"notification_service/worker.py").read_text()
