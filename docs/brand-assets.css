@@ -81,7 +81,7 @@
   height: 48px;
   border-radius: 0;
 }
-.brand > span { display: none; }
+.brand > .brand-copy { display: none; }
 @media (max-width: 680px) {
   .app-brand-mark, .brand-mark {
     width: 116px;
