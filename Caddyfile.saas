@@ -45,6 +45,13 @@
         reverse_proxy commerce-api:8000
     }
 
+    # Notification inbox and preferences are served by the isolated Notification service.
+    @notifications path /api/v1/notifications /api/v1/notifications/*
+    handle @notifications {
+        uri strip_prefix /api/v1
+        reverse_proxy notification-api:8000
+    }
+
     # CRM APIs are routed to the isolated CRM service.
     @crm path /api/v1/crm /api/v1/crm/*
     handle @crm {
