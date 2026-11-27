@@ -19,6 +19,12 @@
         reverse_proxy ownership-api:8000
     }
 
+    # Investor portfolio reconstruction and dated holdings history.
+    @portfolio path /api/v1/portfolios/investors /api/v1/portfolios/*
+    handle @portfolio {
+        reverse_proxy portfolio-api:8000
+    }
+
     # Instrument reference/search and daily prices are served by the
     # independent read-only Market Data microservice.
     @marketData path /api/v1/market/instruments /api/v1/market/instruments/* /api/v1/stocks/search /api/v1/stocks/*/prices

@@ -4,11 +4,14 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from fastapi.testclient import TestClient
 
 import server
 from server import ApiError, SiteApi
 from site_api.dispatch import dispatch_api
 from site_api.portfolio_service import PortfolioService
+from portfolio_service.api import app as portfolio_app, get_runtime
+from portfolio_service.runtime import ReadOnlyPortfolioApi
 
 
 @pytest.fixture
@@ -246,6 +249,109 @@ def portfolio_api(tmp_path):
     finally:
         side.close()
     return api
+
+
+
+@pytest.fixture
+def read_only_portfolio_runtime(portfolio_api):
+    return ReadOnlyPortfolioApi(
+        portfolio_api.db_path,
+        portfolio_api.sidecar_path,
+        site_dir=portfolio_api.site_dir,
+        output_dir="",
+    )
+
+
+def test_portfolio_microservice_http_routes_preserve_existing_response_contracts(
+    read_only_portfolio_runtime,
+):
+    previous = portfolio_app.dependency_overrides.get(get_runtime)
+    portfolio_app.dependency_overrides[get_runtime] = lambda: read_only_portfolio_runtime
+    try:
+        with TestClient(portfolio_app) as client:
+            assert client.get("/healthz").json() == {
+                "status": "ok", "service": "portfolio"
+            }
+            ready = client.get("/readyz")
+            assert ready.status_code == 200, ready.text
+
+            investors = client.get(
+                "/api/v1/portfolios/investors",
+                params={"q": "سرمایه‌گذار آزمایشی", "limit": 10},
+            )
+            assert investors.status_code == 200, investors.text
+            assert investors.json()["investors"][0]["id"] == "share_id:123"
+
+            detail = client.get("/api/v1/portfolios/share_id:123")
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["summary"]["confirmed_combined_value_rial"] == 650000
+            assert detail.json()["history_series"][0]["combined_value_rial"] == 650000
+
+            history = client.get(
+                "/api/v1/portfolios/share_id:123/history",
+                params={"ins_code": "1001"},
+            )
+            assert history.status_code == 200, history.text
+            assert history.json()["total"] == 1
+            assert history.json()["rows"][0]["estimated_holding_value_rial"] == 650000
+    finally:
+        if previous is None:
+            portfolio_app.dependency_overrides.pop(get_runtime, None)
+        else:
+            portfolio_app.dependency_overrides[get_runtime] = previous
+
+
+def test_portfolio_microservice_uses_read_only_source_and_sidecar(
+    read_only_portfolio_runtime,
+):
+    live = read_only_portfolio_runtime.live()
+    try:
+        assert live.execute("PRAGMA query_only").fetchone()[0] == 1
+        databases = {row[1] for row in live.execute("PRAGMA database_list")}
+        assert {"main", "sidecar_data"} <= databases
+        with pytest.raises(sqlite3.OperationalError):
+            live.execute("UPDATE shareholders SET name='mutated' WHERE shareholder_id=123")
+    finally:
+        live.close()
+
+    sidecar = read_only_portfolio_runtime.sidecar()
+    try:
+        assert sidecar.execute("PRAGMA query_only").fetchone()[0] == 1
+        with pytest.raises(sqlite3.OperationalError):
+            sidecar.execute(
+                "UPDATE site_investors SET linked_records_count=0 "
+                "WHERE id_scheme='share_id' AND shareholder_id=123"
+            )
+    finally:
+        sidecar.close()
+
+
+def test_portfolio_microservice_rejects_bad_identifiers_and_missing_source(
+    read_only_portfolio_runtime,
+):
+    previous = portfolio_app.dependency_overrides.get(get_runtime)
+    portfolio_app.dependency_overrides[get_runtime] = lambda: read_only_portfolio_runtime
+    try:
+        with TestClient(portfolio_app) as client:
+            invalid = client.get("/api/v1/portfolios/not-an-id")
+            assert invalid.status_code == 400
+            invalid_history = client.get("/api/v1/portfolios/share_id:123/history")
+            assert invalid_history.status_code == 400
+    finally:
+        if previous is None:
+            portfolio_app.dependency_overrides.pop(get_runtime, None)
+        else:
+            portfolio_app.dependency_overrides[get_runtime] = previous
+
+    missing = ReadOnlyPortfolioApi(
+        str(read_only_portfolio_runtime.db_path) + ".missing",
+        read_only_portfolio_runtime.sidecar_path,
+        site_dir=read_only_portfolio_runtime.site_dir,
+        output_dir="",
+    )
+    assert missing.readiness() == (
+        False, "پایگاه داده‌ی منبع پرتفوی در دسترس نیست."
+    )
 
 
 def test_site_api_composes_portfolio_service(portfolio_api):

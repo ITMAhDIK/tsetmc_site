@@ -218,3 +218,23 @@ Implemented on `refactor/architecture-stabilization-phase0`:
 No production Sidecar rebuild, source-data change or traffic cutover was
 performed. An immutable image publish, representative parity check and
 operator-controlled rollout remain before production activation.
+
+## Phase 5 — Portfolio Service
+
+Implemented on `refactor/architecture-stabilization-phase0`:
+- Independent Portfolio FastAPI process for investor lookup, current portfolio
+  valuation and dated per-security disclosure history.
+- Preserved the composite investor identity model and conservative identity
+  links; no universal exchange-wide investor identifier is fabricated.
+- Reused the established historical observation reconciliation, CISIN
+  de-duplication, same-date ownership denominators, as-of closing-price
+  selection and event classification. Conflicting linked quantities remain
+  unvalued.
+- Added a non-root Docker image, read-only runtime, readiness checks, production
+  Compose service, Caddy routing and fail-closed dispatcher HTTP adapter.
+- Added API parity, read-only storage, valuation/history regression, routing,
+  deployment isolation and cross-phase tests.
+
+No production image publish, Sidecar rebuild or live traffic cutover was
+performed. Compare representative investor portfolios against the legacy API,
+verify `/readyz`, then perform an operator-controlled rollout.

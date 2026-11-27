@@ -1,0 +1,33 @@
+# Independent read-only investor Portfolio API; refresh worker owns Sidecar writes.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN groupadd --system --gid 10001 market \
+    && useradd --system --uid 10001 --gid market --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin portfolio \
+    && mkdir -p /tmp/portfolio
+
+COPY requirements-portfolio.txt /app/requirements-portfolio.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements-portfolio.txt
+
+# Reuse the established portfolio calculations and identity resolver; no
+# collector or Sidecar refresh process is included in this runtime image.
+COPY server.py sector_affinity.py /app/
+COPY site_api /app/site_api
+COPY portfolio_service /app/portfolio_service
+COPY docs/data/instrument_sectors.json docs/data/dashboard_sector_categories.json /app/docs/data/
+
+USER 10001:10001
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/readyz', timeout=4).read()"
+
+CMD ["uvicorn", "portfolio_service.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
