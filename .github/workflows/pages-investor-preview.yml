@@ -130,13 +130,26 @@ jobs:
               raise SystemExit("The owner phone must not appear in public source")
           page_source = Path("docs/index.html").read_text(encoding="utf-8")
           auth_source = auth
-          expected_logo = 'https://raw.githubusercontent.com/ITMAhDIK/tsetmc_site/main/LegoV3.png'
-          if f'src="{expected_logo}"' not in page_source:
-              raise SystemExit("Main dashboard is not using the site_main_lego_2 image")
-          if f'src="{expected_logo}"' not in auth_source:
-              raise SystemExit("Auth page is not using the site_main_lego_2 image")
-          if "tloomberg.webp" in page_source or "tloomberg.webp" in auth_source:
+          expected_dashboard_logo = './assets/tloomberg-logo.png'
+          expected_auth_logo = '../assets/tloomberg-logo.png'
+          if f'src="{expected_dashboard_logo}"' not in page_source:
+              raise SystemExit("Main dashboard is not using the Minimal Tloomberg Finance logo")
+          if f'src="{expected_auth_logo}"' not in auth_source:
+              raise SystemExit("Auth page is not using the Minimal Tloomberg Finance logo")
+          if "LegoV3.png" in page_source or "LegoV3.png" in auth_source or "tloomberg.webp" in page_source or "tloomberg.webp" in auth_source:
               raise SystemExit("Previous logo reference remains")
+          if '<link rel="icon" type="image/png" href="./assets/tloomberg-favicon.png" />' not in page_source:
+              raise SystemExit("Dashboard favicon is missing")
+          if '<link rel="icon" type="image/png" href="../assets/tloomberg-favicon.png" />' not in auth_source:
+              raise SystemExit("Auth favicon is missing")
+          for required_asset in ("docs/assets/tloomberg-logo.png", "docs/assets/tloomberg-favicon.png",
+                                 "docs/assets/tloomberg-loader.svg", "docs/brand-assets.css", "docs/brand-assets.js"):
+              if not Path(required_asset).is_file() or Path(required_asset).stat().st_size == 0:
+                  raise SystemExit(f"Missing public brand asset: {required_asset}")
+          if 'id="tloomberg-page-loader"' not in page_source or 'id="tloomberg-page-loader"' not in auth_source:
+              raise SystemExit("Initial page loader is missing from a primary page")
+          if 'src="./brand-assets.js"' not in page_source or 'src="../brand-assets.js"' not in auth_source:
+              raise SystemExit("Shared brand asset behavior is not loaded on primary pages")
           if "const DEMO_OTP_MODE = false;" not in script or 'maxlength="6"' not in auth:
               raise SystemExit("Public Pages must keep demo OTP disabled and require a six-digit code")
           if "setDemoMenuCookie(role)" not in script or "tloomberg_demo_menu=" not in script:
