@@ -119,3 +119,22 @@ A staff console domain service is provided in \`saas_core.domain.admin_console.A
 ## 12. Implementation boundary
 
 The right-side menu, chart lock and checkout are frontend previews. The repository currently has the separate SaaS schema and wallet rules, but it does not yet have the production SaaS API, SMS sender, Google OAuth, payment callbacks, support service or analytics ingestion endpoint. Therefore wallet actions, referrals, tickets and role changes are not simulated as successful. Production activation requires deploying the dedicated PostgreSQL database and API, then integrating and testing each external provider.
+
+
+## CRM — Phase 10 backend foundation
+
+The internal CRM runs only on the SaaS PostgreSQL database and references
+customers by the stable `users.id` UUID. It provides staff-only customer
+search, lifecycle stage and assignment, an append-only interaction timeline,
+and due-dated follow-up tasks. The `crm.read` and `crm.manage` permissions
+are separate from support-ticket access and are granted to admin/superadmin
+roles only. Every CRM route requires a recent session-bound TOTP verification.
+
+CRM records do not duplicate phone/email addresses, Market data, private ticket
+messages, payment credentials, bank information, OTPs or analytics event
+payloads. CRM read/write activity is audited; interaction history cannot be
+updated or deleted. CRM staff MFA enrollment does not confer
+`superadmin.console.access`.
+
+The staff CRM UI, reminders, prospect capture and outbound campaigns are
+deferred. No marketing message is sent by the Phase 10 backend.
