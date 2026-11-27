@@ -100,6 +100,8 @@ def validate_configuration() -> None:
             raise ConfigurationError("Remote Identity PostgreSQL requires sslmode=verify-full")
         if len(os.getenv("IDENTITY_SERVICE_TOKEN", "")) < 32:
             raise ConfigurationError("IDENTITY_SERVICE_TOKEN must contain at least 32 characters")
+        if len(os.getenv("NOTIFICATION_IDENTITY_SERVICE_TOKEN", "")) < 32:
+            raise ConfigurationError("NOTIFICATION_IDENTITY_SERVICE_TOKEN must contain at least 32 characters")
         if len(os.getenv("IDENTITY_OTP_HMAC_SECRET", "")) < 32:
             raise ConfigurationError("IDENTITY_OTP_HMAC_SECRET must contain at least 32 characters")
         for name in ("IDENTITY_OUTBOX_FERNET_KEY", "IDENTITY_ADMIN_MFA_FERNET_KEY"):
@@ -174,6 +176,11 @@ def get_conn():
             yield conn
     except (psycopg.OperationalError, PoolTimeout):
         raise HTTPException(status_code=503, detail="Identity database is temporarily unavailable") from None
+
+def _notification_service_auth(x_notification_service_token: str | None = Header(default=None, alias="X-Notification-Service-Token")):
+    expected=os.getenv("NOTIFICATION_IDENTITY_SERVICE_TOKEN","").strip()
+    if len(expected)<32 or not x_notification_service_token or not hmac.compare_digest(expected,x_notification_service_token):
+        raise HTTPException(status_code=401,detail="notification service authentication required")
 
 def _service_auth(x_identity_service_token: str | None = Header(default=None, alias="X-Identity-Service-Token")):
     expected = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
@@ -737,7 +744,7 @@ def change_user_role(user_id:UUID,role_code:str,body:RoleBody,conn=Depends(get_c
             _audit(conn,actor_id,"identity.user.role",str(user_id),{"role":role_code,"granted":body.grant})
     return {"principal":_principal_for_user(conn,user_id)}
 
-@app.get("/internal/notification-contact/{user_id}",dependencies=[Depends(_service_auth)])
+@app.get("/internal/notification-contact/{user_id}",dependencies=[Depends(_notification_service_auth)])
 def notification_contact(user_id:UUID,conn=Depends(get_conn)):
     """Return only verified delivery destinations to the private Notification service."""
     with conn.cursor() as cur:
