@@ -2688,7 +2688,7 @@
 
       return (
         <>
-          <button type="button" className={'app-drawer-backdrop' + (closing ? ' is-closing' : '')} onClick={requestClose} aria-label="بستن منو با کلیک بیرون پنل" />
+          <div className={'app-drawer-backdrop' + (closing ? ' is-closing' : '')} onClick={requestClose} aria-label="بستن منو با کلیک بیرون پنل" onClick={requestClose} />
           <aside ref={drawerRef} className={'app-drawer-panel' + (closing ? ' is-closing' : '')} role="dialog" aria-modal="true" aria-label="منوی حساب کاربری" aria-describedby="account-drawer-description" tabIndex={-1} dir="rtl">
             <header className="app-drawer-header">
               <div className="app-drawer-brand">
