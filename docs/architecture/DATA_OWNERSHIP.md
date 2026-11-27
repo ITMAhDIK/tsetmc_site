@@ -8,10 +8,30 @@ user-owned state.
 
 | Store | Current owner | Contents | Write policy | Rebuildability |
 |---|---|---|---|---|
-| TSETMC holdings SQLite | Upstream collector/pipeline | Companies, trading days, shareholder holdings, corporate actions, data-gap and reconciliation records | Site API opens read-only with `mode=ro` and `query_only=ON` | Not rebuilt by the site |
-| Site sidecar SQLite | Site API process | Materialized summaries, ownership resolution projections, history ledger, plus legacy watchlist/filter state | API refresh writes projections; watchlist/filter endpoints write legacy state | Mixed; see below |
+| TSETMC holdings SQLite | Upstream collector/pipeline | Companies, trading days, shareholder holdings, corporate actions, data-gap and reconciliation records | Market Data, Ownership and legacy Market API open read-only with `mode=ro` and `query_only=ON` | Not rebuilt by the site |
+| Site sidecar SQLite | Market Data projection pipeline (refresh worker) | Materialized instrument lookup, market summaries, ownership resolution projections and history ledger, plus legacy watchlist/filter state | Refresh worker is the only projection writer; Market Data and read APIs open it read-only | Mixed; see below |
 | Static `docs/data` | Repository/deployment pipeline | Sector registry/category JSON and published sample workbooks | Git commit/deployment | Regenerated or replaced from approved source artifacts |
-| SaaS PostgreSQL | Not present in baseline `main`; defined on unmerged branches | Target users, sessions, roles, subscriptions, payment records, wallet ledger, referrals, support and consent | Future SaaS services only | Durable business records; migrations/backups required |
+| Identity PostgreSQL | Identity Service | Canonical users, credentials, sessions, roles, permissions, OTP, MFA and legal evidence | Identity Service only | Durable business records; migrations/backups required |
+| Commerce PostgreSQL | Commerce Service | Plans, orders, payment events, subscriptions, wallet ledger, withdrawals and referrals | Commerce Service only | Durable business records; migrations/backups required |
+| SaaS PostgreSQL | SaaS core | Non-secret user projections, account preferences, support, CRM and product composition state | SaaS core only | Durable business records; migrations/backups required |
+
+## Market Data Service boundary
+
+The independently deployed Market Data API owns the public read contract for
+instrument reference data and daily prices. It reads instrument names/market
+lookup fields from the rebuildable `site_watch` projection and authoritative
+CISIN/share-count/OHLCV fields from the source holdings SQLite database.
+The source database is mounted read-only. The Sidecar volume is mounted
+read-write only for SQLite WAL lock/shared-memory files; the Market Data
+process opens the database using `mode=ro` and `PRAGMA query_only=ON`.
+It shares the Market API's unprivileged file UID for WAL coordination, while
+the refresh worker remains the only process that writes projection rows.
+
+The Market Data API does not read shareholder identities, subscriptions,
+wallet balances, Identity records or Commerce tables. Ownership and Portfolio
+remain separate capabilities. Legacy stock-detail responses can continue to
+compose instrument metadata with Ownership read models through the compatibility
+API until those boundaries are extracted.
 
 ## Sidecar classification
 
@@ -53,13 +73,13 @@ These are written by site endpoints and are not derived from the TSETMC database
 
 | Capability | Target owner | Target persistence |
 |---|---|---|
-| Market reference data and prices | Market Data | Existing pipeline DB initially; read-only API |
+| Instrument reference data and daily prices | Market Data | Existing pipeline SQLite plus versioned, rebuildable Sidecar lookup; independent read-only API |
 | Holder observations and identity resolution | Ownership | Pipeline DB read-only + owned derived read model |
 | Portfolio reconstruction | Portfolio | Derived read model/cache; calculations from Ownership and Market contracts |
 | Screener and saved filters | Analytics | Stateless query engine; saved filters move to user-scoped SaaS persistence |
 | Watchlists | User Workspace / Account | User-scoped SaaS persistence |
-| Identity, sessions, roles | Identity | One canonical SaaS PostgreSQL authority |
-| Plans, payments, wallet | Billing | SaaS PostgreSQL with transactional ledger and verified provider callbacks |
+| Identity, sessions, roles | Identity | Dedicated Identity PostgreSQL database |
+| Plans, payments, wallet | Commerce | Dedicated Commerce PostgreSQL database with transactional ledger and verified provider callbacks |
 | Tickets and FAQs | Support | SaaS PostgreSQL |
 | Product events | Product Analytics | Consent-controlled analytics store with retention |
 

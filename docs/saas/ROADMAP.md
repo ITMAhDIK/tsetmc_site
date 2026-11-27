@@ -168,3 +168,31 @@ database and secrets, controlled source-data migration rehearsal, independent
 backup retention/restore rehearsal, service-token rotation, load/soak tests
 and reviewed production traffic cutover. No live payments, payouts, database
 migration or production cutover are performed by this code change.
+
+
+## Phase 3 — Market Data Service
+
+Implemented on `refactor/architecture-stabilization-phase0`:
+- Independent FastAPI Market Data application for instrument catalogue,
+  symbol search, instrument reference detail and daily OHLCV.
+- The source of truth remains the existing TSETMC holdings SQLite database.
+  The service opens source data and the Site Sidecar read-only; the refresh
+  worker is the only Sidecar writer.
+- Readiness verifies the Sidecar layout version, completed refresh marker and
+  source fingerprint. Stale Sidecar state fails closed with HTTP 503.
+- Preserved current dashboard routes for symbol search and prices while adding
+  canonical `/api/v1/market/instruments` contracts.
+- Added a separate non-root Docker image, dependency manifest, production
+  Compose service, Caddy routing and optional legacy-dispatcher HTTP adapter.
+- Ownership, shareholder resolution, portfolio, screener and legacy site-state
+  endpoints remain on Market API; Phase 3 does not claim to extract those
+  bounded domains.
+- Tests cover data correctness, read-only storage, API compatibility, routing,
+  deployment isolation and a three-service Identity + Commerce + Market Data
+  integration smoke test.
+
+**Production cutover remains operator-controlled:** publish an immutable
+Market Data image, deploy with existing market source/Sidecar mounts, verify
+`/readyz` and representative symbol/price parity, then allow Caddy to route
+the selected read paths. No live source database mutation or traffic cutover
+is performed by this code change.

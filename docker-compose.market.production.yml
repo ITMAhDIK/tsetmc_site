@@ -87,6 +87,56 @@ services:
     networks:
       - market-backend
 
+  market-data-api:
+    image: ${MARKET_DATA_API_IMAGE:?Set an immutable Market Data API image reference}
+    # Share the unprivileged Market API UID so SQLite can coordinate WAL
+    # shared-memory files on the same Sidecar volume.
+    user: "10001:10001"
+    environment:
+      APP_ENV: production
+      MARKET_DATA_SOURCE_DB_PATH: /data/source/market.sqlite
+      MARKET_DATA_SIDECAR_PATH: /var/lib/tloomberg/site_data.sqlite
+      MARKET_DATA_EXPECTED_SIDECAR_VERSION: "10"
+      MARKET_DATA_TRUSTED_HOSTS: ${MARKET_API_DOMAIN:?Set the market API domain},localhost,127.0.0.1
+      MARKET_DATA_ALLOWED_ORIGINS: ${MARKET_ALLOWED_ORIGINS:?Set explicit HTTPS frontend origins}
+      MARKET_DATA_SQLITE_TIMEOUT_SECONDS: "5"
+    volumes:
+      - ${MARKET_SOURCE_DB_PATH:?Set the source holdings database file}:/data/source/market.sqlite:ro
+      # SQLite WAL lock/shared-memory files need directory write access; the DB connection remains mode=ro/query_only.
+      - market_sidecar:/var/lib/tloomberg
+    depends_on:
+      market-initial-refresh:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/readyz', timeout=4).read()"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - market-backend
+
   market-refresh-worker:
     image: ${MARKET_API_IMAGE:?Set an immutable market API image reference}
     command:
@@ -132,6 +182,8 @@ services:
       MARKET_API_DOMAIN: ${MARKET_API_DOMAIN:?Set the market API domain}
     depends_on:
       market-api:
+        condition: service_healthy
+      market-data-api:
         condition: service_healthy
     ports:
       - "80:80"

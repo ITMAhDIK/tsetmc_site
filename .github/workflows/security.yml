@@ -29,6 +29,8 @@ jobs:
         run: python -m pip install --upgrade pip pip-audit
       - name: Audit declared SaaS dependencies
         run: pip-audit --requirement requirements-saas.txt
+      - name: Audit Market Data runtime dependencies
+        run: pip-audit --requirement requirements-market-data.txt
 
   static-analysis:
     name: High-severity Python security analysis
@@ -41,11 +43,11 @@ jobs:
       - name: Install static analyzer
         run: python -m pip install --upgrade pip bandit
       - name: Scan SaaS backend
-        run: bandit --recursive saas_core identity_service scripts --severity-level high --confidence-level high
+        run: bandit --recursive saas_core identity_service market_data_service scripts --severity-level high --confidence-level high
       - name: Validate operational shell scripts
         run: bash -n scripts/saas_db_backup.sh scripts/saas_db_restore_verify.sh scripts/saas_offsite_backup.sh scripts/commerce_db_backup.sh scripts/commerce_db_restore_verify.sh scripts/commerce_offsite_backup.sh
       - name: Compile Python service and operations tools
-        run: python -m compileall -q server.py site_api saas_core identity_service scripts
+        run: python -m compileall -q server.py site_api saas_core identity_service market_data_service scripts
       - name: Build the non-root SaaS API image
         run: |
           docker build --file Dockerfile.saas --tag tloomberg-saas-api:ci .
@@ -69,6 +71,12 @@ jobs:
           image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-market-api:ci)"
           test "$image_user" = "10001:10001"
           docker run --rm tloomberg-market-api:ci python -c "import server; from site_api.refresh_worker import build_parser; print('market runtime imports ok')"
+      - name: Build the non-root Market Data Service image
+        run: |
+          docker build --file Dockerfile.market-data --tag tloomberg-market-data:ci .
+          image_user="$(docker image inspect --format '{{.Config.User}}' tloomberg-market-data:ci)"
+          test "$image_user" = "10004:10004"
+          docker run --rm tloomberg-market-data:ci python -c "import market_data_service.api; print('Market Data runtime imports ok')"
       - name: Build the same-origin SaaS edge image
         run: |
           docker build --file Dockerfile.saas-edge --tag tloomberg-saas-edge:ci .
@@ -111,6 +119,7 @@ jobs:
           PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
           SAAS_METRICS_TOKEN_FILE: /tmp/saas_metrics_token
           MARKET_API_IMAGE: tloomberg-market-api:ci
+          MARKET_DATA_API_IMAGE: tloomberg-market-data:ci
           MARKET_SOURCE_DB_PATH: /tmp/market-source.sqlite
           MARKET_API_DOMAIN: market-api.example.com
           MARKET_ALLOWED_ORIGINS: https://itmahdik.github.io

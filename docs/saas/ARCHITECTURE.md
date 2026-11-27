@@ -163,3 +163,24 @@ reward commit atomically. Orders snapshot both server price and plan duration.
 No cross-database joins or foreign keys are used. Provider checkout/refund,
 bank-account verification, payout and production data cutover remain gated
 until official provider contracts, credentials and operational approvals exist.
+
+
+## Market Data — Microservices Phase 3
+
+Market Data is an independently deployed FastAPI read service for instrument
+reference data and daily OHLCV. It reads the TSETMC source SQLite database and
+the rebuildable Site Sidecar with read-only SQLite connections. The source
+database is mounted read-only; the Sidecar volume permits only the ephemeral
+WAL shared-memory/lock files needed by SQLite, while Market Data runs under the
+Market API's unprivileged file UID. The Sidecar refresh worker remains the
+only writer of materialized projection rows; readiness requires a
+complete, version-matched projection whose source fingerprint matches the
+mounted market database.
+
+Caddy routes instrument catalogue/search and daily price requests to
+`market-data-api`. The existing Market API continues to own ownership
+snapshots, shareholder identity resolution, portfolios, screener and legacy
+site-state endpoints. Market Data has no dependency on Identity or Commerce
+databases. Public market reads do not require a subscription; paid feature
+authorization remains enforced by SaaS through Commerce, not by placing
+commercial data in the Market Data service.

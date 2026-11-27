@@ -1,0 +1,27 @@
+# Independent read-only Market Data API. The collector database is mounted ro.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN groupadd --system --gid 10004 marketdata \
+    && useradd --system --uid 10004 --gid marketdata --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin marketdata
+
+COPY requirements-market-data.txt /app/requirements-market-data.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements-market-data.txt
+
+COPY --chown=10004:10004 market_data_service /app/market_data_service
+
+USER 10004:10004
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/readyz', timeout=4).read()"
+
+CMD ["uvicorn", "market_data_service.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

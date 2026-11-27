@@ -83,6 +83,8 @@ jobs:
         run: python -m pytest -q tests/commerce
       - name: Run Identity service PostgreSQL/API tests
         run: python -m pytest -q tests/identity/test_identity_service.py
+      - name: Verify Market Data microservice and Phases 1-3 integration
+        run: python -m pytest -q tests/market_data tests/architecture/test_market_data_microservice.py tests/architecture/test_phase_1_2_3_integration.py
       - name: Run focused Phase 9 readiness and cross-platform integration tests
         run: |
           python -m pytest -q \

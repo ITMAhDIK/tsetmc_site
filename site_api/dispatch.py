@@ -9,6 +9,7 @@ the selected API method invocation.
 import os
 
 from .errors import ApiError
+from .market_data_client import proxy_market_data_request
 
 
 def _public_read_only() -> bool:
@@ -22,8 +23,10 @@ def _allow_public_read(method: str, rest: list[str]) -> bool:
     if method != "GET":
         return False
     if rest in (["market", "overview"], ["market", "watch"],
-                ["stocks", "search"], ["shareholders", "search"],
+                ["market", "instruments"], ["stocks", "search"], ["shareholders", "search"],
                 ["shareholders", "observation-history"], ["portfolios", "investors"]):
+        return True
+    if len(rest) == 3 and rest[:2] == ["market", "instruments"]:
         return True
     if len(rest) == 2 and rest[0] in {"stocks", "portfolios"}:
         return True
@@ -52,6 +55,21 @@ def dispatch_api(api, method, path, params, body):
         if rest and rest[0] == "admin":
             raise ApiError(404, "مسیر API یافت نشد: %s %s" % (method, path))
         raise ApiError(403, "درگاه عمومی فقط دسترسی خواندنی به داده‌های بازار دارد.")
+
+    # Compatibility gateway: deployments may route these requests through
+    # Caddy directly, while local/API-gateway deployments can use this client.
+    is_market_data_route = (
+        method == "GET"
+        and (
+            rest in (["stocks", "search"], ["market", "instruments"])
+            or (len(rest) == 3 and rest[:2] == ["market", "instruments"])
+            or (len(rest) == 3 and rest[0] == "stocks" and rest[2] == "prices")
+        )
+    )
+    if is_market_data_route:
+        proxied = proxy_market_data_request(path, params)
+        if proxied is not None:
+            return proxied
     if method == "GET" and rest == ["market", "overview"]:
         return api.market_overview(), 200, "json"
     if method == "GET" and rest == ["market", "watch"]:
