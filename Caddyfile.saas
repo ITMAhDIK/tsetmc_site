@@ -18,7 +18,7 @@
     root * /srv/saas
 
     # Never expose internal service endpoints, even through the /api/v1 prefix.
-    @private path /api/v1/internal/* /internal/* /openapi.json /docs /redoc
+    @private path /api/v1/internal/* /api/v1/notifications/internal/* /internal/* /openapi.json /docs /redoc
     handle @private {
         respond 404
     }
