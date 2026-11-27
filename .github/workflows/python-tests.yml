@@ -53,6 +53,9 @@ jobs:
           python -m pytest -q \
             tests/saas/test_phase9_load_probe.py \
             tests/saas/test_phase9_security_baseline.py \
-            tests/test_portfolio_service.py::test_phase_9_cross_platform_end_to_end_smoke
+            tests/test_portfolio_service.py::test_phase_9_cross_platform_end_to_end_smoke \
+            tests/saas/test_crm_phase10.py \
+            tests/saas/test_crm_phase10_postgres.py \
+            tests/test_portfolio_service.py::test_phase_10_crm_runs_alongside_market_without_cross_database_access
       - name: Run complete test suite (including PostgreSQL integration tests)
         run: python -m pytest -q
