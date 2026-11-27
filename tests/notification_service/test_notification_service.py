@@ -78,3 +78,11 @@ def test_production_configuration_requires_dedicated_database_and_identity_token
  assert "NOTIFICATION_EXPECTED_DATABASE_NAME" in source
  assert "IDENTITY_SERVICE_TOKEN" in source
  assert "sslmode" in source and "verify-full" in source
+
+def test_notification_worker_uses_separate_scoped_contact_token():
+ source=(ROOT/"notification_service/identity.py").read_text()
+ identity=(ROOT/"identity_service/api.py").read_text()
+ assert "NOTIFICATION_IDENTITY_SERVICE_TOKEN" in source
+ assert "X-Notification-Service-Token" in source
+ assert '"/internal/notification-contact/{user_id}"' in identity
+ assert "def _notification_service_auth" in identity
