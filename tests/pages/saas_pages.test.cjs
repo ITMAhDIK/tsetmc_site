@@ -68,7 +68,7 @@ test('Caddy serves static SaaS pages and proxies only the versioned API prefix',
   assert.match(caddy, /root \* \/srv\/saas/);
   assert.match(caddy, /handle_path \/api\/v1\/\*/);
   assert.match(caddy, /reverse_proxy saas-api:8000/);
-  assert.match(caddy, /@private path \/api\/v1\/internal\/\* \/internal\/\*/);
+  assert.match(caddy, /@private path \/api\/v1\/internal\/\* \/api\/v1\/notifications\/internal\/\* \/internal\/\*/);
   assert.match(caddy, /handle @private \{\s*respond 404\s*\}/);
   assert.match(caddy, /@identity path \/api\/v1\/auth \/api\/v1\/auth\/\*/);
   assert.match(caddy, /reverse_proxy identity-api:8000/);
