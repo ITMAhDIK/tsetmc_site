@@ -38,6 +38,7 @@ services:
       IDENTITY_DATABASE_URL: ${IDENTITY_DATABASE_URL:?Set a separate low-privilege Identity database URL}
       IDENTITY_EXPECTED_DATABASE_NAME: ${IDENTITY_EXPECTED_DATABASE_NAME:?Set the dedicated Identity database name}
       IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set a distinct private service token}
+      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
       IDENTITY_OTP_HMAC_SECRET: ${IDENTITY_OTP_HMAC_SECRET:?Set an independent OTP HMAC secret}
       IDENTITY_OUTBOX_FERNET_KEY: ${IDENTITY_OUTBOX_FERNET_KEY:?Set an independent Identity outbox key}
       IDENTITY_ADMIN_MFA_FERNET_KEY: ${IDENTITY_ADMIN_MFA_FERNET_KEY:?Set a separate Identity MFA key}
@@ -574,7 +575,6 @@ services:
       CRM_DB_POOL_TIMEOUT_SECONDS: ${CRM_DB_POOL_TIMEOUT_SECONDS:-5}
       IDENTITY_SERVICE_URL: http://identity-api:8000
       IDENTITY_SERVICE_TOKEN: ${IDENTITY_SERVICE_TOKEN:?Set private Identity service token}
-      NOTIFICATION_IDENTITY_SERVICE_TOKEN: ${NOTIFICATION_IDENTITY_SERVICE_TOKEN:?Set scoped Notification contact token}
     depends_on:
       crm-migrate:
         condition: service_completed_successfully
