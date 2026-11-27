@@ -25,7 +25,13 @@ def main():
   if c.execute("SELECT current_database() AS n").fetchone()["n"]!=expected: raise RuntimeError("Unexpected Notification database")
   c.execute("SELECT pg_advisory_lock(20261127,11)")
   try:
-   c.execute("CREATE TABLE IF NOT EXISTS notification_schema_migrations(version varchar(120) PRIMARY KEY,sha256 char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())")
+   exists=c.execute("SELECT to_regclass('public.notification_schema_migrations') IS NOT NULL AS ok").fetchone()["ok"]
+   if not exists and a.check:
+    print(f"{len(migrations)} Notification migration(s) pending"); return 1
+   if not exists:
+    objects=c.execute("""SELECT count(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')""").fetchone()["n"]
+    if objects: raise RuntimeError("Notification schema contains untracked objects; review before adoption")
+    c.execute("CREATE TABLE notification_schema_migrations(version varchar(120) PRIMARY KEY,sha256 char(64) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())")
    recorded={r["version"]:r["sha256"].strip() for r in c.execute("SELECT version,sha256 FROM notification_schema_migrations").fetchall()}
    expected_hash={v:h for v,h,_ in migrations}
    if set(recorded)-set(expected_hash): raise RuntimeError("Unknown Notification migration version")
