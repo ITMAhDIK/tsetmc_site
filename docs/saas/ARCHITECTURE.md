@@ -79,4 +79,23 @@ database credentials, protected secrets, encrypted backup/restore, migration
 checksums, health/readiness, route-level Prometheus metrics and audit logs.
 The Prometheus configuration is private; Alertmanager delivery, host monitoring
 and on-call still require environment provisioning.
-CRM is deferred and will integrate via stable user IDs and audited APIs.
+Phase 10 implements the CRM backend foundation using stable SaaS user IDs and audited APIs. The staff browser workspace, automated outreach and advanced CRM workflows remain deferred.
+
+
+## CRM — Phase 10 backend foundation
+
+The internal CRM runs only on the SaaS PostgreSQL database and references
+customers by the stable `users.id` UUID. It provides staff-only customer
+search, lifecycle stage and assignment, an append-only interaction timeline,
+and due-dated follow-up tasks. The `crm.read` and `crm.manage` permissions
+are separate from support-ticket access and are granted to admin/superadmin
+roles only. Every CRM route requires a recent session-bound TOTP verification.
+
+CRM records do not duplicate phone/email addresses, Market data, private ticket
+messages, payment credentials, bank information, OTPs or analytics event
+payloads. CRM read/write activity is audited; interaction history cannot be
+updated or deleted. CRM staff MFA enrollment does not confer
+`superadmin.console.access`.
+
+The staff CRM UI, reminders, prospect capture and outbound campaigns are
+deferred. No marketing message is sent by the Phase 10 backend.
