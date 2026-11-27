@@ -569,11 +569,29 @@ def _admin_mfa_cipher() -> Fernet:
 
 
 def _require_privileged_account(conn, user_id):
-    from .authorization import AuthorizationDenied, require_permission
-    try:
-        require_permission(conn, user_id, "superadmin.console.access")
-    except AuthorizationDenied:
-        raise HTTPException(status_code=403, detail="privileged account required") from None
+    from .authorization import has_permission
+    # Superadmin console users and explicitly authorized CRM staff may enroll
+    # their own TOTP device. CRM permission does not grant Superadmin routes.
+    if not (
+        has_permission(conn, user_id, "superadmin.console.access")
+        or has_permission(conn, user_id, "crm.manage")
+    ):
+        raise HTTPException(status_code=403, detail="privileged account required")
+
+
+def require_crm_mfa(user=Depends(current_user), conn=Depends(get_conn)):
+    """Require an enrolled TOTP device and a recent verification for CRM staff."""
+    if user.get("mfa_verified_at") is None:
+        raise HTTPException(status_code=403, detail="recent MFA verification is required")
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT enabled_at FROM user_admin_mfa WHERE user_id=%s",
+            (user["id"],),
+        )
+        record = cur.fetchone()
+    if not record or record["enabled_at"] is None:
+        raise HTTPException(status_code=403, detail="privileged MFA enrollment is required")
+    return user
 
 
 def require_admin_mfa(user=Depends(current_user), conn=Depends(get_conn)):
