@@ -75,6 +75,7 @@ jobs:
           NOTIFICATION_APP_DATABASE_ROLE: notification_runtime
           NOTIFICATION_INGEST_TOKEN: ci-placeholder-notification-ingest-token-123456789
           IDENTITY_SERVICE_TOKEN: ci-placeholder-identity-service-token-123456789
+          NOTIFICATION_IDENTITY_SERVICE_TOKEN: ci-placeholder-notification-identity-contact-token-123456789
           IDENTITY_SERVICE_URL: http://identity-api:8000
           NOTIFICATION_DB_POOL_MIN: "1"
           NOTIFICATION_DB_POOL_MAX: "8"
