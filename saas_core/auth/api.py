@@ -64,6 +64,7 @@ _REQUIRED_SCHEMA_TABLES = (
     "withdrawal_requests", "referrals", "tickets", "ticket_messages", "notification_outbox",
     "analytics_consents", "analytics_events", "admin_audit_logs",
     "payment_reconciliation_notes", "user_admin_mfa", "legal_acceptances",
+    "crm_customer_profiles", "crm_interactions", "crm_followups",
 )
 _REQUIRED_SCHEMA_COLUMNS = (
     "analytics_events.event_order",
@@ -722,6 +723,7 @@ from saas_core.wallet.api import router as wallet_router
 from saas_core.support.api import router as support_router
 from saas_core.analytics.api import router as analytics_router
 from saas_core.admin.api import router as admin_router
+from saas_core.crm.api import router as crm_router
 
 app.include_router(account_router)
 app.include_router(payments_router)
@@ -729,3 +731,4 @@ app.include_router(wallet_router)
 app.include_router(support_router)
 app.include_router(analytics_router)
 app.include_router(admin_router)
+app.include_router(crm_router)
