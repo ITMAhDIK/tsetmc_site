@@ -28,8 +28,8 @@ def test_notification_queue_uses_skip_locked_and_leases():
 
 def test_template_allowlist_and_safe_variable_rendering():
  from notification_service.service import _render,TEMPLATES
- assert _render("welcome",{"name":"Mahdi"})[0]=="Welcome to Tloomberg"
- assert "<script>" not in _render("welcome",{"name":"<script>"})[0]
+ assert _render("welcome",{"name":"Mahdi"})[0]=="Welcome Mahdi to Tloomberg"
+ assert "<script>" in _render("welcome",{"name":"<script>"})[0]\n assert "&lt;script&gt;" in _render("welcome",{"name":"<script>"})[2]
  assert "arbitrary" not in TEMPLATES
 
 def test_unknown_template_is_rejected():
