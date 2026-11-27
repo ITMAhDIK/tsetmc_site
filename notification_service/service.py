@@ -1,14 +1,14 @@
 """Idempotent notification enqueue, inbox, and leased delivery queue."""
 from __future__ import annotations
-import hashlib,json,os,re,uuid
+import hashlib,json,os,re,uuid,html
 from datetime import datetime,timezone,timedelta
 from uuid import UUID
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from notification_service.identity import verified_contact
-from notification_service.providers import send_email,send_sms,DeliveryError
+from notification_service.providers import send_email,send_sms,DeliveryError\nhtml_escape=html.escape
 TEMPLATES={
- "welcome":("Welcome to Tloomberg","Your account is ready.","Your account is ready.", "transactional"),
+ "welcome":("Welcome {name} to Tloomberg","Your account is ready, {name}.","Your account is ready, {name}.", "transactional"),
  "security_alert":("Security alert","A security event was detected on your account.","A security event was detected on your account.", "security"),
  "payment_receipt":("Payment received","Your payment was received successfully.","Your payment was received successfully.", "transactional"),
  "subscription_expiry":("Subscription reminder","Your subscription is approaching its expiry date.","Your subscription is approaching its expiry date.", "transactional"),
@@ -25,6 +25,8 @@ def enqueue(conn,user_ids,template_key,payload,channels,idempotency_key,actor="s
  canonical=json.dumps({"users":[str(x) for x in user_ids],"template":template_key,"payload":payload,"channels":sorted(set(channels))},sort_keys=True,separators=(",",":"))
  digest=_hash(canonical)
  with conn.transaction():
+  conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",(idempotency_key,))
+  conn.execute("DELETE FROM notification_idempotency WHERE expires_at<now()")
   existing=conn.execute("SELECT request_hash,notification_ids FROM notification_idempotency WHERE idempotency_key=%s FOR UPDATE",(idempotency_key,)).fetchone()
   if existing:
    if existing["request_hash"]!=digest: raise HTTPException(409,detail="idempotency key reused with different request")
@@ -60,7 +62,7 @@ def _render(template,payload):
  title,body,html,_=TEMPLATES[template]
  safe={k:str(v)[:160] for k,v in payload.items() if k in {"name","reference","amount","date"} and isinstance(v,(str,int,float))}
  for key,value in safe.items():
-  title=title.replace("{"+key+"}",value); body=body.replace("{"+key+"}",value); html=html.replace("{"+key+"}",value)
+  title=title.replace("{"+key+"}",value); body=body.replace("{"+key+"}",value); html=html.replace("{"+key+"}",html_escape(value))
  return title,body,html
 def deliver_one(conn,job):
  row=conn.execute("""SELECT d.*,n.user_id,n.template_key,n.payload FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id WHERE d.id=%s AND d.status='processing' AND d.lock_token=%s""",(job["id"],job["lock_token"])).fetchone()
