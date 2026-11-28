@@ -1,4 +1,5 @@
 name: Deploy investor history and affinity preview to GitHub Pages
+# Includes the current Tloomberg dashboard UI/UX refresh.
 
 on:
   push:
