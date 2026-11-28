@@ -47,6 +47,12 @@ completion markers are valid.
 
 - The source holdings DB continues to be opened through SQLite mode=ro and
   PRAGMA query_only=ON.
+- The refresh fingerprint includes the source DB file and any WAL containing
+  frames (size + nanosecond mtime). Missing, zero-byte, and 32-byte header-only
+  WAL files are normalized to the same `wal:empty` state because they contain no
+  frames; this avoids false refreshes when SQLite removes an empty WAL on close.
+- A committed transaction may live only in WAL without changing the main DB file;
+  a WAL with frames must still invalidate the Sidecar.
 - Both runtime modes use the same sidecar path and the same per-sidecar refresh lock.
 - A concurrent refresher is skipped rather than running a second full rebuild.
 - OS locks are released automatically when a process exits or crashes.
@@ -67,8 +73,9 @@ The process-level lock prevents overlapping work during a transition.
 
 The automated tests cover process-lock exclusion/reacquisition, protection against
 API/worker refresh overlap, inline-versus-external runtime selection, periodic-loop
-timing, one-shot failure status, missing DB handling, duplicate-worker rejection and
-the worker CLI using the requested DB/sidecar paths.
+timing, one-shot failure status, missing DB handling, duplicate-worker rejection,
+the worker CLI using the requested DB/sidecar paths, and WAL-only source changes
+that leave the main DB file's size/mtime unchanged.
 
 These tests use disposable files and fake refresh APIs. They do not scan or mutate
 the production holdings database, run a real multi-million-row refresh, or validate

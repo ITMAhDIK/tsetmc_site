@@ -2028,12 +2028,40 @@ class SiteApi:
                 self._refresh_error = str(exc)
                 print("[refresh] skipped: %s" % exc, flush=True)
 
-    def _refresh_locked(self):
+    def _source_fingerprint(self):
+        """Fingerprint the logical SQLite source, including committed WAL pages.
+
+        A WAL-mode writer can commit transactions without changing the main
+        database file's size/mtime. The WAL is part of the live database view
+        until checkpointed, so excluding it can leave the Sidecar stale while
+        the source database is already serving the new rows.
+        """
         try:
-            st = os.stat(self.db_path)
-            fingerprint = "%d:%d" % (st.st_size, int(st.st_mtime))
+            main_stat = os.stat(self.db_path)
         except OSError:
-            fingerprint = None
+            return None
+        parts = ["main:%d:%d" % (main_stat.st_size, main_stat.st_mtime_ns)]
+        try:
+            wal_stat = os.stat(self.db_path + "-wal")
+        except FileNotFoundError:
+            # A missing WAL and a WAL with no frames represent the same
+            # committed database state. SQLite may remove an empty WAL when
+            # the final connection closes, so do not fingerprint its mtime.
+            parts.append("wal:empty")
+        except OSError:
+            return None
+        else:
+            # The WAL header is 32 bytes. A WAL must contain at least one
+            # complete frame beyond that header to carry uncheckpointed data.
+            # Normalize empty/header-only files with a missing WAL.
+            if wal_stat.st_size <= 32:
+                parts.append("wal:empty")
+            else:
+                parts.append("wal:%d:%d" % (wal_stat.st_size, wal_stat.st_mtime_ns))
+        return "|".join(parts)
+
+    def _refresh_locked(self):
+        fingerprint = self._source_fingerprint()
         sc = self.sidecar()
         try:
             # Ensure the search-ordering index exists on the CURRENT
