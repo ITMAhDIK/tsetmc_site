@@ -1,6 +1,7 @@
 """Tests for the split refresh runtime and standalone worker process."""
 from __future__ import annotations
 
+import sqlite3
 import threading
 
 import pytest
@@ -222,3 +223,36 @@ def test_worker_cli_refuses_to_start_when_another_worker_holds_lock(tmp_path):
 
     assert result == 3
     assert len(called) == 1
+
+
+def test_source_fingerprint_includes_committed_wal_changes(tmp_path):
+    source = tmp_path / "market.sqlite"
+    connection = sqlite3.connect(source)
+    try:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() == "wal"
+        connection.execute("PRAGMA wal_autocheckpoint=0")
+        connection.execute("CREATE TABLE source_rows (id INTEGER PRIMARY KEY, value TEXT)")
+        connection.commit()
+
+        api = SiteApi(
+            str(source), str(tmp_path / "site_data.sqlite"),
+            str(tmp_path), str(tmp_path),
+        )
+        first = api._source_fingerprint()
+        main_before = source.stat()
+        wal_path = tmp_path / "market.sqlite-wal"
+        assert wal_path.is_file()
+
+        connection.execute("INSERT INTO source_rows(value) VALUES ('committed-in-wal')")
+        connection.commit()
+
+        main_after = source.stat()
+        second = api._source_fingerprint()
+        assert (main_after.st_size, main_after.st_mtime_ns) == (
+            main_before.st_size, main_before.st_mtime_ns
+        )
+        assert wal_path.stat().st_size > 0
+        assert second != first
+        assert "wal:" in second
+    finally:
+        connection.close()
