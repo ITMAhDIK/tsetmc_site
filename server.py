@@ -2028,12 +2028,31 @@ class SiteApi:
                 self._refresh_error = str(exc)
                 print("[refresh] skipped: %s" % exc, flush=True)
 
-    def _refresh_locked(self):
+    def _source_fingerprint(self):
+        """Fingerprint the logical SQLite source, including committed WAL pages.
+
+        A WAL-mode writer can commit transactions without changing the main
+        database file's size/mtime. The WAL is part of the live database view
+        until checkpointed, so excluding it can leave the Sidecar stale while
+        the source database is already serving the new rows.
+        """
         try:
-            st = os.stat(self.db_path)
-            fingerprint = "%d:%d" % (st.st_size, int(st.st_mtime))
+            main_stat = os.stat(self.db_path)
         except OSError:
-            fingerprint = None
+            return None
+        parts = ["main:%d:%d" % (main_stat.st_size, main_stat.st_mtime_ns)]
+        try:
+            wal_stat = os.stat(self.db_path + "-wal")
+        except FileNotFoundError:
+            parts.append("wal:missing")
+        except OSError:
+            return None
+        else:
+            parts.append("wal:%d:%d" % (wal_stat.st_size, wal_stat.st_mtime_ns))
+        return "|".join(parts)
+
+    def _refresh_locked(self):
+        fingerprint = self._source_fingerprint()
         sc = self.sidecar()
         try:
             # Ensure the search-ordering index exists on the CURRENT
