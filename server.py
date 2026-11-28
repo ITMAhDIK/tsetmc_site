@@ -2044,11 +2044,20 @@ class SiteApi:
         try:
             wal_stat = os.stat(self.db_path + "-wal")
         except FileNotFoundError:
-            parts.append("wal:missing")
+            # A missing WAL and a WAL with no frames represent the same
+            # committed database state. SQLite may remove an empty WAL when
+            # the final connection closes, so do not fingerprint its mtime.
+            parts.append("wal:empty")
         except OSError:
             return None
         else:
-            parts.append("wal:%d:%d" % (wal_stat.st_size, wal_stat.st_mtime_ns))
+            # The WAL header is 32 bytes. A WAL must contain at least one
+            # complete frame beyond that header to carry uncheckpointed data.
+            # Normalize empty/header-only files with a missing WAL.
+            if wal_stat.st_size <= 32:
+                parts.append("wal:empty")
+            else:
+                parts.append("wal:%d:%d" % (wal_stat.st_size, wal_stat.st_mtime_ns))
         return "|".join(parts)
 
     def _refresh_locked(self):

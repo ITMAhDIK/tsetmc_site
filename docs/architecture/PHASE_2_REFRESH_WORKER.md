@@ -47,9 +47,12 @@ completion markers are valid.
 
 - The source holdings DB continues to be opened through SQLite mode=ro and
   PRAGMA query_only=ON.
-- The refresh fingerprint includes both the source DB file and its `-wal`
-  file (size + nanosecond mtime). A committed transaction may live only in WAL
-  without changing the main DB file; this must still invalidate the Sidecar.
+- The refresh fingerprint includes the source DB file and any WAL containing
+  frames (size + nanosecond mtime). Missing, zero-byte, and 32-byte header-only
+  WAL files are normalized to the same `wal:empty` state because they contain no
+  frames; this avoids false refreshes when SQLite removes an empty WAL on close.
+- A committed transaction may live only in WAL without changing the main DB file;
+  a WAL with frames must still invalidate the Sidecar.
 - Both runtime modes use the same sidecar path and the same per-sidecar refresh lock.
 - A concurrent refresher is skipped rather than running a second full rebuild.
 - OS locks are released automatically when a process exits or crashes.

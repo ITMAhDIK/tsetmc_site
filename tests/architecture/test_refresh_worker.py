@@ -256,3 +256,28 @@ def test_source_fingerprint_includes_committed_wal_changes(tmp_path):
         assert "wal:" in second
     finally:
         connection.close()
+
+def test_source_fingerprint_normalizes_missing_empty_and_header_only_wal(tmp_path):
+    source = tmp_path / "market.sqlite"
+    connection = sqlite3.connect(source)
+    try:
+        connection.execute("CREATE TABLE source_rows (id INTEGER PRIMARY KEY, value TEXT)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    api = SiteApi(
+        str(source), str(tmp_path / "site_data.sqlite"),
+        str(tmp_path), str(tmp_path),
+    )
+    missing_wal_fingerprint = api._source_fingerprint()
+    wal_path = tmp_path / "market.sqlite-wal"
+
+    # SQLite can leave a zero-byte WAL briefly and then remove it when the
+    # last connection closes. Neither filesystem state changes DB contents.
+    wal_path.write_bytes(b"")
+    assert api._source_fingerprint() == missing_wal_fingerprint
+
+    # A valid WAL header with no frames also contains no committed changes.
+    wal_path.write_bytes(b"\x00" * 32)
+    assert api._source_fingerprint() == missing_wal_fingerprint
