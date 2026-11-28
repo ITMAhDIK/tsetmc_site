@@ -43,13 +43,13 @@
     .num {
       font-variant-numeric: tabular-nums;
       direction: ltr;
-      display: inline-block;
     }
-    /* A td/th with display inline-block stops behaving as a table cell,
-       so its content drifts away from its column header. Table cells keep
-       table-cell; inline spans keep inline-block. */
-    td.num, th.num {
-      display: table-cell;
+    /* Inline spans keep inline-block. Table cells are left alone: giving
+       td/th an inline-block display makes them stop behaving as cells
+       (content drifts from its header) and also defeats responsive
+       `hidden md:table-cell` utilities. :where() keeps specificity at 0. */
+    .num:where(:not(td):not(th)) {
+      display: inline-block;
     }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: var(--bg-canvas); }
@@ -549,8 +549,54 @@
     };
 
     const ErrorBox = ({ error }) => error ? (
-      <div className="p-3 rounded border border-red-500/40 bg-red-500/10 text-red-300 text-xs">{error}</div>
+      <div role="alert" className="p-3 rounded border border-red-500/40 bg-red-500/10 text-red-300 text-xs">{error}</div>
     ) : null;
+
+    // Shared UX primitives: sortable column header (shows the active sort
+    // and is keyboard-reachable), skeleton rows for loading tables, and
+    // consistent empty / loading states.
+    const SortTh = ({ col, label, sortBy, sortDir, onSort, className = '' }) => {
+      const active = sortBy === col;
+      return (
+        <th scope="col" aria-sort={active ? (sortDir === 'ASC' ? 'ascending' : 'descending') : 'none'} className={`p-2 ${className}`}>
+          <button type="button" onClick={() => onSort(col)} className={`th-sort ${active ? 'is-active' : ''}`}>
+            <span>{label}</span>
+            <span className="th-sort-icon" aria-hidden="true">{active ? (sortDir === 'ASC' ? '▲' : '▼') : '⇅'}</span>
+          </button>
+        </th>
+      );
+    };
+    const SkeletonRows = ({ cols, rows = 8 }) => (
+      <>
+        {Array.from({ length: rows }).map((_, r) => (
+          <tr key={r} className="skeleton-row" aria-hidden="true">
+            {Array.from({ length: cols }).map((__, c) => (
+              <td key={c} className="p-2"><span className="skeleton" style={{ width: `${48 + ((r * 7 + c * 13) % 44)}%` }} /></td>
+            ))}
+          </tr>
+        ))}
+      </>
+    );
+    const EmptyState = ({ icon = '∅', title, hint, action }) => (
+      <div className="empty-state">
+        <span className="empty-state-icon" aria-hidden="true">{icon}</span>
+        <strong>{title}</strong>
+        {hint && <p>{hint}</p>}
+        {action}
+      </div>
+    );
+    const LoadingState = ({ label }) => (
+      <div className="loading-state" role="status" aria-live="polite">
+        <span className="loading-spinner" aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+    );
+    // Row that is clickable by mouse and by keyboard (Enter / Space).
+    const rowActivate = (fn) => ({
+      tabIndex: 0,
+      onClick: fn,
+      onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(e); } },
+    });
 
     // --- 4. Page 1: Multi-Stock Market Dashboard ---
     function MarketDashboardPage({ onOpenStock, onOpenInvestor, currency, dateMode }) {
@@ -566,6 +612,7 @@
       const [error, setError] = useState('');
       const [sectorRegistry, setSectorRegistry] = useState(null);
       const [selectedSector, setSelectedSector] = useState(savedMarketState.selectedSector || '');
+      const [sectorOpen, setSectorOpen] = useState(Boolean(savedMarketState.selectedSector));
       const [sectorSearch, setSectorSearch] = useState(savedMarketState.sectorSearch || '');
       const limit = 50;
 
@@ -631,84 +678,72 @@
         <div className="space-y-3">
           <ErrorBox error={error} />
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
-            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-              <div className="text-[11px] text-[var(--text-secondary)]">شرکت‌های واردشده در پایگاه داده</div>
-              <div className="text-lg font-bold num mt-1 text-blue-400">{fmtNum(sum.total_companies ?? 0)} نماد</div>
-              <div className="text-[11px] text-[var(--text-secondary)] mt-1">
-                بورس: <span className="num">{fmtNum(sum.tse_companies ?? 0)}</span> | فرابورس: <span className="num">{fmtNum(sum.ifb_companies ?? 0)}</span> | نامشخص: <span className="num">{fmtNum(sum.unknown_market_companies ?? 0)}</span>
-              </div>
+          <section className="stat-strip" aria-label="خلاصهٔ پایگاه داده">
+            <div className="stat">
+              <span className="stat-label">شرکت‌های واردشده</span>
+              <strong className="stat-value num">{fmtNum(sum.total_companies ?? 0)} <small>نماد</small></strong>
+              <span className="stat-sub">بورس <b className="num">{fmtNum(sum.tse_companies ?? 0)}</b> · فرابورس <b className="num">{fmtNum(sum.ifb_companies ?? 0)}</b> · نامشخص <b className="num">{fmtNum(sum.unknown_market_companies ?? 0)}</b></span>
             </div>
-
-            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-              <div className="text-[11px] text-[var(--text-secondary)]">پوشش زمانی و حجم رکوردها</div>
-              <div className="text-sm font-bold num mt-1">
-                از {sum.earliest_date_jalali ? fmtDate(sum.earliest_date_jalali) : '—'} تا {sum.latest_date_jalali ? fmtDate(sum.latest_date_jalali) : '—'}
-              </div>
-              <div className="text-[11px] text-[var(--text-secondary)] mt-1">کل رکوردهای سهام‌داری: <span className="num">{fmtNum(sum.total_holdings_rows ?? 0)}</span></div>
+            <div className="stat">
+              <span className="stat-label">پوشش زمانی داده</span>
+              <strong className="stat-value stat-value--sm num">از {sum.earliest_date_jalali ? fmtDate(sum.earliest_date_jalali) : '—'} تا {sum.latest_date_jalali ? fmtDate(sum.latest_date_jalali) : '—'}</strong>
+              <span className="stat-sub">رکوردهای سهام‌داری <b className="num">{fmtNum(sum.total_holdings_rows ?? 0)}</b></span>
             </div>
-
-            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-              <div className="flex justify-between items-center text-[11px] text-[var(--text-secondary)]">
-                <span>شاخص‌های بازار (TSE / IFB)</span>
-                <span className="px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300">داده موجود نیست</span>
-              </div>
-              <div className="mt-2 text-xs text-[var(--text-muted)]">
-                شاخص کل و حجم معاملات در داده‌های جمع‌آوری‌شده موجود نیست (در انتظار اتصال فید بازار).
-              </div>
+            <div className="stat">
+              <span className="stat-label">آخرین به‌روزرسانی</span>
+              <strong className="stat-value stat-value--sm num">{sum.last_updated_at ? fmtDateTime(sum.last_updated_at) : '—'}</strong>
+              <span className="stat-sub stat-sub--ok">منبع: SQLite محلی</span>
             </div>
-
-            <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)]">
-              <div className="text-[11px] text-[var(--text-secondary)]">آخرین به‌روزرسانی دیتابیس</div>
-              <div className="text-sm font-bold num mt-1">{sum.last_updated_at ? fmtDateTime(sum.last_updated_at) : '—'}</div>
-              <div className="text-[11px] text-emerald-400 mt-1">منبع: SQLite محلی</div>
+            <div className="stat stat--muted">
+              <span className="stat-label">شاخص‌های بازار (TSE / IFB)</span>
+              <strong className="stat-value stat-value--sm">در انتظار اتصال فید</strong>
+              <span className="stat-sub">شاخص کل و حجم معاملات هنوز در داده‌های جمع‌آوری‌شده نیست.</span>
             </div>
-          </div>
+          </section>
 
-          <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
-            <div className="p-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-bold">گروه‌بندی رسمی نمادهای بازار</h2>
-                <p className="text-[11px] text-[var(--text-secondary)] mt-1">فهرست اعضای هر گروه بر اساس طبقه‌بندی رسمی TSETMC؛ مستقل از اینکه تاریخچهٔ آن نماد در دیتابیس محلی وارد شده باشد.</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <select value={selectedSector} onChange={e=>{setSelectedSector(e.target.value);setSectorSearch('');}} className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs min-w-56">
+          <details className="panel-collapsible" open={sectorOpen} onToggle={e => setSectorOpen(e.currentTarget.open)}>
+            <summary>
+              <span className="panel-collapsible-title">
+                <strong>گروه‌بندی رسمی نمادهای بازار</strong>
+                <small>{selectedSectorGroup ? `${selectedSectorGroup.label} · ${fmtNum(selectedSectorGroup.instruments.length)} نماد` : 'فهرست اعضای هر گروه بر اساس طبقه‌بندی رسمی TSETMC'}</small>
+              </span>
+              <span className="panel-collapsible-chevron" aria-hidden="true">‹</span>
+            </summary>
+            <div className="panel-collapsible-body">
+              <div className="flex flex-wrap gap-2 mb-3">
+                <select aria-label="انتخاب گروه بورسی" value={selectedSector} onChange={e=>{setSelectedSector(e.target.value);setSectorSearch('');}} className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs min-w-56">
                   <option value="">انتخاب گروه بورسی…</option>
                   {sectorGroups.map(group=><option key={group.code} value={group.code}>{group.label} ({fmtNum(group.instruments.length)})</option>)}
                 </select>
-                {selectedSector && <input value={sectorSearch} onChange={e=>setSectorSearch(e.target.value)} placeholder="جستجو در نمادهای گروه…" className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs" />}
+                {selectedSector && <input aria-label="جستجو در نمادهای گروه" value={sectorSearch} onChange={e=>setSectorSearch(e.target.value)} placeholder="جستجو در نمادهای گروه…" className="px-3 py-2 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] text-xs" />}
               </div>
+              {!sectorRegistry ? (
+                <EmptyState icon="!" title="رجیستری رسمی گروه‌ها بارگذاری نشد" hint="فایل data/instrument_sectors.json در دسترس نیست." />
+              ) : !selectedSectorGroup ? (
+                <EmptyState icon="▤" title="یک گروه را انتخاب کنید" hint="تمام نمادهای ثبت‌شده در آن گروه نمایش داده می‌شوند." />
+              ) : (
+                <div>
+                  <div className="text-xs text-[var(--text-secondary)] mb-3">{fmtNum(visibleSectorInstruments.length)} از {fmtNum(selectedSectorGroup.instruments.length)} نماد رسمی</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7 gap-2">
+                    {visibleSectorInstruments.map(item=>(
+                      <button key={item.ins_code} onClick={()=>onOpenStock(item.symbol)} className="text-right rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-blue-500 p-2">
+                        <span className="block font-bold text-blue-400 text-xs">{item.symbol || '—'}</span>
+                        <span className="block text-[10px] text-[var(--text-secondary)] mt-1 truncate">{item.lSoSecVal || 'زیرگروه ثبت نشده'}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            {!sectorRegistry ? (
-              <div className="p-4 text-xs text-[var(--text-secondary)]">رجیستری رسمی گروه‌ها بارگذاری نشد.</div>
-            ) : !selectedSectorGroup ? (
-              <div className="p-4 text-xs text-[var(--text-secondary)]">یک گروه را انتخاب کن تا تمام نمادهای ثبت‌شده در آن گروه نمایش داده شوند.</div>
-            ) : (
-              <div className="p-3">
-                <div className="flex flex-wrap justify-between gap-2 text-xs mb-3">
-                  <strong>{selectedSectorGroup.label}</strong>
-                  <span className="text-[var(--text-secondary)]">{fmtNum(visibleSectorInstruments.length)} از {fmtNum(selectedSectorGroup.instruments.length)} نماد رسمی</span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7 gap-2">
-                  {visibleSectorInstruments.map(item=>(
-                    <button key={item.ins_code} onClick={()=>onOpenStock(item.symbol)} className="text-right rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-blue-500 p-2">
-                      <span className="block font-bold text-blue-400 text-xs">{item.symbol || '—'}</span>
-                      <span className="block text-[10px] text-[var(--text-secondary)] mt-1 truncate">{item.lSoSecVal || 'زیرگروه ثبت نشده'}</span>
-                      <span className="block text-[9px] text-[var(--text-muted)] mt-1">عضو گروه رسمی</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          </details>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
             <div className="lg:col-span-8 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-hidden">
               <div className="p-2.5 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-2">
                 <h2 className="text-xs font-bold">فهرست کل نمادهای واردشده ({fmtNum(watch.total)} نماد)</h2>
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <input value={q} onChange={e => { setQ(e.target.value); setOffset(0); }} placeholder="جستجوی نماد یا شرکت..." className="px-2.5 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48" />
-                  <select value={market} onChange={e => { setMarket(e.target.value); setOffset(0); }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
+                  <input type="search" aria-label="جستجوی نماد یا شرکت در جدول" value={q} onChange={e => { setQ(e.target.value); setOffset(0); }} placeholder="جستجوی نماد یا شرکت..." className="px-2.5 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-48" />
+                  <select aria-label="فیلتر بازار" value={market} onChange={e => { setMarket(e.target.value); setOffset(0); }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)]">
                     <option value="ALL">همه بازارها</option>
                     <option value="TSE">بورس (TSE)</option>
                     <option value="IFB">فرابورس (IFB)</option>
@@ -718,34 +753,35 @@
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-xs text-right">
+                <table className="w-full text-xs text-right market-table">
+                  <caption className="tloomberg-sr-only">فهرست نمادها؛ برای مرتب‌سازی روی عنوان ستون بزنید</caption>
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)] border-b border-[var(--border-subtle)]">
                     <tr>
-                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('symbol')}>نماد ⇅</th>
-                      <th className="p-2">نام شرکت</th>
-                      <th className="p-2">بازار</th>
-                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('total_shares')}>کل سهام ⇅</th>
-                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('market_value')}>ارزش بازار ⇅</th>
-                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_count')}>سهام‌دار عمده ⇅</th>
-                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('disclosed_pct')}>مالکیت عمده٪ ⇅</th>
-                      <th className="p-2 cursor-pointer" onClick={() => toggleSort('latest_date')}>آخرین تاریخ ⇅</th>
+                      <SortTh col="symbol" label="نماد" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                      <th scope="col" className="p-2">نام شرکت</th>
+                      <th scope="col" className="p-2 hidden sm:table-cell">بازار</th>
+                      <SortTh col="total_shares" label="کل سهام" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} className="hidden lg:table-cell" />
+                      <SortTh col="market_value" label="ارزش بازار" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                      <SortTh col="disclosed_count" label="سهام‌دار عمده" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
+                      <SortTh col="disclosed_pct" label="مالکیت عمده٪" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                      <SortTh col="latest_date" label="آخرین تاریخ" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
                     {loading ? (
-                      <tr><td colSpan="8" className="p-6 text-center text-[var(--text-secondary)]">در حال بارگذاری...</td></tr>
+                      <SkeletonRows cols={8} rows={10} />
                     ) : watch.rows.length === 0 ? (
-                      <tr><td colSpan="8" className="p-6 text-center text-[var(--text-secondary)]">نمادی یافت نشد. ابتدا پایپلاین ایمپورت را اجرا کنید.</td></tr>
+                      <tr><td colSpan="8"><EmptyState icon="⌕" title={q || market !== 'ALL' ? 'نمادی با این فیلتر پیدا نشد' : 'هنوز نمادی وارد نشده است'} hint={q || market !== 'ALL' ? 'عبارت جستجو را کوتاه‌تر کنید یا فیلتر بازار را بردارید.' : 'ابتدا پایپلاین ایمپورت را اجرا کنید.'} action={(q || market !== 'ALL') ? <button type="button" className="empty-state-action" onClick={() => { setQ(''); setMarket('ALL'); setOffset(0); }}>پاک‌کردن فیلترها</button> : null} /></td></tr>
                     ) : watch.rows.map(r => (
-                      <tr key={r.symbol} onClick={() => onOpenStock(r.symbol)} className="hover:bg-[var(--bg-elevated)] cursor-pointer">
+                      <tr key={r.symbol} {...rowActivate(() => onOpenStock(r.symbol))} className="hover:bg-[var(--bg-elevated)] cursor-pointer">
                         <td className="p-2 font-bold text-blue-400">{r.symbol}</td>
-                        <td className="p-2">{r.company_name || '—'}</td>
-                        <td className="p-2"><span className="px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px]">{r.market}</span></td>
-                        <td className="p-2 num">{fmtNum(r.total_company_shares)}</td>
+                        <td className="p-2 company-cell">{r.company_name || '—'}</td>
+                        <td className="p-2 hidden sm:table-cell"><span className="px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px]">{r.market}</span></td>
+                        <td className="p-2 num hidden lg:table-cell">{fmtNum(r.total_company_shares)}</td>
                         <td className="p-2 num" title={r.latest_price ? `آخرین قیمت: ${fmtNum(r.latest_price)} ریال (${fmtGregorianDate(r.latest_price_date)})` : 'قیمت موجود نیست'}>{r.market_value !== null && r.market_value !== undefined ? fmtMoney(r.market_value, currency) : '—'}</td>
-                        <td className="p-2 num" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.resolved_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.resolved_ownership_percent_sum) > 0.001 ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(r.disclosed_shareholder_count)}` : undefined}>{toFa(r.resolved_shareholder_count)}{r.resolved_status === 'review' ? <span className="text-amber-400" title={r.resolved_status_note || 'رکوردهای تکراری حل‌نشده دارد'}> ⚠</span> : ''}</td>
+                        <td className="p-2 num hidden md:table-cell" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.resolved_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.resolved_ownership_percent_sum) > 0.001 ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(r.disclosed_shareholder_count)}` : undefined}>{toFa(r.resolved_shareholder_count)}{r.resolved_status === 'review' ? <span className="text-amber-400" title={r.resolved_status_note || 'رکوردهای تکراری حل‌نشده دارد'}> ⚠</span> : ''}</td>
                         <td className="p-2 num font-semibold" title={r.raw_ownership_percent_sum !== null && r.raw_ownership_percent_sum !== undefined && r.resolved_ownership_percent_sum !== null && Math.abs(r.raw_ownership_percent_sum - r.resolved_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(r.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : (r.resolved_status === 'review' ? r.resolved_status_note : undefined)}>{fmtPct(r.resolved_ownership_percent_sum)}</td>
-                        <td className="p-2 num text-[var(--text-secondary)]">{fmtDate(r.latest_date_jalali)}</td>
+                        <td className="p-2 num text-[var(--text-secondary)] hidden md:table-cell">{fmtDate(r.latest_date_jalali)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -936,8 +972,8 @@
       const dedupedHolders = useMemo(() => resolvedHolders(holdersRes), [holdersRes]);
       const unquantifiedNames = useMemo(() => unquantifiedHolders(holdersRes), [holdersRes]);
 
-      if (!symbol) return <div className="p-8 text-center text-xs text-[var(--text-secondary)]">هنوز نمادی انتخاب یا ایمپورت نشده است. از داشبورد یا جستجوی بالا یک نماد انتخاب کنید.</div>;
-      if (loading) return <div className="p-8 text-center text-xs text-[var(--text-secondary)]">در حال واکشی اطلاعات نماد {symbol}...</div>;
+      if (!symbol) return <EmptyState icon="⌕" title="هنوز نمادی انتخاب نشده است" hint="از نمای کلی بازار یا نوار جستجوی بالای صفحه یک نماد را انتخاب کنید." />;
+      if (loading) return <LoadingState label={`در حال دریافت اطلاعات نماد ${symbol}…`} />;
       if (error) return <ErrorBox error={error} />;
       if (!detail) return null;
 
@@ -972,49 +1008,53 @@
 
       return (
         <div className="space-y-3">
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-3">
-            <div>
+          <div className="stock-hero">
+            <div className="stock-identity">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-base font-bold text-blue-400">{inst.symbol}</h1>
                 <span className="text-sm font-bold">{inst.company_name || 'نام شرکت ثبت نشده'}</span>
                 <span className="px-2 py-0.5 text-[10px] rounded bg-blue-500/15 text-blue-400">{inst.market}</span>
                 {snap.data_completeness && <span className="px-2 py-0.5 text-[10px] rounded bg-amber-500/15 text-amber-300" title={snap.data_completeness}>{COMPLETENESS_FA[snap.data_completeness] || snap.data_completeness}</span>}
               </div>
-              <div className="text-[11px] text-[var(--text-secondary)] mt-1">
+              <div className="stock-meta text-[11px] text-[var(--text-secondary)] mt-1">
                 ins_code: <span className="num">{inst.ins_code || '—'}</span> | ISIN: <span className="num">{inst.cisin || '—'}</span> | بازه داده: <span className="num">{fmtDate(inst.first_holding_date_jalali)} تا {fmtDate(inst.latest_holding_date_jalali)}</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-5 text-xs">
-              <div>
+            <div className="stock-kpis">
+              <div className="stock-kpi stock-kpi--price" title={snap.latest_price_date ? `تاریخ آخرین قیمت: ${fmtGregorianDate(snap.latest_price_date)}` : undefined}>
+                <div className="text-[var(--text-secondary)]">آخرین قیمت</div>
+                <div className="font-bold num">{snap.latest_price !== null && snap.latest_price !== undefined ? fmtMoney(snap.latest_price, currency) : '—'}</div>
+              </div>
+              <div className="stock-kpi">
                 <div className="text-[var(--text-secondary)]">کل سهام شرکت</div>
                 <div className="font-bold num">{fmtNum(snap.total_company_shares ?? inst.current_issued_shares)}</div>
               </div>
-              <div title={snap.latest_price ? `آخرین قیمت: ${fmtNum(snap.latest_price)} ریال (${fmtGregorianDate(snap.latest_price_date)})` : 'قیمت موجود نیست'}>
+              <div className="stock-kpi" title={snap.latest_price ? `آخرین قیمت: ${fmtNum(snap.latest_price)} ریال (${fmtGregorianDate(snap.latest_price_date)})` : 'قیمت موجود نیست'}>
                 <div className="text-[var(--text-secondary)]">ارزش بازار</div>
                 <div className="font-bold num">{snap.market_value !== null && snap.market_value !== undefined ? fmtMoney(snap.market_value, currency) : '—'}</div>
               </div>
-              <div>
+              <div className="stock-kpi">
                 <div className="text-[var(--text-secondary)]">سهام‌داران عمده افشاشده</div>
                 <div className="font-bold num" title={snap.raw_disclosed_shareholder_count !== null && snap.raw_disclosed_shareholder_count !== undefined && snap.raw_disclosed_shareholder_count !== snap.disclosed_shareholder_count ? `تعداد خام پیش از یک‌تا‌سازی: ${toFa(snap.raw_disclosed_shareholder_count)}` : undefined}>{toFa(snap.disclosed_shareholder_count)}</div>
               </div>
-              <div title={snap.total_shareholder_count_note || undefined}>
+              <div className="stock-kpi" title={snap.total_shareholder_count_note || undefined}>
                 <div className="text-[var(--text-secondary)]">کل سهام‌داران شرکت</div>
                 <div className="font-bold text-amber-400">{snap.total_shareholder_count !== null && snap.total_shareholder_count !== undefined ? (snap.total_shareholder_count_note ? `≥ ${fmtNum(snap.total_shareholder_count)}` : fmtNum(snap.total_shareholder_count)) : '—'}</div>
                 {snap.total_shareholder_count_note && <div className="text-[10px] text-amber-300">حداقل (ثبت نشده)</div>}
               </div>
-              <div title={snap.raw_ownership_percent_sum !== null && snap.raw_ownership_percent_sum !== undefined && snap.disclosed_ownership_percent_sum !== null && Math.abs(snap.raw_ownership_percent_sum - snap.disclosed_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(snap.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : (snap.status === 'review' ? snap.status_note : undefined)}>
+              <div className="stock-kpi" title={snap.raw_ownership_percent_sum !== null && snap.raw_ownership_percent_sum !== undefined && snap.disclosed_ownership_percent_sum !== null && Math.abs(snap.raw_ownership_percent_sum - snap.disclosed_ownership_percent_sum) > 0.001 ? `جمع خام پیش از یک‌تا‌سازی: ${fmtPct(snap.raw_ownership_percent_sum)} (همان سهام‌دار با چند شناسه تکرار شده بود)` : (snap.status === 'review' ? snap.status_note : undefined)}>
                 <div className="text-[var(--text-secondary)]">جمع مالکیت عمده</div>
                 <div className="font-bold num">{fmtPct(snap.disclosed_ownership_percent_sum)}{snap.status === 'review' ? <span className="text-amber-400 text-xs" title={snap.status_note || undefined}> ⚠</span> : ''}</div>
               </div>
-              <div title="۱۰۰ منهای جمع مالکیت عمدهٔ افشاشده — سهامی که در بازار آزاد دست مردم است و قابل معامله است">
+              <div className="stock-kpi" title="۱۰۰ منهای جمع مالکیت عمدهٔ افشاشده — سهامی که در بازار آزاد دست مردم است و قابل معامله است">
                 <div className="text-[var(--text-secondary)]">سهام شناور</div>
                 <div className="font-bold num text-emerald-400">{snap.status === 'ok' && snap.disclosed_ownership_percent_sum !== null && snap.disclosed_ownership_percent_sum !== undefined && Number(snap.disclosed_ownership_percent_sum) >= 0 && Number(snap.disclosed_ownership_percent_sum) <= 100 ? fmtPct(100 - snap.disclosed_ownership_percent_sum) : '—'}</div>
               </div>
             </div>
           </div>
 
-          <div className="flex gap-1 border-b border-[var(--border-subtle)] text-xs overflow-x-auto">
+          <div role="tablist" aria-label="بخش‌های صفحهٔ نماد" className="tab-bar">
             {[
               ['overview', 'نمودار و تاریخچه شرکت'],
               ['holders', `سهام‌داران عمده (${toFa(dedupedHolders.length)})`],
@@ -1022,7 +1062,7 @@
               ['actions', `افزایش سرمایه (${toFa(actions.filter(a => a.action_type === 'capital_increase').length)})`],
               ['quality', 'کیفیت داده و مغایرت‌ها'],
             ].map(([id, label]) => (
-              <button key={id} onClick={() => setTab(id)} className={`px-3 py-2 border-b-2 whitespace-nowrap ${tab === id ? 'border-blue-500 text-blue-400 font-bold' : 'border-transparent text-[var(--text-secondary)]'}`}>
+              <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`tab-item ${tab === id ? 'is-active' : ''}`}>
                 {label}
               </button>
             ))}
@@ -1070,7 +1110,7 @@
                     </div>
                   )}
                 </div>
-                <div className="text-[11px] text-[var(--text-secondary)]">▲ روی نمودار یعنی افزایش سرمایه — روی مثلث نگه دارید تا جزئیات آن روز را ببینید. با دکمه «تمام‌صفحه» نمودار بزرگ می‌شود و با ابزارهای ترسیم (خط روند، مستطیل، خط افقی) می‌توانید روی آن تحلیل کنید. دکمه‌های A (مقیاس خودکار) و L (لگاریتمی) پایین-راست نمودار هستند.</div>
+                <details className="help-details"><summary>راهنمای نمودار و ابزارهای ترسیم</summary><div className="text-[11px] text-[var(--text-secondary)]">▲ روی نمودار یعنی افزایش سرمایه — روی مثلث نگه دارید تا جزئیات آن روز را ببینید. با دکمه «تمام‌صفحه» نمودار بزرگ می‌شود و با ابزارهای ترسیم (خط روند، مستطیل، خط افقی) می‌توانید روی آن تحلیل کنید. دکمه‌های A (مقیاس خودکار) و L (لگاریتمی) پایین-راست نمودار هستند.</div></details>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
@@ -1114,11 +1154,14 @@
                       </div>
                     )}
                   </div>
+                  <details className="help-details">
+                  <summary>راهنمای خواندن نمودار</summary>
                   <div className="text-[11px] text-[var(--text-secondary)]">
                     نمودار تغییرات سهام‌داران: وقتی سهام‌داران می‌خرند بالا می‌رود و وقتی می‌فروشند پایین می‌آید (محور افقی: زمان، محور عمودی: {chartMetric === 'shares' && !selectedHolder ? 'تعداد سهام' : 'درصد مالکیت'}).
                     {selectedHolder ? ' برای سهام‌دار انتخاب‌شده فقط درصد نمایش داده می‌شود.' : ''}
                     {' '}● سبز/قرمز روی نمودار فقط روزهای خرید/فروش واقعی را نشان می‌دهد (اولین مشاهده یا روز بدون تغییر، رویداد ندارد) — روی نقطه نگه دارید تا تعداد و جزئیات رویدادهای آن روز را در پنجرهٔ کوچک ببینید؛ ▲ یعنی افزایش سرمایه (فقط افزایش سرمایهٔ واقعی، نه تعدیل قیمت) — روی مثلث هم نگه دارید تا جزئیاتش را ببینید. دکمه‌های A (مقیاس خودکار) و L (لگاریتمی) پایین-راست نمودار هستند.
                   </div>
+                  </details>
                 </div>
 
                 <div className="lg:col-span-4 p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] space-y-2 text-xs">
@@ -1152,7 +1195,7 @@
               <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
                 <div className="p-2.5 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-2 text-xs">
                   <span className="font-bold">سهام‌داران عمده ({toFa(dedupedHolders.length)} سهام‌دار یک‌تا‌شده از {toFa(holdersRes.total || holdersRes.rows.length)} رکورد)</span>
-                  <span className="text-[var(--text-secondary)]">به ترتیب درصد مالکیت — برای جدول کامل به تب «سهام‌داران عمده» بروید</span>
+                  <span className="text-[var(--text-secondary)]">به ترتیب درصد مالکیت — برای جدول کامل، تب «سهام‌داران عمده» را باز کنید</span>
                 </div>
                 <table className="w-full text-xs text-right">
                   <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
@@ -1168,7 +1211,7 @@
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
                     {dedupedHolders.slice(0, 15).map(h => (
-                      <tr key={`${h.id_scheme}-${h.shareholder_id}`} onClick={() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`)} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
+                      <tr key={`${h.id_scheme}-${h.shareholder_id}`} {...rowActivate(() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`))} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
                         <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد — {BASIS_FA[h.basis] || h.basis})</span> : ''}{h.unresolved ? <span className="text-[10px] text-amber-400" title="رکورد دیگری با همین سهام و نام وجود دارد که هویتش حل نشده؛ جمع ممکن است مضاعف باشد"> ⚠ نیاز به بررسی</span> : ''}</td>
                         <td className="p-2">{h.shareholder_type === 'legal' ? 'حقوقی' : h.shareholder_type === 'individual' ? 'حقیقی' : '—'}</td>
                         <td className="p-2 num">{fmtNum(h.shares)}</td>
@@ -1222,7 +1265,7 @@
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {dedupedHolders.map(h => (
-                    <tr key={`${h.id_scheme}-${h.shareholder_id}`} onClick={() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`)} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
+                    <tr key={`${h.id_scheme}-${h.shareholder_id}`} {...rowActivate(() => onOpenInvestor && onOpenInvestor(`${h.id_scheme}:${h.shareholder_id}`))} className="cursor-pointer hover:bg-[var(--bg-elevated)]" title="کلیک: پرتفوی این سهام‌دار">
                       <td className="p-2 font-semibold">{h.shareholder_name}{h._merged > 1 ? <span className="text-[10px] text-[var(--text-secondary)]"> ({toFa(h._merged)} رکورد یک‌تا شد — {BASIS_FA[h.basis] || h.basis})</span> : ''}{h.unresolved ? <span className="text-[10px] text-amber-400" title="رکورد دیگری با همین سهام و نام وجود دارد که هویتش حل نشده؛ جمع ممکن است مضاعف باشد"> ⚠ نیاز به بررسی</span> : ''}</td>
                       <td className="p-2">{h.shareholder_type === 'legal' ? 'حقوقی' : h.shareholder_type === 'individual' ? 'حقیقی' : '—'}</td>
                       <td className="p-2 text-[10px] num text-[var(--text-secondary)]">{h.id_scheme}: {h.shareholder_id}</td>
@@ -1402,12 +1445,12 @@
 
       return (
         <div className="space-y-3 text-xs">
-          <div className="p-3 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-wrap justify-between items-center gap-2">
+          <div className="filter-panel">
             <div>
               <h1 className="text-sm font-bold">پایگاه جامع سهام‌داران در تمام شرکت‌های واردشده</h1>
               <p className="text-[11px] text-[var(--text-secondary)]">هر سطر یک سهام‌دار است — با همهٔ شرکت‌هایی که در آن‌ها سهام دارد. جستجو بر اساس نام، شناسه TSETMC، نماد، حداقل درصد مالکیت و حضور هم‌زمان در چند شرکت</p>
             </div>
-            <div className="flex flex-wrap gap-2 items-center">
+            <div className="filter-bar">
               <input value={q} onChange={e => { setQ(e.target.value); setOffset(0); }} placeholder="نام سهام‌دار یا شناسه..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-52" />
               <input value={symbolFilter} onChange={e => { setSymbolFilter(e.target.value); setOffset(0); }} placeholder="نماد..." className="px-2.5 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-24" />
               <input type="number" value={minPct} onChange={e => { setMinPct(e.target.value); setOffset(0); }} placeholder="حداقل ٪" className="px-2 py-1.5 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-24 num" />
@@ -1423,9 +1466,18 @@
             </div>
           </div>
 
-          <section>
-            <AdvancedScreenerPanel onOpenStock={onOpenStock} />
-          </section>
+          <details className="panel-collapsible">
+            <summary>
+              <span className="panel-collapsible-title">
+                <strong>فیلتر پیشرفتهٔ چندشرطی و خروجی اکسل</strong>
+                <small>ترکیب شرط‌های مالکیت، تغییر سهام، نوع سهام‌دار و کیفیت داده</small>
+              </span>
+              <span className="panel-collapsible-chevron" aria-hidden="true">‹</span>
+            </summary>
+            <div className="panel-collapsible-body panel-collapsible-body--flush">
+              <AdvancedScreenerPanel onOpenStock={onOpenStock} />
+            </div>
+          </details>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
             <div className="lg:col-span-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
               <table className="w-full text-right">
@@ -1434,9 +1486,11 @@
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {loading ? (
-                    <tr><td colSpan="5" className="p-6 text-center text-[var(--text-secondary)]">در حال جستجو...</td></tr>
+                    <SkeletonRows cols={5} rows={8} />
+                  ) : rows.length === 0 ? (
+                    <tr><td colSpan="5"><EmptyState icon="⌕" title="سهام‌داری با این فیلتر پیدا نشد" hint="نام یا شناسه را کوتاه‌تر کنید، یا فیلتر حداقل درصد و نوع سهام‌دار را بردارید." /></td></tr>
                   ) : rows.map((r, i) => (
-                    <tr key={r.group_id} onClick={() => loadGroup(r)} className="cursor-pointer hover:bg-[var(--bg-elevated)]">
+                    <tr key={r.group_id} {...rowActivate(() => loadGroup(r))} className="cursor-pointer hover:bg-[var(--bg-elevated)]">
                       <td className="p-2 font-semibold">{r.shareholder_name}</td>
                       <td className="p-2">
                         <span className="font-bold text-blue-400">{toFa(r.n_companies)} شرکت</span>
@@ -1470,7 +1524,7 @@
                         {' '} | شرکت‌ها: <span className="font-bold num">{toFa(selected.n_companies)}</span>
                       </div>
                     </div>
-                    <button onClick={() => onOpenInvestor && onOpenInvestor(selected.group_id)} className="px-2 py-1 rounded border border-blue-500/40 text-blue-400 shrink-0">پرتفوی کامل در تب ۴</button>
+                    <button onClick={() => onOpenInvestor && onOpenInvestor(selected.group_id)} className="px-2 py-1 rounded border border-blue-500/40 text-blue-400 shrink-0">مشاهده پرتفوی کامل</button>
                   </div>
                   <div>
                     <div className="font-bold mb-1 flex justify-between items-center">
@@ -2083,14 +2137,17 @@
       const [loading, setLoading] = useState(false);
       const [exporting, setExporting] = useState(false);
       const [exportError, setExportError] = useState('');
+      const [queryError, setQueryError] = useState('');
 
       const runQuery = useCallback(() => {
         setLoading(true);
+        setQueryError('');
         apiFetch('/api/v1/screener/query', {
           method: 'POST',
           body: JSON.stringify({ logic, conditions: conds, sort_by: sortBy, sort_dir: 'DESC', limit: 100 }),
         })
           .then(res => setResults(res.rows || []))
+          .catch(e => { setResults([]); setQueryError(e.message || 'اجرای فیلتر ناموفق بود.'); })
           .finally(() => setLoading(false));
       }, [logic, conds, sortBy]);
 
@@ -2180,7 +2237,7 @@
                     setCond({ value: v === '' ? '' : Number(v) });
                   }} className="px-2 py-1 rounded bg-[var(--bg-canvas)] border border-[var(--border-subtle)] w-40 num" placeholder="عدد..." />
                 )}
-                <button onClick={() => setConds(p => p.filter((_, i) => i !== idx))} className="text-red-400">حذف</button>
+                <button type="button" onClick={() => setConds(p => p.filter((_, i) => i !== idx))} className="cond-remove" aria-label="حذف این شرط">حذف</button>
               </div>
               );
             })}
@@ -2190,15 +2247,17 @@
             </div>
           </div>
 
-          {exportError && <div role="alert" className="p-2 rounded border border-red-500/30 bg-red-500/10 text-red-400">{exportError}</div>}
+          {(exportError || queryError) && <div role="alert" className="p-2 rounded border border-red-500/30 bg-red-500/10 text-red-400">{exportError || queryError}</div>}
           <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-panel)] overflow-x-auto">
             <table className="w-full text-right">
               <thead className="bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
                 <tr><th className="p-2">نماد</th><th className="p-2">بازار</th><th className="p-2">سهام‌دار</th><th className="p-2">درصد مالکیت</th><th className="p-2">تغییر سهام</th><th className="p-2">تمرکز شرکت٪</th></tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
-                {loading ? <tr><td colSpan="6" className="p-6 text-center">در حال اجرای فیلتر...</td></tr> : results.map((r, i) => (
-                  <tr key={i} onClick={() => onOpenStock(r.symbol)} className="hover:bg-[var(--bg-elevated)] cursor-pointer">
+                {loading ? <SkeletonRows cols={6} rows={6} /> : results.length === 0 ? (
+                  <tr><td colSpan="6"><EmptyState icon="⌕" title="نتیجه‌ای با این شرط‌ها پیدا نشد" hint="شرط‌ها را ساده‌تر کنید یا مقدار و عملگر را تغییر دهید و دوباره اجرا کنید." /></td></tr>
+                ) : results.map((r, i) => (
+                  <tr key={i} {...rowActivate(() => onOpenStock(r.symbol))} className="hover:bg-[var(--bg-elevated)] cursor-pointer">
                     <td className="p-2 font-bold text-blue-400">{r.symbol}</td>
                     <td className="p-2">{r.market}</td>
                     <td className="p-2">{r.shareholder_name}</td>
@@ -2997,6 +3056,44 @@
         setSearchResults([]);
       };
 
+      // Mobile: the logo/search row slides away when scrolling down and comes
+      // back on scroll-up, so the sticky header no longer eats ~20% of the screen.
+      useEffect(() => {
+        const root = document.documentElement;
+        const bar = document.querySelector('.app-topbar-inner');
+        const header = document.querySelector('.app-header');
+        const measure = () => { if (bar) root.style.setProperty('--topbar-h', `${bar.offsetHeight}px`); };
+        measure();
+        let ro = null;
+        if (bar && window.ResizeObserver) { ro = new ResizeObserver(measure); ro.observe(bar); }
+        let last = window.scrollY, ticking = false;
+        const onScroll = () => {
+          if (ticking) return;
+          ticking = true;
+          requestAnimationFrame(() => {
+            const y = window.scrollY;
+            const busy = header && header.contains(document.activeElement);
+            if (busy || y <= 140 || y < last - 4) root.classList.remove('topbar-hidden');
+            else if (y > last + 4) root.classList.add('topbar-hidden');
+            last = y; ticking = false;
+          });
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => { window.removeEventListener('scroll', onScroll); if (ro) ro.disconnect(); root.classList.remove('topbar-hidden'); };
+      }, []);
+
+      // Keep the active section visible in the horizontally scrollable nav
+      // (mobile) and give each section its own browser-tab / history title.
+      useEffect(() => {
+        const label = (NAV_PAGES.find(n => n.id === page) || {}).label;
+        const base = 'تلومبرگ';
+        document.title = page === 'stock' && activeSymbol
+          ? `${activeSymbol} | ${base}`
+          : (label ? `${label} | ${base}` : `${base} | تحلیل بازار و مالکیت سهام`);
+        const active = document.querySelector('.app-nav-item.is-active');
+        if (active && active.scrollIntoView) active.scrollIntoView({ inline: 'center', block: 'nearest' });
+      }, [page, activeSymbol]);
+
       useEffect(() => {
         const route = { page, activeSymbol };
         window.TLOOMBERG_ANALYTICS_INITIAL_ROUTE = route;
@@ -3012,6 +3109,7 @@
 
       return (
         <div className={`app-shell min-h-screen flex flex-col text-[var(--text-primary)] ${theme === 'light' ? 'theme-light' : ''}`}>
+          <a href="#main-content" className="app-skip-link">پرش به محتوای اصلی</a>
           <header className="app-header">
             <div className="app-topbar-inner">
               <button onClick={() => navigateTo('market')} className="app-brand" data-analytics-id="brand-home" aria-label="بازگشت به نمای کلی بازار">
@@ -3057,7 +3155,7 @@
             </div>
           </header>
           <ChartAccessContext.Provider value={{ allowed: window.location.port === "8000" || window.TLOOMBERG_BOOTSTRAP?.entitlements?.includes("shareholders.graphs") === true, onUpgrade: () => navigateTo("account") }}>
-          <main className="app-main flex-1">
+          <main id="main-content" tabIndex={-1} className="app-main flex-1">
             {page === 'market' && <MarketDashboardPage onOpenStock={openStock} onOpenInvestor={openInvestor} currency={currency} dateMode={dateMode} />}
             {page === 'stock' && <StockDetailPage symbol={activeSymbol} currency={currency} theme={theme} dateMode={dateMode} onOpenInvestor={openInvestor} />}
             {page === 'shareholders' && <ShareholderIntelligencePage currency={currency} theme={theme} onOpenStock={openStock} onOpenInvestor={openInvestor} dateMode={dateMode} />}
